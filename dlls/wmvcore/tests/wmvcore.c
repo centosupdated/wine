@@ -2096,6 +2096,7 @@ struct callback
 
     bool read_compressed;
     bool todo_compressed;
+    bool todo_wrong_thread;
     DWORD max_stream_sample_size[2];
 
     bool dedicated_threads;
@@ -2317,23 +2318,20 @@ static HRESULT WINAPI callback_OnSample(IWMReaderCallback *iface, DWORD output,
     callback->next_pts[output] = time + duration;
 
     if (callback->dedicated_threads)
-    {
-        todo_wine
         ok(callback->callback_tid != GetCurrentThreadId(), "got wrong thread\n");
-    }
     else
         ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
 
     if (!callback->output_tid[output])
         callback->output_tid[output] = GetCurrentThreadId();
     else
+    {
+        todo_wine_if(callback->todo_wrong_thread)
         ok(callback->output_tid[output] == GetCurrentThreadId(), "got wrong thread\n");
+    }
 
     if (callback->dedicated_threads && callback->output_tid[1 - output])
-    {
-        todo_wine
         ok(callback->output_tid[1 - output] != GetCurrentThreadId(), "got wrong thread\n");
-    }
 
     if (stream)
         ok(stream->input_tid != GetCurrentThreadId(), "got wrong thread\n");
@@ -2398,10 +2396,7 @@ static HRESULT WINAPI callback_advanced_OnStreamSample(IWMReaderCallbackAdvanced
     callback->next_pts[output] = pts + duration;
 
     if (callback->dedicated_threads)
-    {
-        todo_wine
         ok(callback->callback_tid != GetCurrentThreadId(), "got wrong thread\n");
-    }
     else
     {
         ok(callback->callback_tid == GetCurrentThreadId(), "got wrong thread\n");
@@ -2411,13 +2406,13 @@ static HRESULT WINAPI callback_advanced_OnStreamSample(IWMReaderCallbackAdvanced
     if (!callback->output_tid[output])
         callback->output_tid[output] = GetCurrentThreadId();
     else
+    {
+        todo_wine_if(callback->todo_wrong_thread)
         ok(callback->output_tid[output] == GetCurrentThreadId(), "got wrong thread\n");
+    }
 
     if (callback->dedicated_threads && callback->output_tid[1 - output])
-    {
-        todo_wine
         ok(callback->output_tid[1 - output] != GetCurrentThreadId(), "got wrong thread\n");
-    }
 
     if (stream)
         ok(stream->input_tid != GetCurrentThreadId(), "got wrong thread\n");
@@ -2806,7 +2801,7 @@ static void check_async_set_output_setting(IWMReaderAdvanced2 *reader, DWORD out
         size = sizeof(DWORD);
 
     hr = IWMReaderAdvanced2_SetOutputSetting(reader, output, name, type, (BYTE *)&value, size);
-    todo_wine
+    todo_wine_if(wcscmp(name, L"DedicatedDeliveryThread"))
     ok(hr == expect_hr, "Got hr %#lx.\n", hr);
 
     winetest_pop_context();
@@ -2931,6 +2926,7 @@ static void run_async_reader(IWMReader *reader, IWMReaderAdvanced2 *advanced, st
 
         callback->todo_compressed = true;
         callback->read_compressed = false;
+        callback->todo_wrong_thread = callback->dedicated_threads;
         hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 1, FALSE);
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
         hr = IWMReaderAdvanced2_SetReceiveStreamSamples(advanced, 2, FALSE);
@@ -3037,6 +3033,7 @@ static void run_async_reader(IWMReader *reader, IWMReaderAdvanced2 *advanced, st
     wait_stopped_callback(callback);
 
     callback->todo_compressed = false;
+    callback->todo_wrong_thread = false;
     ok(!outstanding_buffers, "Got %ld outstanding buffers.\n", outstanding_buffers);
 }
 
