@@ -790,10 +790,8 @@ static HRESULT WINAPI test_mem_input_pin_NotifyAllocator(IMemInputPin *iface,
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     if (IsEqualGUID(&pin->sink.pin.mt.majortype, &MEDIATYPE_Video))
-        todo_wine
         ok(properties.cBuffers == 10, "Expected video to have 10 buffers, got %ld\n", properties.cBuffers);
     else
-        todo_wine
         ok(properties.cBuffers == 50, "Expected audio to have 50 buffers, got %ld\n", properties.cBuffers);
 
     return S_OK;
