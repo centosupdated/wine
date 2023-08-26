@@ -84,13 +84,93 @@ struct layout
     LANGID lang;
     DWORD klid;
     WORD layout_id;
+
+    const USHORT *scan2vk;
 };
 
 static const unsigned int ControlMask = 1 << 2;
 
 static int min_keycode, max_keycode, keysyms_per_keycode;
-static WORD keyc2vkey[256], default_keyc2scan[0x100];
+static WORD default_keyc2scan[0x100];
 static BOOL use_xkb;
+
+#define EXTRA_SCAN2VK \
+    T36 | KBDEXT, T37 | KBDMULTIVK, \
+    T38, T39, T3A, T3B, T3C, T3D, T3E, T3F, \
+    T40, T41, T42, T43, T44, T45 | KBDEXT | KBDMULTIVK, T46 | KBDMULTIVK, T47 | KBDNUMPAD | KBDSPECIAL, \
+    T48 | KBDNUMPAD | KBDSPECIAL, T49 | KBDNUMPAD | KBDSPECIAL, T4A, T4B | KBDNUMPAD | KBDSPECIAL, \
+    T4C | KBDNUMPAD | KBDSPECIAL, T4D | KBDNUMPAD | KBDSPECIAL, T4E, T4F | KBDNUMPAD | KBDSPECIAL, \
+    T50 | KBDNUMPAD | KBDSPECIAL, T51 | KBDNUMPAD | KBDSPECIAL, T52 | KBDNUMPAD | KBDSPECIAL, \
+    T53 | KBDNUMPAD | KBDSPECIAL, T54, T55, T56, T57, \
+    T58, T59, T5A, T5B, T5C, T5D, T5E, T5F, \
+    T60, T61, T62, T63, T64, T65, T66, T67, \
+    T68, T69, T6A, T6B, T6C, T6D, T6E, T6F, \
+    T70, T71, T72, T73, T74, T75, T76, T77, \
+    T78, T79, T7A, T7B, T7C, T7D, T7E, \
+    [0x110] = X10 | KBDEXT, [0x119] = X19 | KBDEXT, [0x11d] = X1D | KBDEXT, [0x120] = X20 | KBDEXT, \
+    [0x121] = X21 | KBDEXT, [0x122] = X22 | KBDEXT, [0x124] = X24 | KBDEXT, [0x12e] = X2E | KBDEXT, \
+    [0x130] = X30 | KBDEXT, [0x132] = X32 | KBDEXT, [0x135] = X35 | KBDEXT, [0x137] = X37 | KBDEXT, \
+    [0x138] = X38 | KBDEXT, [0x147] = X47 | KBDEXT, [0x148] = X48 | KBDEXT, [0x149] = X49 | KBDEXT, \
+    [0x14b] = X4B | KBDEXT, [0x14d] = X4D | KBDEXT, [0x14f] = X4F | KBDEXT, [0x150] = X50 | KBDEXT, \
+    [0x151] = X51 | KBDEXT, [0x152] = X52 | KBDEXT, [0x153] = X53 | KBDEXT, [0x15b] = X5B | KBDEXT, \
+    [0x15c] = X5C | KBDEXT, [0x15d] = X5D | KBDEXT, [0x15f] = X5F | KBDEXT, [0x165] = X65 | KBDEXT, \
+    [0x166] = X66 | KBDEXT, [0x167] = X67 | KBDEXT, [0x168] = X68 | KBDEXT, [0x169] = X69 | KBDEXT, \
+    [0x16a] = X6A | KBDEXT, [0x16b] = X6B | KBDEXT, [0x16c] = X6C | KBDEXT, [0x16d] = X6D | KBDEXT, \
+    [0x11c] = X1C | KBDEXT, [0x146] = X46 | KBDEXT, [0x21d] = Y1D,
+
+static const USHORT scan2vk_qwerty[0x280] =
+{
+    T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T0A, T0B, T0C, T0D, T0E,
+    T0F, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T1A, T1B, T1C,
+    T1D, T1E, T1F, T20, T21, T22, T23, T24, T25, T26, T27, T28, T29,
+    T2A, T2B, T2C, T2D, T2E, T2F, T30, T31, T32, T33, T34, T35,
+    EXTRA_SCAN2VK
+};
+
+static const USHORT scan2vk_qwerty_sw[0x280] =
+{
+    T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T0A, T0B, VK_OEM_PLUS, VK_OEM_4, T0E,
+    T0F, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, VK_OEM_6, VK_OEM_1, T1C,
+    T1D, T1E, T1F, T20, T21, T22, T23, T24, T25, T26, VK_OEM_3, T28, VK_OEM_5,
+    T2A, VK_OEM_2, T2C, T2D, T2E, T2F, T30, T31, T32, T33, T34, VK_OEM_MINUS,
+    EXTRA_SCAN2VK
+};
+
+static const USHORT scan2vk_qwerty_jp106[0x280] =
+{
+    T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T0A, T0B, T0C, VK_OEM_7, T0E,
+    T0F, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, VK_OEM_3, VK_OEM_4, T1C,
+    T1D, T1E, T1F, T20, T21, T22, T23, T24, T25, T26, VK_OEM_PLUS, VK_OEM_1, VK_OEM_AUTO,
+    T2A, VK_OEM_6, T2C, T2D, T2E, T2F, T30, T31, T32, T33, T34, T35,
+    EXTRA_SCAN2VK
+};
+
+static const USHORT scan2vk_azerty[0x280] =
+{
+    T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T0A, T0B, VK_OEM_4, T0D, T0E,
+    T0F, 'A', 'Z', T12, T13, T14, T15, T16, T17, T18, T19, VK_OEM_6, VK_OEM_1, T1C,
+    T1D, 'Q', T1F, T20, T21, T22, T23, T24, T25, T26, 'M', VK_OEM_3, VK_OEM_7,
+    T2A, T2B, 'W', T2D, T2E, T2F, T30, T31, VK_OEM_COMMA, VK_OEM_PERIOD, VK_OEM_2, VK_OEM_8,
+    EXTRA_SCAN2VK
+};
+
+static const USHORT scan2vk_qwertz[0x280] =
+{
+    T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T0A, T0B, VK_OEM_4, VK_OEM_6, T0E,
+    T0F, T10, T11, T12, T13, T14, 'Z', T16, T17, T18, T19, VK_OEM_1, VK_OEM_3, T1C,
+    T1D, T1E, T1F, T20, T21, T22, T23, T24, T25, T26, VK_OEM_7, VK_OEM_5, VK_OEM_2,
+    T2A, VK_OEM_8, 'Y', T2D, T2E, T2F, T30, T31, T32, T33, T34, VK_OEM_MINUS,
+    EXTRA_SCAN2VK
+};
+
+static const USHORT scan2vk_dvorak[0x280] =
+{
+    T00, T01, T02, T03, T04, T05, T06, T07, T08, T09, T0A, T0B, VK_OEM_4, VK_OEM_6, T0E,
+    T0F, VK_OEM_7, VK_OEM_COMMA, VK_OEM_PERIOD, 'P', 'Y', 'F', 'G', 'C', 'R', 'L', VK_OEM_2, VK_OEM_PLUS, T1C,
+    T1D, T1E, 'O', 'E', 'U', 'I', 'D', 'H', 'T', 'N', 'S', VK_OEM_MINUS, T29,
+    T2A, T2B, VK_OEM_1, 'Q', 'J', 'K', 'X', 'B', 'M', 'W', 'V', 'Z',
+    EXTRA_SCAN2VK
+};
 
 static void init_default_keyc2scan( Display *display )
 {
@@ -326,80 +406,22 @@ static void create_layout_from_xkb( int xkb_group, const char *xkb_layout, LANGI
     layout->klid = !klid ? MAKELONG(lang, 0) : (klid == -1) ? MAKELONG(lang, index + 0x20) : klid;
     layout->layout_id = get_layout_id_from_klid( klid );
 
+    switch (lang)
+    {
+    case MAKELANGID(LANG_FRENCH, SUBLANG_DEFAULT): layout->scan2vk = scan2vk_azerty; break;
+    case MAKELANGID(LANG_GERMAN, SUBLANG_DEFAULT): layout->scan2vk = scan2vk_qwertz; break;
+    case MAKELANGID(LANG_GERMAN, SUBLANG_GERMAN_SWISS): layout->scan2vk = scan2vk_qwertz; break;
+    case MAKELANGID(LANG_SWEDISH, SUBLANG_DEFAULT): layout->scan2vk = scan2vk_qwerty_sw; break;
+    case MAKELANGID(LANG_JAPANESE, SUBLANG_DEFAULT): layout->scan2vk = scan2vk_qwerty_jp106; break;
+    default: layout->scan2vk = scan2vk_qwerty;
+    }
+    if (klid == 0x00010409) layout->scan2vk = scan2vk_dvorak;
+
     TRACE( "Created layout entry %p, lang %04x, klid %08x, layout_id %04x\n", layout, layout->lang, layout->klid, layout->layout_id );
 }
 
 /* Keyboard translation tables */
 #define MAIN_LEN 49
-static const WORD main_key_vkey_qwerty[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   VK_OEM_3,'1','2','3','4','5','6','7','8','9','0',VK_OEM_MINUS,VK_OEM_PLUS,
-   'Q','W','E','R','T','Y','U','I','O','P',VK_OEM_4,VK_OEM_6,
-   'A','S','D','F','G','H','J','K','L',VK_OEM_1,VK_OEM_7,VK_OEM_5,
-   'Z','X','C','V','B','N','M',VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_2,
-   VK_OEM_102 /* the 102nd key (actually to the right of l-shift) */
-};
-
-static const WORD main_key_vkey_qwerty_jp106[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   '1','2','3','4','5','6','7','8','9','0',VK_OEM_MINUS,VK_OEM_7,VK_OEM_5,
-   'Q','W','E','R','T','Y','U','I','O','P',VK_OEM_3,VK_OEM_4,
-   'A','S','D','F','G','H','J','K','L',VK_OEM_PLUS,VK_OEM_1,VK_OEM_6,
-   'Z','X','C','V','B','N','M',VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_2,
-   VK_OEM_102 /* the 102nd key (actually to the left of r-shift) */
-};
-
-static const WORD main_key_vkey_qwerty_v2[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   VK_OEM_5,'1','2','3','4','5','6','7','8','9','0',VK_OEM_PLUS,VK_OEM_4,
-   'Q','W','E','R','T','Y','U','I','O','P',VK_OEM_6,VK_OEM_1,
-   'A','S','D','F','G','H','J','K','L',VK_OEM_3,VK_OEM_7,VK_OEM_2,
-   'Z','X','C','V','B','N','M',VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_MINUS,
-   VK_OEM_102 /* the 102nd key (actually to the right of l-shift) */
-};
-
-static const WORD main_key_vkey_qwertz[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   VK_OEM_3,'1','2','3','4','5','6','7','8','9','0',VK_OEM_MINUS,VK_OEM_PLUS,
-   'Q','W','E','R','T','Z','U','I','O','P',VK_OEM_4,VK_OEM_6,
-   'A','S','D','F','G','H','J','K','L',VK_OEM_1,VK_OEM_7,VK_OEM_5,
-   'Y','X','C','V','B','N','M',VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_2,
-   VK_OEM_102 /* the 102nd key (actually to the right of l-shift) */
-};
-
-static const WORD main_key_vkey_abnt_qwerty[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   VK_OEM_3,'1','2','3','4','5','6','7','8','9','0',VK_OEM_MINUS,VK_OEM_PLUS,
-   'Q','W','E','R','T','Y','U','I','O','P',VK_OEM_4,VK_OEM_6,
-   'A','S','D','F','G','H','J','K','L',VK_OEM_1,VK_OEM_8,VK_OEM_5,
-   VK_OEM_7,'Z','X','C','V','B','N','M',VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_2,
-   VK_OEM_102, /* the 102nd key (actually to the right of l-shift) */
-};
-
-static const WORD main_key_vkey_azerty[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   VK_OEM_7,'1','2','3','4','5','6','7','8','9','0',VK_OEM_4,VK_OEM_PLUS,
-   'A','Z','E','R','T','Y','U','I','O','P',VK_OEM_6,VK_OEM_1,
-   'Q','S','D','F','G','H','J','K','L','M',VK_OEM_3,VK_OEM_5,
-   'W','X','C','V','B','N',VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_2,VK_OEM_8,
-   VK_OEM_102 /* the 102nd key (actually to the right of l-shift) */
-};
-
-static const WORD main_key_vkey_dvorak[MAIN_LEN] =
-{
-/* NOTE: this layout must concur with the scan codes layout above */
-   VK_OEM_3,'1','2','3','4','5','6','7','8','9','0',VK_OEM_4,VK_OEM_6,
-   VK_OEM_7,VK_OEM_COMMA,VK_OEM_PERIOD,'P','Y','F','G','C','R','L',VK_OEM_2,VK_OEM_PLUS,
-   'A','O','E','U','I','D','H','T','N','S',VK_OEM_MINUS,VK_OEM_5,
-   VK_OEM_1,'Q','J','K','X','B','M','W','V','Z',
-   VK_OEM_102 /* the 102nd key (actually to the right of l-shift) */
-};
 
 /*** DEFINE YOUR NEW LANGUAGE-SPECIFIC MAPPINGS BELOW, SEE EXISTING TABLES */
 
@@ -1048,13 +1070,6 @@ static const char main_key_th[MAIN_LEN][4] =
 }; 
 
 /*** VNC keyboard layout */
-static const WORD main_key_vkey_vnc[MAIN_LEN] =
-{
-   '1','2','3','4','5','6','7','8','9','0',VK_OEM_MINUS,VK_OEM_PLUS,VK_OEM_4,VK_OEM_6,VK_OEM_1,VK_OEM_7,VK_OEM_3,VK_OEM_COMMA,VK_OEM_PERIOD,VK_OEM_2,VK_OEM_5,
-   'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-   VK_OEM_102
-};
-
 static const char main_key_vnc[MAIN_LEN][4] =
 {
  "1!","2@","3#","4$","5%","6^","7&","8*","9(","0)","-_","=+","[{","]}",";:","'\"","`~",",<",".>","/?","\\|",
@@ -1079,74 +1094,73 @@ static const struct {
                  in the appropriate dlls/kernel/nls/.nls file */
     const char *comment;
     const char (*key)[MAIN_LEN][4];
-    const WORD (*vkey)[MAIN_LEN]; /* virtual key codes mapping */
 } main_key_tab[]={
- {0x0409, "United States keyboard layout", &main_key_US, &main_key_vkey_qwerty},
- {0x0409, "United States keyboard layout (phantom key version)", &main_key_US_phantom, &main_key_vkey_qwerty},
- {0x0409, "United States keyboard layout (dvorak)", &main_key_US_dvorak, &main_key_vkey_dvorak},
- {0x0409, "United States keyboard layout (programmer dvorak)", &main_key_US_programmer_dvorak, &main_key_vkey_dvorak},
- {0x0409, "United States keyboard layout (dvorak with phantom key)", &main_key_US_dvorak_phantom, &main_key_vkey_dvorak},
- {0x0409, "United States International keyboard layout", &main_key_US_intl, &main_key_vkey_qwerty},
- {0x0809, "British keyboard layout", &main_key_UK, &main_key_vkey_qwerty},
- {0x0407, "German keyboard layout", &main_key_DE, &main_key_vkey_qwertz},
- {0x0807, "Swiss German keyboard layout", &main_key_SG, &main_key_vkey_qwertz},
- {0x100c, "Swiss French keyboard layout", &main_key_SF, &main_key_vkey_qwertz},
- {0x041d, "Swedish keyboard layout", &main_key_SE, &main_key_vkey_qwerty_v2},
- {0x0425, "Estonian keyboard layout", &main_key_ET, &main_key_vkey_qwerty},
- {0x0414, "Norwegian keyboard layout", &main_key_NO, &main_key_vkey_qwerty},
- {0x0406, "Danish keyboard layout", &main_key_DA, &main_key_vkey_qwerty},
- {0x040c, "French keyboard layout", &main_key_FR, &main_key_vkey_azerty},
- {0x0c0c, "Canadian French keyboard layout", &main_key_CF, &main_key_vkey_qwerty},
- {0x0c0c, "Canadian French keyboard layout (CA_fr)", &main_key_CA_fr, &main_key_vkey_qwerty},
- {0x0c0c, "Canadian keyboard layout", &main_key_CA, &main_key_vkey_qwerty},
- {0x080c, "Belgian keyboard layout", &main_key_BE, &main_key_vkey_azerty},
- {0x0816, "Portuguese keyboard layout", &main_key_PT, &main_key_vkey_qwerty},
- {0x0416, "Brazilian ABNT-2 keyboard layout", &main_key_PT_br, &main_key_vkey_abnt_qwerty},
- {0x0416, "Brazilian ABNT-2 keyboard layout ALT GR", &main_key_PT_br_alt_gr,&main_key_vkey_abnt_qwerty},
- {0x040b, "Finnish keyboard layout", &main_key_FI, &main_key_vkey_qwerty},
- {0x0402, "Bulgarian bds keyboard layout", &main_key_BG_bds, &main_key_vkey_qwerty},
- {0x0402, "Bulgarian phonetic keyboard layout", &main_key_BG_phonetic, &main_key_vkey_qwerty},
- {0x0423, "Belarusian keyboard layout", &main_key_BY, &main_key_vkey_qwerty},
- {0x0419, "Russian keyboard layout", &main_key_RU, &main_key_vkey_qwerty},
- {0x0419, "Russian keyboard layout (phantom key version)", &main_key_RU_phantom, &main_key_vkey_qwerty},
- {0x0419, "Russian keyboard layout KOI8-R", &main_key_RU_koi8r, &main_key_vkey_qwerty},
- {0x0419, "Russian keyboard layout cp1251", &main_key_RU_cp1251, &main_key_vkey_qwerty},
- {0x0419, "Russian phonetic keyboard layout", &main_key_RU_phonetic, &main_key_vkey_qwerty},
- {0x0422, "Ukrainian keyboard layout KOI8-U", &main_key_UA, &main_key_vkey_qwerty},
- {0x0422, "Ukrainian keyboard layout (standard)", &main_key_UA_std, &main_key_vkey_qwerty},
- {0x0419, "Russian keyboard layout (standard)", &main_key_RU_std, &main_key_vkey_qwerty},
- {0x040a, "Spanish keyboard layout", &main_key_ES, &main_key_vkey_qwerty},
- {0x0410, "Italian keyboard layout", &main_key_IT, &main_key_vkey_qwerty},
- {0x040f, "Icelandic keyboard layout", &main_key_IS, &main_key_vkey_qwerty},
- {0x040e, "Hungarian keyboard layout", &main_key_HU, &main_key_vkey_qwertz},
- {0x0415, "Polish (programmer's) keyboard layout", &main_key_PL, &main_key_vkey_qwerty},
- {0x0424, "Slovenian keyboard layout", &main_key_SI, &main_key_vkey_qwertz},
- {0x0c1a, "Serbian keyboard layout sr", &main_key_SR, &main_key_vkey_qwerty}, /* LANG_SERBIAN,SUBLANG_SERBIAN_CYRILLIC */
- {0x0c1a, "Serbian keyboard layout us,sr", &main_key_US_SR, &main_key_vkey_qwerty}, /* LANG_SERBIAN,SUBLANG_SERBIAN_CYRILLIC */
- {0x041a, "Croatian keyboard layout", &main_key_HR, &main_key_vkey_qwertz},
- {0x041a, "Croatian keyboard layout (specific)", &main_key_HR_jelly, &main_key_vkey_qwerty},
- {0x0411, "Japanese 106 keyboard layout", &main_key_JA_jp106, &main_key_vkey_qwerty_jp106},
- {0x0411, "Japanese Mac keyboard layout", &main_key_JA_macjp, &main_key_vkey_qwerty_jp106},
- {0x0411, "Japanese pc98x1 keyboard layout", &main_key_JA_pc98x1, &main_key_vkey_qwerty},
- {0x041b, "Slovak keyboard layout", &main_key_SK, &main_key_vkey_qwerty},
- {0x041b, "Slovak and Czech keyboard layout without dead keys", &main_key_SK_prog, &main_key_vkey_qwerty},
- {0x0405, "Czech keyboard layout", &main_key_CS, &main_key_vkey_qwerty},
- {0x0405, "Czech keyboard layout cz", &main_key_CZ, &main_key_vkey_qwertz},
- {0x0405, "Czech keyboard layout cz_qwerty", &main_key_CZ_qwerty, &main_key_vkey_qwerty},
- {0x040a, "Latin American keyboard layout", &main_key_LA, &main_key_vkey_qwerty},
- {0x0427, "Lithuanian (Baltic) keyboard layout", &main_key_LT_B, &main_key_vkey_qwerty},
- {0x041f, "Turkish keyboard layout", &main_key_TK, &main_key_vkey_qwerty},
- {0x041f, "Turkish keyboard layout tr", &main_key_TR, &main_key_vkey_qwerty},
- {0x041f, "Turkish keyboard layout trf", &main_key_TR_F, &main_key_vkey_qwerty},
- {0x040d, "Israelian keyboard layout", &main_key_IL, &main_key_vkey_qwerty},
- {0x040d, "Israelian phonetic keyboard layout", &main_key_IL_phonetic, &main_key_vkey_qwerty},
- {0x040d, "Israelian Saharon keyboard layout", &main_key_IL_saharon, &main_key_vkey_qwerty},
- {0x0409, "VNC keyboard layout", &main_key_vnc, &main_key_vkey_vnc},
- {0x0408, "Greek keyboard layout", &main_key_EL, &main_key_vkey_qwerty},
- {0x041e, "Thai (Kedmanee)  keyboard layout", &main_key_th, &main_key_vkey_qwerty},
- {0x0413, "Dutch keyboard layout", &main_key_NL, &main_key_vkey_qwerty},
+ {0x0409, "United States keyboard layout", &main_key_US},
+ {0x0409, "United States keyboard layout (phantom key version)", &main_key_US_phantom},
+ {0x0409, "United States keyboard layout (dvorak)", &main_key_US_dvorak},
+ {0x0409, "United States keyboard layout (programmer dvorak)", &main_key_US_programmer_dvorak},
+ {0x0409, "United States keyboard layout (dvorak with phantom key)", &main_key_US_dvorak_phantom},
+ {0x0409, "United States International keyboard layout", &main_key_US_intl},
+ {0x0809, "British keyboard layout", &main_key_UK},
+ {0x0407, "German keyboard layout", &main_key_DE},
+ {0x0807, "Swiss German keyboard layout", &main_key_SG},
+ {0x100c, "Swiss French keyboard layout", &main_key_SF},
+ {0x041d, "Swedish keyboard layout", &main_key_SE},
+ {0x0425, "Estonian keyboard layout", &main_key_ET},
+ {0x0414, "Norwegian keyboard layout", &main_key_NO},
+ {0x0406, "Danish keyboard layout", &main_key_DA},
+ {0x040c, "French keyboard layout", &main_key_FR},
+ {0x0c0c, "Canadian French keyboard layout", &main_key_CF},
+ {0x0c0c, "Canadian French keyboard layout (CA_fr)", &main_key_CA_fr},
+ {0x0c0c, "Canadian keyboard layout", &main_key_CA},
+ {0x080c, "Belgian keyboard layout", &main_key_BE},
+ {0x0816, "Portuguese keyboard layout", &main_key_PT},
+ {0x0416, "Brazilian ABNT-2 keyboard layout", &main_key_PT_br},
+ {0x0416, "Brazilian ABNT-2 keyboard layout ALT GR", &main_key_PT_br_alt_gr},
+ {0x040b, "Finnish keyboard layout", &main_key_FI},
+ {0x0402, "Bulgarian bds keyboard layout", &main_key_BG_bds},
+ {0x0402, "Bulgarian phonetic keyboard layout", &main_key_BG_phonetic},
+ {0x0423, "Belarusian keyboard layout", &main_key_BY},
+ {0x0419, "Russian keyboard layout", &main_key_RU},
+ {0x0419, "Russian keyboard layout (phantom key version)", &main_key_RU_phantom},
+ {0x0419, "Russian keyboard layout KOI8-R", &main_key_RU_koi8r},
+ {0x0419, "Russian keyboard layout cp1251", &main_key_RU_cp1251},
+ {0x0419, "Russian phonetic keyboard layout", &main_key_RU_phonetic},
+ {0x0422, "Ukrainian keyboard layout KOI8-U", &main_key_UA},
+ {0x0422, "Ukrainian keyboard layout (standard)", &main_key_UA_std},
+ {0x0419, "Russian keyboard layout (standard)", &main_key_RU_std},
+ {0x040a, "Spanish keyboard layout", &main_key_ES},
+ {0x0410, "Italian keyboard layout", &main_key_IT},
+ {0x040f, "Icelandic keyboard layout", &main_key_IS},
+ {0x040e, "Hungarian keyboard layout", &main_key_HU},
+ {0x0415, "Polish (programmer's) keyboard layout", &main_key_PL},
+ {0x0424, "Slovenian keyboard layout", &main_key_SI},
+ {0x0c1a, "Serbian keyboard layout sr", &main_key_SR}, /* LANG_SERBIAN,SUBLANG_SERBIAN_CYRILLIC */
+ {0x0c1a, "Serbian keyboard layout us,sr", &main_key_US_SR}, /* LANG_SERBIAN,SUBLANG_SERBIAN_CYRILLIC */
+ {0x041a, "Croatian keyboard layout", &main_key_HR},
+ {0x041a, "Croatian keyboard layout (specific)", &main_key_HR_jelly},
+ {0x0411, "Japanese 106 keyboard layout", &main_key_JA_jp106},
+ {0x0411, "Japanese Mac keyboard layout", &main_key_JA_macjp},
+ {0x0411, "Japanese pc98x1 keyboard layout", &main_key_JA_pc98x1},
+ {0x041b, "Slovak keyboard layout", &main_key_SK},
+ {0x041b, "Slovak and Czech keyboard layout without dead keys", &main_key_SK_prog},
+ {0x0405, "Czech keyboard layout", &main_key_CS},
+ {0x0405, "Czech keyboard layout cz", &main_key_CZ},
+ {0x0405, "Czech keyboard layout cz_qwerty", &main_key_CZ_qwerty},
+ {0x040a, "Latin American keyboard layout", &main_key_LA},
+ {0x0427, "Lithuanian (Baltic) keyboard layout", &main_key_LT_B},
+ {0x041f, "Turkish keyboard layout", &main_key_TK},
+ {0x041f, "Turkish keyboard layout tr", &main_key_TR},
+ {0x041f, "Turkish keyboard layout trf", &main_key_TR_F},
+ {0x040d, "Israelian keyboard layout", &main_key_IL},
+ {0x040d, "Israelian phonetic keyboard layout", &main_key_IL_phonetic},
+ {0x040d, "Israelian Saharon keyboard layout", &main_key_IL_saharon},
+ {0x0409, "VNC keyboard layout", &main_key_vnc},
+ {0x0408, "Greek keyboard layout", &main_key_EL},
+ {0x041e, "Thai (Kedmanee)  keyboard layout", &main_key_th},
+ {0x0413, "Dutch keyboard layout", &main_key_NL},
 
- {0, NULL, NULL, NULL} /* sentinel */
+ {0, NULL, NULL} /* sentinel */
 };
 static unsigned kbd_layout=0; /* index into above table of layouts */
 #ifdef SONAME_LIBXKBREGISTRY
@@ -1230,53 +1244,17 @@ static const WORD nonchar_key_vkey[256] =
     0, 0, 0, 0, 0, 0, 0, VK_DELETE                              /* FFF8 */
 };
 
-static const WORD xfree86_vendor_key_vkey[256] =
-{
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF00 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF08 */
-    0, VK_VOLUME_DOWN, VK_VOLUME_MUTE, VK_VOLUME_UP,            /* 1008FF10 */
-    VK_MEDIA_PLAY_PAUSE, VK_MEDIA_STOP,
-    VK_MEDIA_PREV_TRACK, VK_MEDIA_NEXT_TRACK,
-    0, VK_LAUNCH_MAIL, 0, VK_BROWSER_SEARCH,                    /* 1008FF18 */
-    0, 0, 0, VK_BROWSER_HOME,
-    0, 0, 0, 0, 0, 0, VK_BROWSER_BACK, VK_BROWSER_FORWARD,      /* 1008FF20 */
-    VK_BROWSER_STOP, VK_BROWSER_REFRESH, 0, 0, 0, 0, 0, 0,      /* 1008FF28 */
-    VK_BROWSER_FAVORITES, 0, VK_LAUNCH_MEDIA_SELECT, 0,         /* 1008FF30 */
-    0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF38 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF40 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF48 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF50 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF58 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF60 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF68 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF70 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF78 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF80 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF88 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF90 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FF98 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFA0 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFA8 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFB0 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFB8 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFC0 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFC8 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFD0 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFD8 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFE0 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFE8 */
-    0, 0, 0, 0, 0, 0, 0, 0,                                     /* 1008FFF0 */
-    0, 0, 0, 0, 0, 0, 0, 0                                      /* 1008FFF8 */
-};
-
 /* Returns the Windows virtual key code associated with the X event <e> */
 /* kbd_section must be held */
 static WORD EVENT_event_to_vkey( XIC xic, XKeyEvent *e)
 {
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    const struct layout *layout = thread_data->layout;
+    const USHORT *scan2vk = layout->scan2vk;
     KeySym keysym = 0;
     Status status;
     char buf[24];
+    WORD scan;
 
     /* Clients should pass only KeyPress events to XmbLookupString */
     if (xic && e->type == KeyPress)
@@ -1298,7 +1276,8 @@ static WORD EVENT_event_to_vkey( XIC xic, XKeyEvent *e)
 
     TRACE_(key)("e->keycode = %u\n", e->keycode);
 
-    return keyc2vkey[e->keycode];
+    scan = keyc2scan( e->keycode, e->state );
+    return scan2vk[scan];
 }
 
 
@@ -1362,6 +1341,7 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
     WORD vkey;
     DWORD flags;
     KeyCode keycode;
+    WORD scan;
     HWND keymapnotify_hwnd;
     BOOL changed = FALSE;
     struct {
@@ -1370,6 +1350,8 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
         WORD pressed;
     } keys[256];
     struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    const struct layout *layout = thread_data->layout;
+    const USHORT *scan2vk = layout->scan2vk;
 
     keymapnotify_hwnd = thread_data->keymapnotify_hwnd;
     thread_data->keymapnotify_hwnd = NULL;
@@ -1388,7 +1370,8 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
         for (j = 0; j < 8; j++)
         {
             keycode = (i * 8) + j;
-            vkey = keyc2vkey[keycode];
+            scan = keyc2scan( keycode, 0 );
+            vkey = scan2vk[scan];
 
             /* If multiple keys map to the same vkey, we want to report it as
              * pressed iff any of them are pressed. */
@@ -1723,7 +1706,18 @@ static LANGID langid_from_xkb_layout( const char *layout )
 
     FIXME( "Unknown layout %s\n", debugstr_a(layout) );
     return MAKELANGID(LANG_NEUTRAL, SUBLANG_CUSTOM_UNSPECIFIED);
-};
+}
+
+static struct layout *get_layout_from_xkb_group( int xkb_group )
+{
+    struct layout *layout;
+
+    LIST_FOR_EACH_ENTRY( layout, &xkb_layouts, struct layout, entry )
+        if (layout->xkb_group == xkb_group) return layout;
+
+    WARN( "Failed to find layout for Xkb group %d\n", xkb_group );
+    return NULL;
+}
 
 static const char *xkb_layout_from_langid( LANGID langid )
 {
@@ -1894,216 +1888,6 @@ static unsigned int detect_keyboard_layout( Display *display, XModifierKeymap *m
 }
 
 
-/* initialize keyc2vkey */
-static void init_keycode_mappings( Display *display )
-{
-    KeySym keysym;
-    XKeyEvent e2;
-    WORD vkey;
-    int keyc, i, keyn, syms;
-    char ckey[4]={0,0,0,0};
-    const char (*lkey)[MAIN_LEN][4];
-    char vkey_used[256] = { 0 };
-
-    /* Ranges of OEM, function key, and character virtual key codes.
-     * Don't include those handled specially in X11DRV_ToUnicodeEx and
-     * X11DRV_MapVirtualKeyEx, like VK_NUMPAD0 - VK_DIVIDE. */
-    static const struct {
-        WORD first, last;
-    } vkey_ranges[] = {
-        { VK_OEM_1, VK_OEM_3 },
-        { VK_OEM_4, VK_OEM_8 },
-        { VK_OEM_AX, VK_ICO_00 },
-        { 0xe6, 0xe6 },
-        { 0xe9, 0xf5 },
-        { VK_OEM_NEC_EQUAL, VK_OEM_NEC_EQUAL },
-        { VK_F1, VK_F24 },
-        { 0x30, 0x39 }, /* VK_0 - VK_9 */
-        { 0x41, 0x5a }, /* VK_A - VK_Z */
-        { 0, 0 }
-    };
-    int vkey_range;
-
-    lkey = main_key_tab[kbd_layout].key;
-    syms = (keysyms_per_keycode > 4) ? 4 : keysyms_per_keycode;
-
-    /* Now build two conversion arrays :
-     * keycode -> vkey + scancode + extended
-     * vkey + extended -> keycode */
-
-    e2.display = display;
-    e2.state = 0;
-    e2.type = KeyPress;
-
-    memset(keyc2vkey, 0, sizeof(keyc2vkey));
-    for (keyc = min_keycode; keyc <= max_keycode; keyc++)
-    {
-        char buf[30];
-        int have_chars;
-
-        keysym = 0;
-        e2.keycode = (KeyCode)keyc;
-        have_chars = XLookupString(&e2, buf, sizeof(buf), &keysym, NULL);
-        vkey = 0;
-        if (keysym)  /* otherwise, keycode not used */
-        {
-            if ((keysym >> 8) == 0xFF)         /* non-character key */
-            {
-                vkey = nonchar_key_vkey[keysym & 0xff];
-            } else if ((keysym >> 8) == 0x1008FF) { /* XFree86 vendor keys */
-                vkey = xfree86_vendor_key_vkey[keysym & 0xff];
-                /* All vendor keys are extended with a scan code of 0 per testing on WinXP */
-		vkey |= 0x100;
-            } else if (keysym == 0x20) {                 /* Spacebar */
-	        vkey = VK_SPACE;
-	    } else if (have_chars) {
-	      /* we seem to need to search the layout-dependent scancodes */
-	      int maxlen=0,maxval=-1,ok;
-	      for (i=0; i<syms; i++) {
-		keysym = XkbKeycodeToKeysym( display, keyc, 0, i );
-		if ((keysym<0x8000) && (keysym!=' '))
-                {
-                    if (!XkbTranslateKeySym(display, &keysym, 0, &ckey[i], 1, NULL))
-                    {
-                        /* FIXME: query what keysym is used as Mode_switch, fill XKeyEvent
-                         * with appropriate ShiftMask and Mode_switch, use XLookupString
-                         * to get character in the local encoding.
-                         */
-                        ckey[i] = (keysym <= 0x7F) ? keysym : 0;
-                    }
-		} else {
-		  ckey[i] = KEYBOARD_MapDeadKeysym(keysym);
-		}
-	      }
-	      /* find key with longest match streak */
-	      for (keyn=0; keyn<MAIN_LEN; keyn++) {
-		for (ok=(*lkey)[keyn][i=0]; ok&&(i<4); i++)
-		  if ((*lkey)[keyn][i] && (*lkey)[keyn][i]!=ckey[i]) ok=0;
-		if (!ok) i--; /* we overshot */
-		if (ok||(i>maxlen)) {
-		  maxlen=i; maxval=keyn;
-		}
-		if (ok) break;
-	      }
-	      if (maxval>=0) {
-		/* got it */
-		const WORD (*lvkey)[MAIN_LEN] = main_key_tab[kbd_layout].vkey;
-		vkey = (*lvkey)[maxval];
-	      }
-	    }
-        }
-        TRACE("keycode %u => vkey %04X\n", e2.keycode, vkey);
-        keyc2vkey[e2.keycode] = vkey;
-        if ((vkey & 0xff) && vkey_used[(vkey & 0xff)])
-            WARN("vkey %04X is being used by more than one keycode\n", vkey);
-        vkey_used[(vkey & 0xff)] = 1;
-    } /* for */
-
-#define VKEY_IF_NOT_USED(vkey) (vkey_used[(vkey)] ? 0 : (vkey_used[(vkey)] = 1, (vkey)))
-    for (keyc = min_keycode; keyc <= max_keycode; keyc++)
-    {
-        vkey = keyc2vkey[keyc] & 0xff;
-        if (vkey)
-            continue;
-
-        e2.keycode = (KeyCode)keyc;
-        keysym = XLookupKeysym(&e2, 0);
-        if (!keysym)
-           continue;
-
-        /* find a suitable layout-dependent VK code */
-        /* (most Winelib apps ought to be able to work without layout tables!) */
-        for (i = 0; (i < keysyms_per_keycode) && (!vkey); i++)
-        {
-            keysym = XLookupKeysym(&e2, i);
-            if ((keysym >= XK_0 && keysym <= XK_9)
-                || (keysym >= XK_A && keysym <= XK_Z)) {
-                vkey = VKEY_IF_NOT_USED(keysym);
-            }
-        }
-
-        for (i = 0; (i < keysyms_per_keycode) && (!vkey); i++)
-        {
-            keysym = XLookupKeysym(&e2, i);
-            switch (keysym)
-            {
-            case ';':             vkey = VKEY_IF_NOT_USED(VK_OEM_1); break;
-            case '/':             vkey = VKEY_IF_NOT_USED(VK_OEM_2); break;
-            case '`':             vkey = VKEY_IF_NOT_USED(VK_OEM_3); break;
-            case '[':             vkey = VKEY_IF_NOT_USED(VK_OEM_4); break;
-            case '\\':            vkey = VKEY_IF_NOT_USED(VK_OEM_5); break;
-            case ']':             vkey = VKEY_IF_NOT_USED(VK_OEM_6); break;
-            case '\'':            vkey = VKEY_IF_NOT_USED(VK_OEM_7); break;
-            case ',':             vkey = VKEY_IF_NOT_USED(VK_OEM_COMMA); break;
-            case '.':             vkey = VKEY_IF_NOT_USED(VK_OEM_PERIOD); break;
-            case '-':             vkey = VKEY_IF_NOT_USED(VK_OEM_MINUS); break;
-            case '+':             vkey = VKEY_IF_NOT_USED(VK_OEM_PLUS); break;
-            }
-        }
-
-        if (vkey)
-        {
-            TRACE("keycode %u => vkey %04X\n", e2.keycode, vkey);
-            keyc2vkey[e2.keycode] = vkey;
-        }
-    } /* for */
-
-    /* For any keycodes which still don't have a vkey, assign any spare
-     * character, function key, or OEM virtual key code. */
-    vkey_range = 0;
-    vkey = vkey_ranges[vkey_range].first;
-    for (keyc = min_keycode; keyc <= max_keycode; keyc++)
-    {
-        if (keyc2vkey[keyc] & 0xff)
-            continue;
-
-        e2.keycode = (KeyCode)keyc;
-        keysym = XLookupKeysym(&e2, 0);
-        if (!keysym)
-           continue;
-
-        while (vkey && vkey_used[vkey])
-        {
-            if (vkey == vkey_ranges[vkey_range].last)
-            {
-                vkey_range++;
-                vkey = vkey_ranges[vkey_range].first;
-            }
-            else
-                vkey++;
-        }
-
-        if (!vkey)
-        {
-            WARN("No more vkeys available!\n");
-            break;
-        }
-
-        if (TRACE_ON(keyboard))
-        {
-            TRACE("spare virtual key %04X assigned to keycode %u:\n",
-                             vkey, e2.keycode);
-            TRACE("(");
-            for (i = 0; i < keysyms_per_keycode; i += 1)
-            {
-                const char *ksname;
-
-                keysym = XLookupKeysym(&e2, i);
-                ksname = XKeysymToString(keysym);
-                if (!ksname)
-                    ksname = "NoSymbol";
-                TRACE( "%lx (%s) ", keysym, ksname);
-            }
-            TRACE(")\n");
-        }
-
-        TRACE("keycode %u => vkey %04X\n", e2.keycode, vkey);
-        keyc2vkey[e2.keycode] = vkey;
-        vkey_used[vkey] = 1;
-    } /* for */
-#undef VKEY_IF_NOT_USED
-}
-
 static void find_xkb_layout_variant( Display *display, XModifierKeymap *mmp, int group, const char *name,
                                      const char **layout, const char **variant )
 {
@@ -2228,8 +2012,6 @@ void init_keyboard_layouts( Display *display )
         WARN( "Xkb langid %04x differs from detected langid %04x\n",
               xkb_lang, main_key_tab[kbd_layout].lcid );
 
-    init_keycode_mappings( display );
-
     pthread_mutex_unlock( &kbd_mutex );
 }
 
@@ -2251,6 +2033,21 @@ BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
     return TRUE;
 }
 
+void x11drv_keyboard_init_thread( struct x11drv_thread_data *data )
+{
+    unsigned int xkb_group;
+    XkbStateRec xkb_state;
+    Status status;
+
+    XkbUseExtension( data->display, NULL, NULL );
+    XkbSetDetectableAutoRepeat( data->display, True, NULL );
+    init_keyboard_layouts( data->display );
+    status = XkbGetState( data->display, XkbUseCoreKbd, &xkb_state );
+    xkb_group = status ? 0 : xkb_state.group;
+    TRACE( "current group %u (status %#x)\n", xkb_group, status );
+
+    data->layout = get_layout_from_xkb_group( xkb_group );
+}
 
 /***********************************************************************
  *           X11DRV_MappingNotify
@@ -2320,6 +2117,9 @@ xkbregistry_init_done:
 SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl )
 {
     Display *display = thread_init_display();
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    const struct layout *layout = thread_data->layout;
+    const USHORT *scan2vk = layout->scan2vk;
     KeyCode keycode;
     KeySym keysym;
     int index;
@@ -2360,8 +2160,8 @@ SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl )
 
     pthread_mutex_lock( &kbd_mutex );
 
-    /* keycode -> (keyc2vkey) vkey */
-    ret = keyc2vkey[keycode];
+    /* keycode -> vkey */
+    ret = scan2vk[keyc2scan( keycode, 0 )];
     if (!ret)
     {
         pthread_mutex_unlock( &kbd_mutex );
@@ -2401,6 +2201,9 @@ SHORT X11DRV_VkKeyScanEx( WCHAR wChar, HKL hkl )
  */
 UINT X11DRV_MapVirtualKeyEx( UINT wCode, UINT wMapType, HKL hkl )
 {
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    const struct layout *layout = thread_data->layout;
+    const USHORT *scan2vk = layout->scan2vk;
     UINT ret = 0;
     int keyc;
     Display *display = thread_init_display();
@@ -2423,9 +2226,10 @@ UINT X11DRV_MapVirtualKeyEx( UINT wCode, UINT wMapType, HKL hkl )
             /* let's do vkey -> keycode -> scan */
             for (keyc = min_keycode; keyc <= max_keycode; keyc++)
             {
-                if ((keyc2vkey[keyc] & 0xFF) == wCode)
+                WORD scan = keyc2scan( keyc, 0 );
+                if ((scan2vk[scan] & 0xFF) == wCode)
                 {
-                    ret = keyc2scan( keyc, 0 ) & 0xFF;
+                    ret = scan & 0xFF;
                     break;
                 }
             }
@@ -2441,14 +2245,17 @@ UINT X11DRV_MapVirtualKeyEx( UINT wCode, UINT wMapType, HKL hkl )
 
             /* let's do scan -> keycode -> vkey */
             for (keyc = min_keycode; keyc <= max_keycode; keyc++)
-                if ((keyc2scan( keyc, 0 ) & 0xFF) == (wCode & 0xFF))
+            {
+                WORD scan = keyc2scan( keyc, 0 );
+                if ((scan & 0xFF) == (wCode & 0xFF))
                 {
-                    ret = keyc2vkey[keyc] & 0xFF;
+                    ret = scan2vk[scan] & 0xFF;
                     /* Only stop if it's not a numpad vkey; otherwise keep
                        looking for a potential better vkey. */
                     if (ret && (ret < VK_NUMPAD0 || VK_DIVIDE < ret))
                         break;
                 }
+            }
 
             if (wMapType == MAPVK_VSC_TO_VK)
                 switch (ret)
@@ -2488,7 +2295,8 @@ UINT X11DRV_MapVirtualKeyEx( UINT wCode, UINT wMapType, HKL hkl )
             /* We exit on the first keycode found, to speed up the thing. */
             for (keyc=min_keycode; (keyc<=max_keycode) && (!e.keycode) ; keyc++)
             { /* Find a keycode that could have generated this virtual key */
-                if  ((keyc2vkey[keyc] & 0xFF) == wCode)
+                WORD scan = keyc2scan( keyc, 0 );
+                if  ((scan2vk[scan] & 0xFF) == wCode)
                 { /* We filter the extended bit, we don't know it */
                     e.keycode = keyc; /* Store it temporarily */
                     if ((EVENT_event_to_vkey(0,&e) & 0xFF) != wCode) {
@@ -2759,6 +2567,9 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
                         LPWSTR bufW, int bufW_size, UINT flags, HKL hkl )
 {
     Display *display = thread_init_display();
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    const struct layout *layout = thread_data->layout;
+    const USHORT *scan2vk = layout->scan2vk;
     XKeyEvent e;
     KeySym keysym = 0;
     INT ret;
@@ -2829,7 +2640,8 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
     /* We exit on the first keycode found, to speed up the thing. */
     for (keyc=min_keycode; (keyc<=max_keycode) && (!e.keycode) ; keyc++)
       { /* Find a keycode that could have generated this virtual key */
-          if  ((keyc2vkey[keyc] & 0xFF) == virtKey)
+          WORD scan = keyc2scan( keyc, 0 );
+          if  ((scan2vk[scan] & 0xFF) == virtKey)
           { /* We filter the extended bit, we don't know it */
               e.keycode = keyc; /* Store it temporarily */
               if ((EVENT_event_to_vkey(xic,&e) & 0xFF) != virtKey) {
