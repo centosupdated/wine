@@ -22,12 +22,472 @@
 
 #include "dshow.h"
 #include "wine/test.h"
+#include "wine/strmbase.h"
 #include "d3d9.h"
 #include "evr.h"
 #include "mferror.h"
 #include "mfapi.h"
 #include "initguid.h"
 #include "evr9.h"
+
+/* Mock presenter implementation to track method calls */
+typedef struct mock_presenter
+{
+    IMFVideoPresenter IMFVideoPresenter_iface;
+    IMFVideoDeviceID IMFVideoDeviceID_iface;
+    IMFTopologyServiceLookupClient IMFTopologyServiceLookupClient_iface;
+    IMFGetService IMFGetService_iface;
+    LONG ref_count;
+    IDirect3DDeviceManager9 *manager;
+    IMFTransform *mixer;
+    IMFMediaType *mixer_type;
+
+    /* Tracking variables */
+    HANDLE event;
+    BOOL clock_start_called;
+    BOOL clock_stop_called;
+    LONGLONG start_time;
+    LONGLONG stop_time;
+} mock_presenter;
+
+
+static IDirect3DDeviceManager9 *create_d3d_device_manager(IDirect3DDevice9 *device)
+{
+    HRESULT hr = S_OK;
+    IDirect3DDeviceManager9 *manager = NULL;
+    UINT token;
+
+    hr = DXVA2CreateDirect3DDeviceManager9(&token, &manager);
+    ok(hr == S_OK, "Failed to create D3D9 device manager.\n");
+
+    hr =IDirect3DDeviceManager9_ResetDevice(manager, device, token);
+    ok(hr == S_OK, "Failed to reset D3D9 device.\n");
+
+    return manager;
+}
+
+static inline mock_presenter *mock_impl_from_IMFVideoPresenter(IMFVideoPresenter *iface)
+{
+    return CONTAINING_RECORD(iface, mock_presenter, IMFVideoPresenter_iface);
+}
+
+static inline mock_presenter *mock_impl_from_IMFVideoDeviceID(IMFVideoDeviceID *iface)
+{
+    return CONTAINING_RECORD(iface, mock_presenter, IMFVideoDeviceID_iface);
+}
+
+static inline mock_presenter *mock_impl_from_IMFTopologyServiceLookupClient(IMFTopologyServiceLookupClient *iface)
+{
+    return CONTAINING_RECORD(iface, mock_presenter, IMFTopologyServiceLookupClient_iface);
+}
+
+static inline mock_presenter *mock_impl_from_IMFGetService(IMFGetService *iface)
+{
+    return CONTAINING_RECORD(iface, mock_presenter, IMFGetService_iface);
+}
+
+/* IMFVideoPresenter methods */
+static HRESULT WINAPI mock_presenter_QueryInterface(IMFVideoPresenter *iface, REFIID riid, void **obj)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IMFVideoPresenter))
+    {
+        *obj = &This->IMFVideoPresenter_iface;
+        IMFVideoPresenter_AddRef(iface);
+        return S_OK;
+    }
+    else if (IsEqualIID(riid, &IID_IMFVideoDeviceID))
+    {
+        *obj = &This->IMFVideoDeviceID_iface;
+        IMFVideoDeviceID_AddRef(&This->IMFVideoDeviceID_iface);
+        return S_OK;
+    }
+    else if (IsEqualIID(riid, &IID_IMFTopologyServiceLookupClient))
+    {
+        *obj = &This->IMFTopologyServiceLookupClient_iface;
+        IMFTopologyServiceLookupClient_AddRef(&This->IMFTopologyServiceLookupClient_iface);
+        return S_OK;
+    }
+    else if (IsEqualIID(riid, &IID_IMFGetService))
+    {
+        *obj = &This->IMFGetService_iface;
+        IMFGetService_AddRef(&This->IMFGetService_iface);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI mock_presenter_AddRef(IMFVideoPresenter *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+    return InterlockedIncrement(&This->ref_count);
+}
+
+static ULONG WINAPI mock_presenter_Release(IMFVideoPresenter *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+    ULONG ref = InterlockedDecrement(&This->ref_count);
+
+    if (!ref)
+    {
+        HeapFree(GetProcessHeap(), 0, This);
+        CloseHandle(This->event);
+    }
+
+    return ref;
+}
+
+static HRESULT WINAPI mock_presenter_GetCurrentMediaType(IMFVideoPresenter *iface, IMFVideoMediaType **media_type)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+    HRESULT hr;
+
+    if (media_type)
+    {
+        hr = IMFMediaType_QueryInterface(This->mixer_type, &IID_IMFVideoMediaType, (void**)media_type);
+        ok(hr == S_OK, "Unexpected hr %#lx %p.\n", hr, *media_type);
+        return hr;
+    }
+    return S_OK;
+}
+
+static HRESULT WINAPI mock_presenter_ProcessMessage(IMFVideoPresenter *iface, MFVP_MESSAGE_TYPE message_type, ULONG_PTR param)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+
+    switch (message_type)
+    {
+        case MFVP_MESSAGE_INVALIDATEMEDIATYPE:
+        {
+            HRESULT hr = S_OK;
+            DWORD i = 0;
+            IMFMediaType *mixer_type = NULL;
+
+            if (!This->mixer) return MF_E_INVALIDREQUEST;
+
+            while ((hr != MF_E_NO_MORE_TYPES))
+            {
+                GUID subtype, major;
+                hr = IMFTransform_GetOutputAvailableType(This->mixer, 0, i++, &mixer_type);
+                if (FAILED(hr)) break;
+                hr = IMFMediaType_GetGUID(mixer_type, &MF_MT_MAJOR_TYPE, &major);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                hr = IMFMediaType_GetGUID(mixer_type, &MF_MT_SUBTYPE, &subtype);
+                ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+                if (IsEqualGUID(&major, &MFMediaType_Video) && IsEqualGUID(&subtype, &MFVideoFormat_RGB32)) break;
+            }
+            hr = IMFMediaType_SetUINT64(mixer_type, &MF_MT_FRAME_SIZE, (UINT64)32 << 32 | 16);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+            hr = IMFMediaType_SetUINT32(mixer_type, &MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+            hr = IMFTransform_SetOutputType(This->mixer, 0, mixer_type, 0);
+            ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+            This->mixer_type = mixer_type;
+            break;
+        }
+        default:
+            return S_OK;
+    }
+    return S_OK;
+}
+
+static HRESULT WINAPI mock_presenter_OnClockStart(IMFVideoPresenter *iface, MFTIME clock_start_time,
+                                                 LONGLONG start_offset)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+    SetEvent(This->event);
+    This->clock_start_called = TRUE;
+    This->start_time = clock_start_time;
+    return S_OK;
+}
+
+static HRESULT WINAPI mock_presenter_OnClockStop(IMFVideoPresenter *iface, MFTIME clock_stop_time)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(iface);
+    This->clock_stop_called = TRUE;
+    This->stop_time = clock_stop_time;
+    return S_OK;
+}
+
+static HRESULT WINAPI mock_presenter_OnClockPause(IMFVideoPresenter *iface, MFTIME clock_pause_time)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI mock_presenter_OnClockRestart(IMFVideoPresenter *iface, MFTIME clock_start_time)
+{
+    return S_OK;
+}
+
+static HRESULT WINAPI mock_presenter_OnClockSetRate(IMFVideoPresenter *iface, MFTIME clock_rate_time, float rate)
+{
+    return S_OK;
+}
+
+static const IMFVideoPresenterVtbl mock_presenter_vtbl =
+{
+    mock_presenter_QueryInterface,
+    mock_presenter_AddRef,
+    mock_presenter_Release,
+    mock_presenter_OnClockStart,
+    mock_presenter_OnClockStop,
+    mock_presenter_OnClockPause,
+    mock_presenter_OnClockRestart,
+    mock_presenter_OnClockSetRate,
+    mock_presenter_ProcessMessage,
+    mock_presenter_GetCurrentMediaType
+};
+
+/* IMFVideoDeviceID methods */
+static HRESULT WINAPI mock_device_id_QueryInterface(IMFVideoDeviceID *iface, REFIID riid, void **obj)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoDeviceID(iface);
+    return IMFVideoPresenter_QueryInterface(&This->IMFVideoPresenter_iface, riid, obj);
+}
+
+static ULONG WINAPI mock_device_id_AddRef(IMFVideoDeviceID *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoDeviceID(iface);
+    return IMFVideoPresenter_AddRef(&This->IMFVideoPresenter_iface);
+}
+
+static ULONG WINAPI mock_device_id_Release(IMFVideoDeviceID *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoDeviceID(iface);
+    return IMFVideoPresenter_Release(&This->IMFVideoPresenter_iface);
+}
+
+static HRESULT WINAPI mock_device_id_GetDeviceID(IMFVideoDeviceID *iface, IID *device_id)
+{
+    if (!device_id)
+        return E_POINTER;
+
+    *device_id = IID_IDirect3DDevice9;
+    return S_OK;
+}
+
+static const IMFVideoDeviceIDVtbl mock_device_id_vtbl =
+{
+    mock_device_id_QueryInterface,
+    mock_device_id_AddRef,
+    mock_device_id_Release,
+    mock_device_id_GetDeviceID
+};
+
+/* IMFTopologyServiceLookupClient methods */
+static HRESULT WINAPI mock_lookup_client_QueryInterface(IMFTopologyServiceLookupClient *iface, REFIID riid, void **obj)
+{
+    mock_presenter *This = mock_impl_from_IMFTopologyServiceLookupClient(iface);
+    return IMFVideoPresenter_QueryInterface(&This->IMFVideoPresenter_iface, riid, obj);
+}
+
+static ULONG WINAPI mock_lookup_client_AddRef(IMFTopologyServiceLookupClient *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFTopologyServiceLookupClient(iface);
+    return IMFVideoPresenter_AddRef(&This->IMFVideoPresenter_iface);
+}
+
+static ULONG WINAPI mock_lookup_client_Release(IMFTopologyServiceLookupClient *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFTopologyServiceLookupClient(iface);
+    return IMFVideoPresenter_Release(&This->IMFVideoPresenter_iface);
+}
+
+static HRESULT WINAPI mock_lookup_client_InitServicePointers(IMFTopologyServiceLookupClient *iface,
+        IMFTopologyServiceLookup *service_lookup)
+{
+    DWORD obj_count = 1;
+    HRESULT hr;
+    mock_presenter *This = mock_impl_from_IMFTopologyServiceLookupClient(iface);
+
+    if (!service_lookup) return E_POINTER;
+
+    hr = IMFTopologyServiceLookup_LookupService(service_lookup, MF_SERVICE_LOOKUP_GLOBAL, 0,
+            &MR_VIDEO_MIXER_SERVICE, &IID_IMFTransform, (void**)&This->mixer, &obj_count);
+
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    return hr;
+}
+
+static HRESULT WINAPI mock_lookup_client_ReleaseServicePointers(IMFTopologyServiceLookupClient *iface)
+{
+    return S_OK;
+}
+
+static const IMFTopologyServiceLookupClientVtbl mock_lookup_client_vtbl =
+{
+    mock_lookup_client_QueryInterface,
+    mock_lookup_client_AddRef,
+    mock_lookup_client_Release,
+    mock_lookup_client_InitServicePointers,
+    mock_lookup_client_ReleaseServicePointers,
+};
+
+/* IMFGetService methods */
+static HRESULT WINAPI mock_get_service_QueryInterface(IMFGetService *iface, REFIID riid, void **obj)
+{
+    mock_presenter *This = mock_impl_from_IMFGetService(iface);
+    return IMFVideoPresenter_QueryInterface(&This->IMFVideoPresenter_iface, riid, obj);
+}
+
+static ULONG WINAPI mock_get_service_AddRef(IMFGetService *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFGetService(iface);
+    return IMFVideoPresenter_AddRef(&This->IMFVideoPresenter_iface);
+}
+
+static ULONG WINAPI mock_get_service_Release(IMFGetService *iface)
+{
+    mock_presenter *This = mock_impl_from_IMFGetService(iface);
+    return IMFVideoPresenter_Release(&This->IMFVideoPresenter_iface);
+}
+
+static HRESULT WINAPI mock_get_service_GetService(IMFGetService *iface, REFGUID service,
+        REFIID riid, void **obj)
+{
+    mock_presenter *This = mock_impl_from_IMFGetService(iface);
+
+    if (IsEqualGUID(service, &MR_VIDEO_RENDER_SERVICE) && IsEqualIID(riid, &IID_IDirect3DDeviceManager9))
+    {
+        if (!This->manager) return MF_E_UNEXPECTED;
+        *obj = This->manager;
+        IDirect3DDeviceManager9_AddRef(This->manager);
+        return S_OK;
+    }
+
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static const IMFGetServiceVtbl mock_get_service_vtbl =
+{
+    mock_get_service_QueryInterface,
+    mock_get_service_AddRef,
+    mock_get_service_Release,
+    mock_get_service_GetService,
+};
+
+static void create_mock_presenter(IMFVideoPresenter **presenter, IDirect3DDevice9 *device)
+{
+    mock_presenter *object;
+
+    object = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*object));
+    if (!object) return;
+
+    object->IMFVideoPresenter_iface.lpVtbl = &mock_presenter_vtbl;
+    object->IMFVideoDeviceID_iface.lpVtbl = &mock_device_id_vtbl;
+    object->IMFTopologyServiceLookupClient_iface.lpVtbl = &mock_lookup_client_vtbl;
+    object->IMFGetService_iface.lpVtbl = &mock_get_service_vtbl;
+    object->ref_count = 1;
+    object->clock_start_called = FALSE;
+    object->clock_stop_called = FALSE;
+    object->manager =  create_d3d_device_manager(device);
+    object->mixer_type = NULL;
+    object->mixer = NULL;
+    object->start_time = 0;
+    object->stop_time = 0;
+    object->event = CreateEventW(NULL, TRUE, TRUE, NULL);
+    ResetEvent(object->event);
+
+    *presenter = &object->IMFVideoPresenter_iface;
+}
+
+struct frame_thread_params
+{
+    IMemInputPin *sink;
+    IMediaSample *sample;
+};
+
+static DWORD WINAPI frame_thread(void *arg)
+{
+    struct frame_thread_params *params = arg;
+    HRESULT hr;
+
+    hr = IMemInputPin_Receive(params->sink, params->sample);
+    IMediaSample_Release(params->sample);
+    free(params);
+
+    return hr;
+}
+
+static HANDLE send_frame_time(IMemInputPin *sink, REFERENCE_TIME start_time, unsigned char color)
+{
+    struct frame_thread_params *params = malloc(sizeof(*params));
+    IMemAllocator *allocator;
+    REFERENCE_TIME end_time;
+    IMediaSample *sample;
+    HANDLE thread;
+    HRESULT hr;
+    BYTE *data;
+
+    hr = IMemInputPin_GetAllocator(sink, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMemAllocator_GetBuffer(allocator, &sample, NULL, NULL, 0);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMediaSample_GetPointer(sample, &data);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    memset(data, color, 32 * 16 * 2);
+
+    hr = IMediaSample_SetActualDataLength(sample, 32 * 16 * 2);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    start_time *= 10000000;
+    end_time = start_time + 10000000;
+    hr = IMediaSample_SetTime(sample, &start_time, &end_time);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    params->sink = sink;
+    params->sample = sample;
+    thread = CreateThread(NULL, 0, frame_thread, params, 0, NULL);
+
+    IMemAllocator_Release(allocator);
+    return thread;
+}
+
+static HANDLE send_frame(IMemInputPin *sink)
+{
+    return send_frame_time(sink, 0, 0x55); /* purple */
+}
+
+static HRESULT join_thread_(int line, HANDLE thread)
+{
+    DWORD ret;
+    ok_(__FILE__, line)(!WaitForSingleObject(thread, 5000), "Wait failed.\n");
+    GetExitCodeThread(thread, &ret);
+    CloseHandle(thread);
+    return ret;
+}
+#define join_thread(a) join_thread_(__LINE__, a)
+/* Helper functions to check if methods were called */
+static BOOL mock_presenter_clock_start_called(IMFVideoPresenter *presenter)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(presenter);
+    return This->clock_start_called;
+}
+
+static BOOL mock_presenter_clock_stop_called(IMFVideoPresenter *presenter)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(presenter);
+    return This->clock_stop_called;
+}
+
+static LONGLONG mock_presenter_get_start_time(IMFVideoPresenter *presenter)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(presenter);
+    return This->start_time;
+}
+
+static LONGLONG mock_presenter_get_stop_time(IMFVideoPresenter *presenter)
+{
+    mock_presenter *This = mock_impl_from_IMFVideoPresenter(presenter);
+    return This->stop_time;
+}
 
 static const WCHAR sink_id[] = L"EVR Input0";
 
@@ -173,6 +633,57 @@ static IDirect3DDevice9 *create_device(HWND focus_window)
     IDirect3D9_Release(d3d9);
 
     return device;
+}
+
+struct testfilter
+{
+    struct strmbase_filter filter;
+    struct strmbase_source source;
+};
+
+static inline struct testfilter *impl_from_BaseFilter(struct strmbase_filter *iface)
+{
+    return CONTAINING_RECORD(iface, struct testfilter, filter);
+}
+
+static struct strmbase_pin *testfilter_get_pin(struct strmbase_filter *iface, unsigned int index)
+{
+    struct testfilter *filter = impl_from_BaseFilter(iface);
+    if (!index)
+        return &filter->source.pin;
+    return NULL;
+}
+
+static void testfilter_destroy(struct strmbase_filter *iface)
+{
+    struct testfilter *filter = impl_from_BaseFilter(iface);
+    strmbase_source_cleanup(&filter->source);
+    strmbase_filter_cleanup(&filter->filter);
+}
+
+static const struct strmbase_filter_ops testfilter_ops =
+{
+    .filter_get_pin = testfilter_get_pin,
+    .filter_destroy = testfilter_destroy,
+};
+
+static HRESULT WINAPI testsource_DecideAllocator(struct strmbase_source *iface,
+        IMemInputPin *peer, IMemAllocator **allocator)
+{
+    return S_OK;
+}
+
+static const struct strmbase_source_ops testsource_ops =
+{
+    .pfnAttemptConnection = BaseOutputPinImpl_AttemptConnection,
+    .pfnDecideAllocator = testsource_DecideAllocator,
+};
+
+static void testfilter_init(struct testfilter *filter)
+{
+    static const GUID clsid = {0xabacab};
+    strmbase_filter_init(&filter->filter, NULL, &clsid, &testfilter_ops);
+    strmbase_source_init(&filter->source, &filter->filter, L"", &testsource_ops);
 }
 
 static IBaseFilter *create_evr(void)
@@ -3877,6 +4388,145 @@ done:
     DestroyWindow(window);
 }
 
+static void test_stream_start_stop_notifications(void)
+{
+    VIDEOINFOHEADER vih =
+    {
+        .bmiHeader.biSize = sizeof(BITMAPINFOHEADER),
+        .bmiHeader.biBitCount = 16,
+        .bmiHeader.biWidth = 32,
+        .bmiHeader.biHeight = 16,
+        .bmiHeader.biPlanes = 1,
+        .bmiHeader.biCompression = BI_RGB,
+    };
+    AM_MEDIA_TYPE req_mt =
+    {
+        .majortype = MEDIATYPE_Video,
+        .formattype = FORMAT_VideoInfo,
+        .cbFormat = sizeof(vih),
+        .pbFormat = (BYTE *)&vih,
+    };
+    ALLOCATOR_PROPERTIES req_props = {1, 32 * 16 * 2, 1, 0}, ret_props;
+    IBaseFilter *filter;
+    IFilterGraph2 *graph = create_graph();
+    struct testfilter source;
+    IMFVideoPresenter *presenter = NULL;
+    IMFVideoRenderer *renderer;
+    IMemAllocator *allocator;
+    IMediaControl *control;
+    IMemInputPin *input;
+    IPin *pin;
+    LONGLONG start_time;
+    HRESULT hr;
+    ULONG ref;
+    HANDLE thread;
+    IDirect3DDevice9 *device;
+    HWND window;
+
+    filter = create_evr();
+    window = create_window();
+    if (!(device = create_device(window)))
+    {
+        skip("Failed to create a D3D device, skipping tests.\n");
+        DestroyWindow(window);
+        return;
+    }
+
+    hr = IBaseFilter_QueryInterface(filter, &IID_IMFVideoRenderer, (void **)&renderer);
+    ok(hr == S_OK, "Failed to get IMFVideoRenderer, hr %#lx.\n", hr);
+
+    create_mock_presenter(&presenter, device);
+
+    hr = IMFVideoRenderer_InitializeRenderer(renderer, NULL, presenter);
+    if (FAILED(hr))
+    {
+        win_skip("InitializeRenderer failed, hr %#lx. Skipping mock presenter tests.\n", hr);
+        IMFVideoRenderer_Release(renderer);
+        IMFVideoPresenter_Release(presenter);
+        IFilterGraph2_Release(graph);
+        IBaseFilter_Release(filter);
+        return;
+    }
+    IMFVideoRenderer_Release(renderer);
+
+    testfilter_init(&source);
+
+    IFilterGraph2_AddFilter(graph, &source.filter.IBaseFilter_iface, NULL);
+    IFilterGraph2_AddFilter(graph, filter, L"renderer");
+    IFilterGraph2_QueryInterface(graph, &IID_IMediaControl, (void **)&control);
+
+    hr = IBaseFilter_FindPin(filter, L"EVR Input0", &pin);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    req_mt.subtype = MEDIASUBTYPE_RGB32;
+    req_mt.formattype = FORMAT_VideoInfo;
+    hr = IFilterGraph2_ConnectDirect(graph, &source.source.pin.IPin_iface, pin, &req_mt);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IPin_QueryInterface(pin, &IID_IMemInputPin, (void **)&input);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IMemInputPin_GetAllocator(input, &allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    if (!allocator) {
+        hr = CoCreateInstance(&CLSID_MemoryAllocator, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IMemAllocator, (void **)&allocator);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        hr = IMemAllocator_SetProperties(allocator, &req_props, &ret_props);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+        hr = IMemInputPin_NotifyAllocator(input, allocator, TRUE);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    }
+    else {
+        hr = IMemAllocator_SetProperties(allocator, &req_props, &ret_props);
+        ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    }
+
+    hr = IMemAllocator_Commit(allocator);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    hr = IMediaControl_Pause(control);
+    ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+
+    /* Verify mock presenter has not been called yet. */
+    ok(!mock_presenter_clock_start_called(presenter), "OnClockStart should not be called yet.\n");
+    ok(!mock_presenter_clock_stop_called(presenter), "OnClockStop should not be called yet.\n");
+
+    thread = send_frame(input);
+    hr = IMediaControl_Run(control);
+    todo_wine ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
+    join_thread(thread);
+
+    ok(!WaitForSingleObject(mock_impl_from_IMFVideoPresenter(presenter)->event, 5000),
+            "wait presenter notify failed.\n");
+
+    ok(mock_presenter_clock_start_called(presenter), "OnClockStart should be called after Run.\n");
+    start_time = mock_presenter_get_start_time(presenter);
+    ok(start_time > 0, "Start time should be positive, got %I64d.\n", start_time);
+
+    hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    ok(mock_presenter_clock_stop_called(presenter), "OnClockStop should be called after Stop.\n");
+    ok(mock_presenter_get_stop_time(presenter) > 0, "Stop time should be positive.\n");
+
+    hr = IFilterGraph2_Disconnect(graph, pin);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    IFilterGraph2_Disconnect(graph, &source.source.pin.IPin_iface);
+    IMemAllocator_Release(allocator);
+    IMemInputPin_Release(input);
+    IPin_Release(pin);
+    IMediaControl_Release(control);
+    ref = IFilterGraph2_Release(graph);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+    ref = IBaseFilter_Release(filter);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+    ref = IBaseFilter_Release(&source.filter.IBaseFilter_iface);
+    ok(!ref, "Got outstanding refcount %ld.\n", ref);
+}
+
+
 START_TEST(evr)
 {
     IMFVideoPresenter *presenter;
@@ -3933,6 +4583,7 @@ START_TEST(evr)
     test_mixer_samples();
     test_mixer_render();
     test_MFIsFormatYUV();
+    test_stream_start_stop_notifications();
 
     CoUninitialize();
 }
