@@ -40,6 +40,7 @@
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "pointer-warp-v1-client-protocol.h"
 #include "alpha-modifier-v1-client-protocol.h"
+#include "xdg-activation-v1-client-protocol.h"
 
 #include "windef.h"
 #include "winbase.h"
@@ -182,6 +183,7 @@ struct wayland
     struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
     struct wp_pointer_warp_v1 *wp_pointer_warp_v1;
     struct wp_alpha_modifier_v1 *wp_alpha_modifier_v1;
+    struct xdg_activation_v1 *xdg_activation_v1;
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
@@ -341,6 +343,7 @@ void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR title);
 void wayland_surface_assign_icon(struct wayland_surface *surface);
 void wayland_surface_set_icon_buffer(struct wayland_surface *surface, UINT type, const ICONINFO *ii);
 void wayland_surface_set_opacity(struct wayland_surface *surface, BYTE alpha, UINT flags);
+void wayland_surface_flash_window(struct wayland_surface *surface);
 
 static inline BOOL wayland_surface_is_toplevel(struct wayland_surface *surface)
 {
@@ -450,6 +453,7 @@ LRESULT WAYLAND_ClipboardWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
 BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset);
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_DestroyWindow(HWND hwnd);
+void WAYLAND_FlashWindowEx(FLASHWINFO *info);
 BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
 void WAYLAND_SetCursor(HWND hwnd, HCURSOR hcursor);
 BOOL WAYLAND_SetCursorPos(INT x, INT y);
