@@ -931,7 +931,6 @@ static void sdl_add_device(unsigned int index)
     {
         .input = -1,
         .manufacturer = {'S','D','L',0},
-        .serialnumber = {'0','0','0','0',0},
     };
     struct sdl_device *impl;
 
