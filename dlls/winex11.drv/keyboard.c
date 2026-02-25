@@ -1993,13 +1993,82 @@ void init_keyboard_layouts( Display *display )
     pthread_mutex_unlock( &kbd_mutex );
 }
 
+static HKL get_hkl( LANGID langid, WORD layout_id )
+{
+    LCID locale = LOWORD(NtUserGetKeyboardLayout(0));
+
+    TRACE( "langid %04x, layout_id %04x\n", langid, layout_id );
+
+    if (layout_id) return ULongToHandle( MAKELONG(locale, 0xf000 | layout_id) );
+    return ULongToHandle( MAKELONG(locale, langid) );
+}
+
+static struct layout *get_layout_from_hkl( HKL hkl )
+{
+    struct layout *layout;
+
+    TRACE( "hkl %p\n", hkl );
+
+    pthread_mutex_lock( &kbd_mutex );
+    LIST_FOR_EACH_ENTRY( layout, &xkb_layouts, struct layout, entry )
+    {
+        if (!layout->layout_id && layout->lang == HIWORD(hkl)) break;
+        if (layout->layout_id && layout->layout_id == HIWORD(hkl)) break;
+    }
+    if (&layout->entry == &xkb_layouts) layout = NULL;
+    pthread_mutex_unlock( &kbd_mutex );
+    return layout;
+}
+
+static BOOL is_ime_hkl(HKL hkl)
+{
+    /* See https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-language-pack-default-values#input-method-editors */
+    switch (HIWORD(hkl))
+    {
+    case MAKELANGID(LANG_AMHARIC, SUBLANG_AMHARIC_ETHIOPIA): return TRUE;
+    case MAKELANGID(LANG_BENGALI, SUBLANG_BENGALI_INDIA): return TRUE;
+    case MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED): return TRUE;
+    case MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL): return TRUE;
+    case MAKELANGID(LANG_GUJARATI, SUBLANG_GUJARATI_INDIA): return TRUE;
+    case MAKELANGID(LANG_HINDI, SUBLANG_HINDI_INDIA): return TRUE;
+    case MAKELANGID(LANG_JAPANESE, SUBLANG_JAPANESE_JAPAN): return TRUE;
+    case MAKELANGID(LANG_KANNADA, SUBLANG_KANNADA_INDIA): return TRUE;
+    case MAKELANGID(LANG_KOREAN, SUBLANG_KOREAN): return TRUE;
+    case MAKELANGID(LANG_MALAYALAM, SUBLANG_MALAYALAM_INDIA): return TRUE;
+    case MAKELANGID(LANG_MARATHI, SUBLANG_MARATHI_INDIA): return TRUE;
+    case MAKELANGID(LANG_NEPALI, SUBLANG_NEPALI_NEPAL): return TRUE;
+    case MAKELANGID(LANG_ODIA, SUBLANG_ODIA_INDIA): return TRUE;
+    case MAKELANGID(LANG_PUNJABI, SUBLANG_PUNJABI_INDIA): return TRUE;
+    case MAKELANGID(LANG_TAMIL, SUBLANG_TAMIL_INDIA): return TRUE;
+    case MAKELANGID(LANG_TAMIL, SUBLANG_TAMIL_SRI_LANKA): return TRUE;
+    case MAKELANGID(LANG_TELUGU, SUBLANG_TELUGU_INDIA): return TRUE;
+    case MAKELANGID(LANG_TIGRINYA, SUBLANG_TIGRINYA_ETHIOPIA): return TRUE;
+    case MAKELANGID(LANG_VIETNAMESE, SUBLANG_VIETNAMESE_VIETNAM): return TRUE;
+    case MAKELANGID(LANG_YI, SUBLANG_YI_PRC): return TRUE;
+    default: return (HIWORD(hkl) & 0xe000) == 0xe000;
+    }
+}
 
 /***********************************************************************
  *		ActivateKeyboardLayout (X11DRV.@)
  */
 BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
 {
+    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+    struct layout *layout = get_layout_from_hkl( hkl );
+
     WARN("%p, %04x: semi-stub!\n", hkl, flags);
+
+    if (layout == thread_data->layout) return TRUE;
+    if (!layout)
+    {
+        if (!is_ime_hkl(hkl))
+        {
+            WARN( "HKL %p not found, returning FALSE\n", hkl );
+            return FALSE;
+        }
+        layout = thread_data->layout;
+    }
 
     if (flags & KLF_SETFORPROCESS)
     {
@@ -2008,6 +2077,8 @@ BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
         return FALSE;
     }
 
+    thread_data->layout = layout;
+
     return TRUE;
 }
 
@@ -2015,7 +2086,9 @@ void x11drv_keyboard_init_thread( struct x11drv_thread_data *data )
 {
     unsigned int xkb_group;
     XkbStateRec xkb_state;
+    struct layout *layout;
     Status status;
+    HKL hkl;
 
     XkbUseExtension( data->display, NULL, NULL );
     XkbSetDetectableAutoRepeat( data->display, True, NULL );
@@ -2024,7 +2097,10 @@ void x11drv_keyboard_init_thread( struct x11drv_thread_data *data )
     xkb_group = status ? 0 : xkb_state.group;
     TRACE( "current group %u (status %#x)\n", xkb_group, status );
 
-    data->layout = get_layout_from_xkb_group( xkb_group );
+    data->layout = layout = get_layout_from_xkb_group( xkb_group );
+
+    hkl = get_hkl( layout->lang, layout->layout_id );
+    NtUserActivateKeyboardLayout( hkl, 0 );
 }
 
 /***********************************************************************
