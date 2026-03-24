@@ -1460,8 +1460,9 @@ HKL WINAPI NtUserActivateKeyboardLayout( HKL layout, UINT flags )
 
         if (ime_hwnd) send_message( ime_hwnd, WM_IME_INTERNAL, IME_INTERNAL_HKL_ACTIVATE, HandleToUlong(layout) );
 
-        if ((focus = get_focus()) && get_window_thread( focus, NULL ) == GetCurrentThreadId())
-            send_message( focus, WM_INPUTLANGCHANGE, cs.ciCharset, (LPARAM)layout );
+        if ((focus = get_focus()) && (focus = NtUserGetAncestor( focus, GA_ROOT )) != NtUserGetDesktopWindow()
+            && get_window_thread( focus, NULL ) == GetCurrentThreadId())
+                send_message( focus, WM_INPUTLANGCHANGE, cs.ciCharset, (LPARAM)layout );
     }
 
     if (!old_layout) return get_locale_kbd_layout();
