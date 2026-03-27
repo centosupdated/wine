@@ -3651,7 +3651,8 @@ static HRESULT write_principal(IStream *stream, IPrincipal *principal)
         if (hr != S_OK) return hr;
     }
     hr = IPrincipal_get_UserId(principal, &bstr);
-    if (hr == S_OK && lstrlenW(bstr))
+    /* IPrincipal_get_UserId returns S_OK with bstr == NULL if UserId has not been set beforehand */
+    if (hr == S_OK && bstr && *bstr)
     {
         hr = write_text_value(stream, L"UserId", bstr);
         SysFreeString(bstr);
