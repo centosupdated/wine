@@ -1189,6 +1189,8 @@ typedef struct
 {
     ITriggerCollection ITriggerCollection_iface;
     LONG ref;
+    ITrigger **list;
+    LONG count;
 } trigger_collection;
 
 static inline trigger_collection *impl_from_ITriggerCollection(ITriggerCollection *iface)
@@ -1226,6 +1228,16 @@ static ULONG WINAPI TriggerCollection_AddRef(ITriggerCollection *iface)
     return ref;
 }
 
+static void free_triggers_list(ITrigger **list, LONG count)
+{
+    LONG i;
+
+    for (i = 0; i < count; i++)
+        ITrigger_Release(list[i]);
+
+    free(list);
+}
+
 static ULONG WINAPI TriggerCollection_Release(ITriggerCollection *iface)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
@@ -1234,7 +1246,10 @@ static ULONG WINAPI TriggerCollection_Release(ITriggerCollection *iface)
     TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref)
+    {
+        free_triggers_list(This->list, This->count);
         free(This);
+    }
 
     return ref;
 }
@@ -1273,15 +1288,34 @@ static HRESULT WINAPI TriggerCollection_Invoke(ITriggerCollection *iface, DISPID
 static HRESULT WINAPI TriggerCollection_get_Count(ITriggerCollection *iface, LONG *count)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
-    FIXME("(%p)->(%p)\n", This, count);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, count);
+
+    if (!count) return E_POINTER;
+
+    *count = This->count;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI TriggerCollection_get_Item(ITriggerCollection *iface, LONG index, ITrigger **trigger)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
-    FIXME("(%p)->(%ld %p)\n", This, index, trigger);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%ld %p)\n", This, index, trigger);
+
+    if (!trigger) return E_POINTER;
+
+    /* collections are 1 based */
+    if (index < 1)
+        return E_INVALIDARG;
+    if (index > This->count)
+        return E_FAIL;
+
+    *trigger = This->list[index - 1];
+    ITrigger_AddRef(*trigger);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI TriggerCollection_get__NewEnum(ITriggerCollection *iface, IUnknown **penum)
@@ -1294,22 +1328,41 @@ static HRESULT WINAPI TriggerCollection_get__NewEnum(ITriggerCollection *iface, 
 static HRESULT WINAPI TriggerCollection_Create(ITriggerCollection *iface, TASK_TRIGGER_TYPE2 type, ITrigger **trigger)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
+    HRESULT hr;
 
     TRACE("(%p)->(%d %p)\n", This, type, trigger);
 
-    switch(type) {
+    switch (type)
+    {
     case TASK_TRIGGER_DAILY:
-        return DailyTrigger_create(trigger);
+        hr = DailyTrigger_create(trigger);
+        break;
     case TASK_TRIGGER_REGISTRATION:
-        return RegistrationTrigger_create(trigger);
+        hr = RegistrationTrigger_create(trigger);
+        break;
     case TASK_TRIGGER_LOGON:
-        return LogonTrigger_create(trigger);
+        hr = LogonTrigger_create(trigger);
+        break;
     default:
         FIXME("Unimplemented type %d\n", type);
         return E_NOTIMPL;
     }
 
-    return S_OK;
+    if (SUCCEEDED(hr))
+    {
+        ITrigger **new_array = realloc(This->list, (This->count + 1) * sizeof(*new_array));
+        if (!new_array)
+        {
+            ITrigger_Release(*trigger);
+            *trigger = NULL;
+            return E_OUTOFMEMORY;
+        }
+        This->list = new_array;
+        This->list[This->count++] = *trigger;
+        ITrigger_AddRef(*trigger);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI TriggerCollection_Remove(ITriggerCollection *iface, VARIANT index)
@@ -1322,8 +1375,14 @@ static HRESULT WINAPI TriggerCollection_Remove(ITriggerCollection *iface, VARIAN
 static HRESULT WINAPI TriggerCollection_Clear(ITriggerCollection *iface)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
-    FIXME("(%p)\n", This);
-    return E_NOTIMPL;
+
+    TRACE("(%p)\n", This);
+
+    free_triggers_list(This->list, This->count);
+    This->list = NULL;
+    This->count = 0;
+
+    return S_OK;
 }
 
 static const ITriggerCollectionVtbl TriggerCollection_vtbl = {
@@ -3178,6 +3237,8 @@ static HRESULT WINAPI TaskDefinition_get_Triggers(ITaskDefinition *iface, ITrigg
 
         collection->ITriggerCollection_iface.lpVtbl = &TriggerCollection_vtbl;
         collection->ref = 1;
+        collection->list = NULL;
+        collection->count = 0;
         This->triggers = &collection->ITriggerCollection_iface;
     }
 

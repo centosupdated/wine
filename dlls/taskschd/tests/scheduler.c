@@ -1640,6 +1640,69 @@ static void create_action(ITaskDefinition *taskdef)
     IActionCollection_Release(actions);
 }
 
+static void test_trigger_collection(ITriggerCollection *trigger_col)
+{
+    ITrigger *trigger;
+    HRESULT hr;
+    LONG count;
+
+    /* Collection may already contain triggers parsed from XML */
+    hr = ITriggerCollection_Clear(trigger_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    hr = ITriggerCollection_get_Count(trigger_col, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    count = -1;
+    hr = ITriggerCollection_get_Count(trigger_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, &trigger);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    count = -1;
+    hr = ITriggerCollection_get_Count(trigger_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 2, "expected 2, got %ld\n", count);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 0, &trigger);
+    ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#lx\n", hr);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 3, &trigger);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, &trigger);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 2, &trigger);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    hr = ITriggerCollection_Clear(trigger_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    count = -1;
+    hr = ITriggerCollection_get_Count(trigger_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, &trigger);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+}
+
 static void test_action_collection(IActionCollection *actions_col)
 {
     IAction *action;
@@ -1999,6 +2062,8 @@ static void test_TaskDefinition(void)
     hr = ITaskDefinition_get_Triggers(taskdef, &trigger_col);
     ok(hr == S_OK, "get_Triggers failed: %08lx\n", hr);
     ok(trigger_col != NULL, "Triggers = NULL\n");
+
+    test_trigger_collection(trigger_col);
 
     hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
     ok(hr == S_OK, "Create failed: %08lx\n", hr);
