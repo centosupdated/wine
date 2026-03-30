@@ -1640,6 +1640,69 @@ static void create_action(ITaskDefinition *taskdef)
     IActionCollection_Release(actions);
 }
 
+static void test_action_collection(IActionCollection *actions_col)
+{
+    IAction *action;
+    HRESULT hr;
+    LONG count;
+
+    /* Collection may already contain actions parsed from XML */
+    hr = IActionCollection_Clear(actions_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    hr = IActionCollection_get_Count(actions_col, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    count = -1;
+    hr = IActionCollection_get_Count(actions_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = IActionCollection_get_Item(actions_col, 1, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    hr = IActionCollection_get_Item(actions_col, 1, &action);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = IActionCollection_Create(actions_col, TASK_ACTION_EXEC, &action);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    hr = IActionCollection_Create(actions_col, TASK_ACTION_EXEC, &action);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    count = -1;
+    hr = IActionCollection_get_Count(actions_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 2, "expected 2, got %ld\n", count);
+
+    hr = IActionCollection_get_Item(actions_col, 0, &action);
+    ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#lx\n", hr);
+
+    hr = IActionCollection_get_Item(actions_col, 3, &action);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = IActionCollection_get_Item(actions_col, 1, &action);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    hr = IActionCollection_get_Item(actions_col, 2, &action);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    hr = IActionCollection_Clear(actions_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    count = -1;
+    hr = IActionCollection_get_Count(actions_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = IActionCollection_get_Item(actions_col, 1, &action);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+}
+
 static void test_TaskDefinition(void)
 {
     static WCHAR xml0[] = L"";
@@ -1742,6 +1805,7 @@ static void test_TaskDefinition(void)
         VARIANT_FALSE, VARIANT_FALSE, VARIANT_TRUE, VARIANT_TRUE, VARIANT_FALSE, VARIANT_TRUE,
         VARIANT_TRUE, VARIANT_TRUE };
     ITriggerCollection *trigger_col, *trigger_col2;
+    IActionCollection *actions_col;
     HRESULT hr;
     ITaskService *service;
     ITaskDefinition *taskdef;
@@ -1959,6 +2023,12 @@ static void test_TaskDefinition(void)
     ok(hr == S_OK, "get_Triggers failed: %08lx\n", hr);
     ok(trigger_col == trigger_col2, "Mismatched triggers\n");
     ITriggerCollection_Release(trigger_col2);
+
+    hr = ITaskDefinition_get_Actions(taskdef, &actions_col);
+    ok(hr == S_OK, "get_Actions failed: %08lx\n", hr);
+    ok(actions_col != NULL, "Actions = NULL\n");
+    test_action_collection(actions_col);
+    IActionCollection_Release(actions_col);
 
     IRegistrationInfo_Release(reginfo);
     ITaskDefinition_Release(taskdef);

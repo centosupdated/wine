@@ -2783,6 +2783,8 @@ typedef struct
 {
     IActionCollection IActionCollection_iface;
     LONG ref;
+    IAction **list;
+    LONG count;
 } Actions;
 
 static inline Actions *impl_from_IActionCollection(IActionCollection *iface)
@@ -2796,6 +2798,16 @@ static ULONG WINAPI Actions_AddRef(IActionCollection *iface)
     return InterlockedIncrement(&actions->ref);
 }
 
+static void free_list(IAction **list, LONG count)
+{
+    LONG i;
+
+    for (i = 0; i < count; i++)
+        IAction_Release(list[i]);
+
+    free(list);
+}
+
 static ULONG WINAPI Actions_Release(IActionCollection *iface)
 {
     Actions *actions = impl_from_IActionCollection(iface);
@@ -2804,6 +2816,7 @@ static ULONG WINAPI Actions_Release(IActionCollection *iface)
     if (!ref)
     {
         TRACE("destroying %p\n", iface);
+        free_list(actions->list, actions->count);
         free(actions);
     }
 
@@ -2859,14 +2872,35 @@ static HRESULT WINAPI Actions_Invoke(IActionCollection *iface, DISPID dispid, RE
 
 static HRESULT WINAPI Actions_get_Count(IActionCollection *iface, LONG *count)
 {
-    FIXME("%p,%p: stub\n", iface, count);
-    return E_NOTIMPL;
+    Actions *actions = impl_from_IActionCollection(iface);
+
+    TRACE("%p,%p\n", iface, count);
+
+    if (!count) return E_POINTER;
+
+    *count = actions->count;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Actions_get_Item(IActionCollection *iface, LONG index, IAction **action)
 {
-    FIXME("%p,%ld,%p: stub\n", iface, index, action);
-    return E_NOTIMPL;
+    Actions *actions = impl_from_IActionCollection(iface);
+
+    TRACE("%p,%ld,%p\n", iface, index, action);
+
+    if (!action) return E_POINTER;
+
+    /* collections are 1 based */
+    if (index < 1)
+        return E_INVALIDARG;
+    if (index > actions->count)
+        return E_FAIL;
+
+    *action = actions->list[index - 1];
+    IAction_AddRef(*action);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Actions_get__NewEnum(IActionCollection *iface, IUnknown **penum)
@@ -2889,17 +2923,37 @@ static HRESULT WINAPI Actions_put_XmlText(IActionCollection *iface, BSTR xml)
 
 static HRESULT WINAPI Actions_Create(IActionCollection *iface, TASK_ACTION_TYPE type, IAction **action)
 {
+    Actions *actions = impl_from_IActionCollection(iface);
+    HRESULT hr;
+
     TRACE("%p,%u,%p\n", iface, type, action);
 
     switch (type)
     {
     case TASK_ACTION_EXEC:
-        return ExecAction_create((IExecAction **)action);
+        hr = ExecAction_create((IExecAction **)action);
+        break;
 
     default:
         FIXME("unimplemented type %u\n", type);
         return E_NOTIMPL;
     }
+
+    if (SUCCEEDED(hr))
+    {
+        IAction **new_array = realloc(actions->list, (actions->count + 1) * sizeof(*new_array));
+        if (!new_array)
+        {
+            IAction_Release(*action);
+            *action = NULL;
+            return E_OUTOFMEMORY;
+        }
+        actions->list = new_array;
+        actions->list[actions->count++] = *action;
+        IAction_AddRef(*action);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI Actions_Remove(IActionCollection *iface, VARIANT index)
@@ -2910,8 +2964,15 @@ static HRESULT WINAPI Actions_Remove(IActionCollection *iface, VARIANT index)
 
 static HRESULT WINAPI Actions_Clear(IActionCollection *iface)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    Actions *actions = impl_from_IActionCollection(iface);
+
+    TRACE("%p\n", iface);
+
+    free_list(actions->list, actions->count);
+    actions->list = NULL;
+    actions->count = 0;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Actions_get_Context(IActionCollection *iface, BSTR *ctx)
@@ -2956,6 +3017,8 @@ static HRESULT Actions_create(IActionCollection **obj)
 
     actions->IActionCollection_iface.lpVtbl = &Actions_vtbl;
     actions->ref = 1;
+    actions->list = NULL;
+    actions->count = 0;
 
     *obj = &actions->IActionCollection_iface;
 
