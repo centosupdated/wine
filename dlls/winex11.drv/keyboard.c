@@ -423,20 +423,8 @@ static void create_layout_from_xkb( int xkb_group, const char *xkb_layout, LANGI
 /* Keyboard translation tables */
 #define MAIN_LEN 49
 
-/*** DEFINE YOUR NEW LANGUAGE-SPECIFIC MAPPINGS BELOW, SEE EXISTING TABLES */
-
-/* the VK mappings for the main keyboard will be auto-assigned as before,
-   so what we have here is just the character tables */
+/* Legacy keyboard layout detection keysym tables */
 /* order: Normal, Shift, AltGr, Shift-AltGr */
-/* We recommend you write just what is guaranteed to be correct (i.e. what's
-   written on the keycaps), not the bunch of special characters behind AltGr
-   and Shift-AltGr if it can vary among different X servers */
-/* These tables serve to guess the keyboard type and scancode mapping.
-   Complete modeling is not important, identification/discrimination is. */
-/* Remember that your 102nd key (to the right of l-shift) should be on a
-   separate line, see existing tables */
-/* If Wine fails to match your new table, use WINEDEBUG=+key to find out why */
-/* Remember to also add your new table to the layout index table far below! */
 
 /*** United States keyboard layout (mostly contributed by Uwe Bonnes) */
 static const char main_key_US[MAIN_LEN][4] =
@@ -1087,8 +1075,7 @@ static const char main_key_NL[MAIN_LEN][4] =
 };
 
 
-
-/*** Layout table. Add your keyboard mappings to this list */
+/* Legacy layout table */
 static const struct {
     LCID lcid; /* input locale identifier, look for LOCALE_ILANGUAGE
                  in the appropriate dlls/kernel/nls/.nls file */
@@ -1162,7 +1149,6 @@ static const struct {
 
  {0, NULL, NULL} /* sentinel */
 };
-static unsigned kbd_layout=0; /* index into above table of layouts */
 #ifdef SONAME_LIBXKBREGISTRY
 static struct rxkb_context *rxkb_context;
 
@@ -1931,7 +1917,6 @@ void init_keyboard_layouts( Display *display )
     XModifierKeymap *mmp;
     XkbDescRec *xkb_desc;
     struct layout *entry;
-    LANGID xkb_lang = 0;
     Status status;
     KeyCode *kcp;
     int count;
@@ -1994,7 +1979,6 @@ void init_keyboard_layouts( Display *display )
         find_xkb_layout_variant( display, mmp, i, names[i], &layout, &variant );
         lang = langid_from_xkb_layout( layout );
         klid = klid_from_xkb_layout( layout, variant );
-        if (i == xkb_group) xkb_lang = lang;
 
         TRACE( "Found group %u with name %s -> layout %s:%s, lang %04x, klid %08x\n", i, debugstr_a(names[i]),
                debugstr_a(layout), debugstr_a(variant), lang, klid );
@@ -2004,13 +1988,7 @@ void init_keyboard_layouts( Display *display )
 
         if (names[i]) XFree( names[i] );
     }
-
-    kbd_layout = detect_keyboard_layout( display, mmp, xkb_group );
     XFreeModifiermap( mmp );
-
-    if (xkb_lang && xkb_lang != main_key_tab[kbd_layout].lcid)
-        WARN( "Xkb langid %04x differs from detected langid %04x\n",
-              xkb_lang, main_key_tab[kbd_layout].lcid );
 
     pthread_mutex_unlock( &kbd_mutex );
 }
