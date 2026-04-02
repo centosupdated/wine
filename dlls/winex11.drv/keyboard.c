@@ -1149,6 +1149,7 @@ static const struct {
 
  {0, NULL, NULL} /* sentinel */
 };
+static int xkb_event_base, xkb_error_base;
 #ifdef SONAME_LIBXKBREGISTRY
 static struct rxkb_context *rxkb_context;
 
@@ -2082,6 +2083,21 @@ BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
     return TRUE;
 }
 
+static void switch_current_xkb_group( int xkb_group )
+{
+    struct layout *layout;
+    HWND hwnd;
+    HKL hkl;
+
+    hwnd = get_focus();
+    if (!hwnd) hwnd = get_active_window();
+    if (!hwnd) return;
+    layout = get_layout_from_xkb_group( xkb_group );
+    TRACE( "sending layout change message to hwnd %p\n", hwnd );
+    hkl = get_hkl( layout->lang, layout->layout_id );
+    NtUserPostMessage( hwnd, WM_INPUTLANGCHANGEREQUEST, 0, (LPARAM)hkl );
+}
+
 void x11drv_keyboard_init_thread( struct x11drv_thread_data *data )
 {
     unsigned int xkb_group;
@@ -2091,6 +2107,8 @@ void x11drv_keyboard_init_thread( struct x11drv_thread_data *data )
     HKL hkl;
 
     XkbUseExtension( data->display, NULL, NULL );
+    XkbSelectEvents( data->display, XkbUseCoreKbd, XkbStateNotifyMask,
+                     XkbStateNotifyMask );
     XkbSetDetectableAutoRepeat( data->display, True, NULL );
     init_keyboard_layouts( data->display );
     status = XkbGetState( data->display, XkbUseCoreKbd, &xkb_state );
@@ -2120,6 +2138,22 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
     return TRUE;
 }
 
+BOOL x11drv_xkb_event_handler( HWND dummy, XEvent *event )
+{
+    XkbEvent *e = (XkbEvent *)event;
+
+    switch (e->any.xkb_type)
+    {
+        case XkbStateNotify:
+            TRACE( "Received XkbStateNotify event, changed %#x, group %u\n", e->state.changed, e->state.group );
+            if (!(e->state.changed & XkbGroupStateMask))
+                return TRUE;
+            TRACE( "Switching to group %u\n", e->state.group );
+            switch_current_xkb_group( e->state.group );
+            break;
+    }
+    return TRUE;
+}
 
 /***********************************************************************
  *           x11drv_init_keyboard
@@ -2127,7 +2161,10 @@ BOOL X11DRV_MappingNotify( HWND dummy, XEvent *event )
 void x11drv_init_keyboard( Display *display )
 {
     use_xkb = XkbUseExtension( display, NULL, NULL );
-    TRACE( "XkbUseExtension returned %#x\n", use_xkb );
+    XkbQueryExtension( display, 0, &xkb_event_base, &xkb_error_base, 0, 0 );
+    TRACE( "XkbUseExtension returned %#x, xkb_event_base %u, xkb_error_base %u\n",
+           use_xkb, xkb_event_base, xkb_error_base );
+    X11DRV_register_event_handler( xkb_event_base, x11drv_xkb_event_handler, "Xkb" );
 
 #ifdef SONAME_LIBXKBREGISTRY
     if (!(xkbregistry_handle = dlopen( SONAME_LIBXKBREGISTRY, RTLD_NOW )))
