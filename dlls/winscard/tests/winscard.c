@@ -338,7 +338,7 @@ static LONG populate_smartcard_db(void)
     return 0;
 }
 
-static void test_SCardGetCardTypeProviderName(void)
+static void test_SCardGetCardTypeProviderNameW(void)
 {
     LONG ret;
     SCARDCONTEXT ctx;
@@ -469,6 +469,131 @@ static void test_SCardGetCardTypeProviderName(void)
     ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameW returned an error: %#lx\n", ret);
     ok(wcscmp(provider, L"opensc-driver.dll") == 0,
             "bad output of SCardGetCardTypeProviderNameW: '%ls' (len %ld)\n",
+            provider,
+            len);
+    free(provider);
+
+    ret = SCardReleaseContext(ctx);
+    ok(ret == ERROR_SUCCESS, "failed to release context: error %ld\n", ret);
+}
+
+static void test_SCardGetCardTypeProviderNameA(void)
+{
+    LONG ret;
+    SCARDCONTEXT ctx;
+    DWORD len = 0;
+    CHAR *provider;
+
+    /* test basic error conditions */
+    provider = malloc(1);
+    ret = SCardGetCardTypeProviderNameA(0, NULL, SCARD_PROVIDER_CARD_MODULE, provider, &len);
+    ok(ret == SCARD_E_INVALID_PARAMETER, "should fail when card_type is null\n");
+
+    ret = SCardGetCardTypeProviderNameA(0, card_name_1, SCARD_PROVIDER_CARD_MODULE, provider, NULL);
+    ok(ret == SCARD_E_INVALID_PARAMETER, "should fail when length is null\n");
+    free(provider);
+
+    ret = SCardGetCardTypeProviderNameA(0, card_name_1, SCARD_PROVIDER_CARD_MODULE, NULL, &len);
+    ok(ret == SCARD_E_INVALID_PARAMETER, "should fail when provider is null\n");
+
+    /* test lookup with a pre-allocated space */
+    len = 4; /* too small */
+    provider = calloc(len, 1);
+    ret = SCardGetCardTypeProviderNameA(0, card_name_1, SCARD_PROVIDER_CARD_MODULE, provider, &len);
+    ok(ret == SCARD_E_INSUFFICIENT_BUFFER,
+            "should have failed with SCARD_E_INSUFFICIENT_BUFFER but returned %#lx\n",
+            ret);
+    ok(len == 4, "the length should not have been set, but was %ld\n", len);
+    ok(provider[0] == 0, "the provider should not have been set, but was %s\n", debugstr_a(provider));
+    free(provider);
+
+    len = 32; /* ok */
+    provider = malloc(len);
+    memset(provider, 0xca, len);
+    ret = SCardGetCardTypeProviderNameA(0, card_name_1, SCARD_PROVIDER_CARD_MODULE, provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "opensc-driver.dll") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
+            provider,
+            len);
+    for (int i = len + 1; i < 32; i++) { ok((BYTE)provider[i] == 0xca, "memory corruption\n"); }
+    free(provider);
+
+    len = 32;
+    provider = calloc(len, 1);
+    ret = SCardGetCardTypeProviderNameA(0, card_name_2, SCARD_PROVIDER_CARD_MODULE, provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "cardoscm64.dll") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
+            provider,
+            len);
+    free(provider);
+
+    len = 32;
+    provider = calloc(len, 1);
+    ret = SCardGetCardTypeProviderNameA(0, card_name_2, SCARD_PROVIDER_KSP, provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "Test Key Storage Provider") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
+            provider,
+            len);
+    free(provider);
+
+    len = 32;
+    provider = calloc(len, 1);
+    ret = SCardGetCardTypeProviderNameA(0, card_name_2, SCARD_PROVIDER_CSP, provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "Test Crypto Provider") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
+            provider,
+            len);
+    free(provider);
+
+    /* test with auto alloc and SCARD_PROVIDER_CARD_MODULE */
+    len = SCARD_AUTOALLOCATE;
+    provider = NULL;
+    ret = SCardGetCardTypeProviderNameA(0, card_name_1, SCARD_PROVIDER_CARD_MODULE, (LPSTR)&provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "opensc-driver.dll") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
+            provider,
+            len);
+    ok(len == strlen(provider) + 1,
+            "bad length from SCardGetCardTypeProviderNameA: got %lu, expected %Iu\n",
+            len,
+            strlen(provider) + 1);
+    SCardFreeMemory(0, provider);
+
+    /* test with auto alloc and SCARD_PROVIDER_CSP */
+    len = SCARD_AUTOALLOCATE;
+    provider = NULL;
+    ret = SCardGetCardTypeProviderNameA(0, card_name_1, SCARD_PROVIDER_CSP, (LPSTR)&provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "Microsoft Base Smart Card Crypto Provider") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
+            provider,
+            len);
+    ok(len == strlen(provider) + 1,
+            "bad length from SCardGetCardTypeProviderNameA: got %lu, expected %Iu\n",
+            len,
+            strlen(provider) + 1);
+
+    /* test with a context */
+    ret = SCardEstablishContext(SCARD_SCOPE_USER, NULL, NULL, &ctx);
+    if (ret == SCARD_E_NO_SERVICE)
+    {
+        skip( "can't establish context, make sure pcscd is running\n" );
+        return;
+    }
+    ok(ret == ERROR_SUCCESS, "failed to establish context: error %ld\n", ret);
+    if (ret) return;
+
+    len = 32;
+    provider = calloc(len, 1);
+    ret = SCardGetCardTypeProviderNameA(ctx, card_name_1, SCARD_PROVIDER_CARD_MODULE, provider, &len);
+    ok(ret == ERROR_SUCCESS, "SCardGetCardTypeProviderNameA returned an error: %#lx\n", ret);
+    ok(strcmp(provider, "opensc-driver.dll") == 0,
+            "bad output of SCardGetCardTypeProviderNameA: '%s' (len %ld)\n",
             provider,
             len);
     free(provider);
@@ -753,7 +878,8 @@ static void test_smartcard_db(void)
     if (ret) return;
 
     /* run the tests */
-    test_SCardGetCardTypeProviderName();
+    test_SCardGetCardTypeProviderNameW();
+    test_SCardGetCardTypeProviderNameA();
     test_SCardListCardsW();
     test_SCardListCardsA();
 
