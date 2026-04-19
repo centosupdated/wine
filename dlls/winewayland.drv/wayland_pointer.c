@@ -121,9 +121,19 @@ static HWND wayland_pointer_get_focused_hwnd(void)
     return hwnd;
 }
 
+static void wayland_pointer_reset_frame(void)
+{
+    struct wayland_pointer_frame *frame = &process_wayland.pointer.frame;
+
+    frame->dx = frame->dy = 0.0;
+    frame->horz_scroll = frame->scroll = 0;
+    frame->flags = 0;
+}
+
 static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
 {
-    INPUT input = {0};
+    struct wayland_pointer *pointer = &process_wayland.pointer;
+    struct wayland_pointer_frame *frame = &pointer->frame;
     RECT *window_rect;
     HWND hwnd;
     POINT screen;
@@ -155,16 +165,13 @@ static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
 
     wayland_win_data_release(data);
 
-    input.type = INPUT_MOUSE;
-    input.mi.dx = screen.x;
-    input.mi.dy = screen.y;
-    input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    frame->x = screen.x;
+    frame->y = screen.y;
+    frame->flags |= WAYLAND_POINTER_FRAME_ABSOLUTE;
 
     TRACE("hwnd=%p wayland_xy=%.2f,%.2f screen_xy=%d,%d\n",
           hwnd, wl_fixed_to_double(sx), wl_fixed_to_double(sy),
           screen.x, screen.y);
-
-    NtUserSendHardwareInput(hwnd, 0, &input, 0);
 }
 
 static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
@@ -179,6 +186,7 @@ static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
 }
 
 static void wayland_set_cursor(HWND hwnd, HCURSOR hcursor, BOOL use_hcursor);
+static void pointer_handle_frame(void *data, struct wl_pointer *wl_pointer);
 
 static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
                                  uint32_t serial, struct wl_surface *wl_surface,
@@ -199,6 +207,7 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
     pthread_mutex_lock(&pointer->mutex);
     pointer->focused_hwnd = hwnd;
     pointer->enter_serial = serial;
+    wayland_pointer_reset_frame();
     pthread_mutex_unlock(&pointer->mutex);
 
     /* The cursor is undefined at every enter, so we set it again with
@@ -209,6 +218,7 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
      * window first appears beneath the pointer and won't get a separate
      * motion event. */
     pointer_handle_motion_internal(sx, sy);
+    pointer_handle_frame(data, pointer->wl_pointer);
 }
 
 static void pointer_handle_leave(void *data, struct wl_pointer *wl_pointer,
@@ -279,6 +289,59 @@ static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
 
 static void pointer_handle_frame(void *data, struct wl_pointer *wl_pointer)
 {
+    INPUT input = {0};
+    HWND hwnd;
+    struct wayland_pointer *pointer = &process_wayland.pointer;
+    struct wayland_pointer_frame *frame = &pointer->frame;
+
+    /* any stale state will be cleaned up on enter */
+    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
+
+    TRACE("hwnd=%p\n", hwnd);
+
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+
+    if (frame->flags & WAYLAND_POINTER_FRAME_ABSOLUTE)
+    {
+        input.mi.dx = frame->x;
+        input.mi.dy = frame->y;
+        NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    }
+
+    input.mi.dwFlags = MOUSEEVENTF_MOVE;
+
+    if (frame->flags & WAYLAND_POINTER_FRAME_RELATIVE)
+    {
+        input.mi.dx = round(frame->dx);
+        input.mi.dy = round(frame->dy);
+        frame->dx -= input.mi.dx;
+        frame->dy -= input.mi.dy;
+        if (input.mi.dx != 0 || input.mi.dy != 0)
+            NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    }
+
+    input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+    input.mi.dx = input.mi.dy = 0;
+
+    if (frame->flags & WAYLAND_POINTER_FRAME_WHEEL)
+    {
+        input.mi.mouseData = frame->scroll;
+        if (input.mi.mouseData)
+            NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    }
+
+    input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
+
+    if (frame->flags & WAYLAND_POINTER_FRAME_WHEEL_HORZ)
+    {
+        input.mi.mouseData = frame->horz_scroll;
+        if (input.mi.mouseData)
+            NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    }
+
+    frame->flags = 0;
+    frame->scroll = frame->horz_scroll = 0;
 }
 
 static void pointer_handle_axis_source(void *data, struct wl_pointer *wl_pointer,
@@ -294,29 +357,26 @@ static void pointer_handle_axis_stop(void *data, struct wl_pointer *wl_pointer,
 static void pointer_handle_axis_value120(void *data, struct wl_pointer *wl_pointer,
                                          uint32_t axis, int32_t value120)
 {
-    INPUT input = {0};
+    struct wayland_pointer *pointer = &process_wayland.pointer;
+    struct wayland_pointer_frame *frame = &pointer->frame;
     HWND hwnd;
 
     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
 
-    input.type = INPUT_MOUSE;
-
     switch (axis)
     {
     case WL_POINTER_AXIS_VERTICAL_SCROLL:
-        input.mi.dwFlags = MOUSEEVENTF_WHEEL;
-        input.mi.mouseData = -value120;
+        frame->flags |= WAYLAND_POINTER_FRAME_WHEEL;
+        frame->scroll += -value120;
         break;
     case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
-        input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
-        input.mi.mouseData = value120;
+        frame->flags |= WAYLAND_POINTER_FRAME_WHEEL_HORZ;
+        frame->horz_scroll += value120;
         break;
     default: break;
     }
 
     TRACE("hwnd=%p axis=%u value120=%d\n", hwnd, axis, value120);
-
-    NtUserSendHardwareInput(hwnd, 0, &input, 0);
 }
 
 static void pointer_handle_axis_discrete(void *data, struct wl_pointer *wl_pointer,
@@ -360,11 +420,11 @@ static void relative_pointer_v1_relative_motion(void *private,
                                                 wl_fixed_t dx, wl_fixed_t dy,
                                                 wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel)
 {
-    INPUT input = {0};
     HWND hwnd;
     struct wayland_win_data *data;
     double screen_x = 0.0, screen_y = 0.0;
     struct wayland_pointer *pointer = &process_wayland.pointer;
+    struct wayland_pointer_frame *frame = &pointer->frame;
 
     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
     if (!(data = wayland_win_data_get(hwnd))) return;
@@ -375,26 +435,12 @@ static void relative_pointer_v1_relative_motion(void *private,
                                    &screen_x, &screen_y);
     wayland_win_data_release(data);
 
-    pthread_mutex_lock(&pointer->mutex);
+    frame->dx += screen_x;
+    frame->dy += screen_y;
 
-    pointer->accum_x += screen_x;
-    pointer->accum_y += screen_y;
+    frame->flags |= WAYLAND_POINTER_FRAME_RELATIVE;
 
-    input.type = INPUT_MOUSE;
-    input.mi.dx = round(pointer->accum_x);
-    input.mi.dy = round(pointer->accum_y);
-    input.mi.dwFlags = MOUSEEVENTF_MOVE;
-
-    pointer->accum_x -= input.mi.dx;
-    pointer->accum_y -= input.mi.dy;
-
-    pthread_mutex_unlock(&pointer->mutex);
-
-    TRACE("hwnd=%p wayland_dxdy=%.2f,%.2f accum_dxdy=%d,%d\n",
-          hwnd, wl_fixed_to_double(dx), wl_fixed_to_double(dy),
-          input.mi.dx, input.mi.dy);
-
-    NtUserSendHardwareInput(hwnd, 0, &input, 0);
+    TRACE("hwnd=%p screen=%.2f,%.2f\n", hwnd, screen_x, screen_y);
 }
 
 static const struct zwp_relative_pointer_v1_listener relative_pointer_v1_listener =
@@ -981,7 +1027,7 @@ static void wayland_pointer_update_constraint(struct wl_surface *wl_surface,
 
     if (needs_relative && !pointer->zwp_relative_pointer_v1)
     {
-        pointer->accum_x = pointer->accum_y = 0;
+        pointer->frame.dx = pointer->frame.dy = 0.0;
         pointer->zwp_relative_pointer_v1 =
             zwp_relative_pointer_manager_v1_get_relative_pointer(
                 process_wayland.zwp_relative_pointer_manager_v1,

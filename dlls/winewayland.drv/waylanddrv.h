@@ -103,6 +103,23 @@ struct wayland_cursor
     int hotspot_x, hotspot_y;
 };
 
+enum wayland_pointer_frame_flags
+{
+    WAYLAND_POINTER_FRAME_RELATIVE = (1 << 0),
+    WAYLAND_POINTER_FRAME_ABSOLUTE = (1 << 1),
+    WAYLAND_POINTER_FRAME_WHEEL = (1 << 2),
+    WAYLAND_POINTER_FRAME_WHEEL_HORZ = (1 << 3)
+};
+
+struct wayland_pointer_frame
+{
+    LONG x, y;
+    double dx, dy;
+    LONG scroll, horz_scroll;
+
+    enum wayland_pointer_frame_flags flags;
+};
+
 struct wayland_pointer
 {
     struct wl_pointer *wl_pointer;
@@ -116,8 +133,7 @@ struct wayland_pointer
     uint32_t enter_serial;
     uint32_t button_serial;
     struct wayland_cursor cursor;
-    double accum_x;
-    double accum_y;
+    struct wayland_pointer_frame frame;
     pthread_mutex_t mutex;
 };
 
