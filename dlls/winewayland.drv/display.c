@@ -204,6 +204,86 @@ static void wayland_add_device_source(const struct gdi_device_manager *device_ma
     device_manager->add_source(output_info->output->name, state_flags, dpi, param);
 }
 
+static UINT get_edid(struct output_info *output_info, unsigned char **edid)
+{
+    struct wayland_output_mode *mode = output_info->output->current_mode;
+    unsigned int edid_size, extensions = 0;
+    unsigned int i, mwidth, mheight;
+    unsigned char *data, *p, c;
+    char temp_model[13] = {0};
+
+    edid_size = 128 + extensions * 128;
+    if (!(data = *edid = calloc(edid_size, sizeof(**edid))))
+        return 0;
+
+    /* assume ~150 dpi */
+    mwidth = mode->width / 60;
+    mheight = mode->width / 60;
+
+    *(uint64_t*)data = 0x00ffffffffffff00;
+
+    /* serial number is all zeros */
+    data[16] = 0xff; /* model year flag */
+    data[17] = 31; /* 2021 */
+    data[18] = 1;
+    data[19] = 4;
+    data[20] = 0xf5; /* digital input, reserved bpc, display port */
+    data[21] = round(mwidth / 10.0); /* cm */
+    data[22] = round(mheight / 10.0); /* cm */
+    data[23] = 0x78; /* 2.2 gamma */
+    data[24] = 0x6; /* sRGB */
+
+    /* each standard timing information is unused */
+    for (i = 0; i < 16; ++i) data[38 + i] = 1;
+
+    p = data + 54;
+
+    *(uint16_t*)p = 0x0; /* 0 = pixel clock is reserved */
+
+    /* assume blanking pixels/lines are 0 */
+    p[2] = mode->width;
+    p[4] = (((mode->width >> 8) & 0xf) << 4);
+    p[5] = mode->height;
+    p[7] = (((mode->height >> 8) & 0xf) << 4);
+    p[12] = mwidth;
+    p[13] = mheight;
+    p[14] = (((mwidth >> 8) & 0xf) << 4) | ((mheight >> 8) & 0xf);
+
+    p += 18;
+    p[3] = 0xfc;
+    strcpy(temp_model, "Default");
+
+    for (i = 0; i < sizeof(temp_model); i++)
+    {
+        if (!temp_model[i])
+        {
+            temp_model[i++] = '\n';
+            break;
+        }
+    }
+    for (; i < sizeof(temp_model); i++)
+    {
+        if (!temp_model[i]) temp_model[i] = ' ';
+    }
+
+    TRACE("edid model %s\n", debugstr_an(temp_model, sizeof(temp_model)));
+    memcpy((char *)p + 5, temp_model, sizeof(temp_model));
+
+    /* dummy descriptors */
+    p += 18;
+    p[3] = 0x10;
+    p += 18;
+    p[3] = 0x10;
+
+    c = 0;
+    data[126] = extensions;
+    for (i = 0; i < 127; ++i)
+        c += data[i];
+    data[127] = 256 - c;
+
+    return edid_size;
+}
+
 static void wayland_add_device_monitor(const struct gdi_device_manager *device_manager,
                                        void *param, struct output_info *output_info)
 {
@@ -213,6 +293,7 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
             output_info->x + output_info->output->current_mode->width,
             output_info->y + output_info->output->current_mode->height);
 
+    monitor.edid_len = get_edid(output_info, &monitor.edid);
     /* We don't have a direct way to get the work area in Wayland. */
     monitor.rc_work = monitor.rc_monitor;
 
@@ -220,6 +301,7 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
           output_info->output->name, wine_dbgstr_rect(&monitor.rc_monitor));
 
     device_manager->add_monitor(&monitor, param);
+    free(monitor.edid);
 }
 
 static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *mode)
