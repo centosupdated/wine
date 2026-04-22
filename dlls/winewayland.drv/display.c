@@ -207,6 +207,7 @@ static void wayland_add_device_source(const struct gdi_device_manager *device_ma
 static UINT get_edid(struct output_info *output_info, unsigned char **edid)
 {
     struct wayland_output_mode *mode = output_info->output->current_mode;
+    const char *model = output_info->output->model;
     unsigned int edid_size, extensions = 0;
     unsigned int i, mwidth, mheight;
     unsigned char *data, *p, c;
@@ -216,9 +217,15 @@ static UINT get_edid(struct output_info *output_info, unsigned char **edid)
     if (!(data = *edid = calloc(edid_size, sizeof(**edid))))
         return 0;
 
-    /* assume ~150 dpi */
-    mwidth = mode->width / 60;
-    mheight = mode->width / 60;
+    mwidth = output_info->output->width_mm;
+    mheight = output_info->output->height_mm;
+
+    if (!mwidth || !mheight)
+    {
+        /* assume ~150 dpi */
+        mwidth = mode->width / 60;
+        mheight = mode->width / 60;
+    }
 
     *(uint64_t*)data = 0x00ffffffffffff00;
 
@@ -251,7 +258,9 @@ static UINT get_edid(struct output_info *output_info, unsigned char **edid)
 
     p += 18;
     p[3] = 0xfc;
-    strcpy(temp_model, "Default");
+
+    if (model) lstrcpynA(temp_model, model, sizeof(temp_model));
+    else strcpy(temp_model, "Default");
 
     for (i = 0; i < sizeof(temp_model); i++)
     {
