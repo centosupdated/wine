@@ -806,12 +806,7 @@ static void test_registration(void)
     int i, j;
 
     hr = create_color_conv_property_bag(&property_bag);
-
-    if (hr != S_OK)
-    {
-        skip("Skipping registration tests.\n");
-        return;
-    }
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     VariantInit(&var);
     hr = IPropertyBag_Read(property_bag, L"FilterData", &var, NULL);
@@ -885,11 +880,7 @@ static void test_interfaces(void)
     IPin *pin;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-
-    if (hr != S_OK)
-        return;
 
     check_interface(filter, &IID_IBaseFilter, TRUE);
     check_interface(filter, &IID_IMediaFilter, TRUE);
@@ -1052,10 +1043,7 @@ static void test_enum_pins(void)
     HRESULT hr;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     refcount = get_refcount(filter);
     ok(refcount == 1, "Got refcount %ld.\n", refcount);
@@ -1181,10 +1169,7 @@ static void test_find_pin(void)
     HRESULT hr;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_EnumPins(filter, &enum_pins);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1227,10 +1212,7 @@ static void test_pin_info(void)
     IPin *pin;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
     todo_wine
@@ -1316,10 +1298,7 @@ static void test_media_types(void)
     int i;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = create_filter_graph(&graph);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -1486,10 +1465,7 @@ static void test_enum_media_types(void)
     IPin *pin;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_FindPin(filter, L"In", &pin);
     todo_wine
@@ -1570,10 +1546,7 @@ static void test_unconnected_filter_state(void)
     ULONG ref;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = IBaseFilter_GetState(filter, 0, &state);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2311,10 +2284,7 @@ static void test_connect_pin(void)
     HRESULT hr;
 
     hr = create_color_conv(&filter);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        return;
 
     hr = create_filter_graph(&graph);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
