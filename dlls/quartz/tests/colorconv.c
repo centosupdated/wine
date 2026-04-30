@@ -920,7 +920,6 @@ static void test_interfaces(void)
     check_interface(pin, &IID_IPin, TRUE);
     todo_wine
     check_interface(pin, &IID_IMediaPosition, TRUE);
-    todo_wine
     check_interface(pin, &IID_IMediaSeeking, TRUE);
     todo_wine
     check_interface(pin, &IID_IQualityControl, TRUE);
