@@ -36,6 +36,49 @@ struct color_converter
     struct strmbase_sink sink;
 };
 
+struct subtype
+{
+    const GUID *guid;
+    DWORD compression;
+    WORD bitcount;
+    ULONG cbFormat;
+};
+
+static const struct subtype subtypes[] =
+{
+    { &MEDIASUBTYPE_ARGB32, BI_RGB, 32, sizeof(VIDEOINFOHEADER) },
+    { &MEDIASUBTYPE_RGB32, BI_RGB, 32, sizeof(VIDEOINFOHEADER) },
+    { &MEDIASUBTYPE_RGB24, BI_RGB, 24, sizeof(VIDEOINFOHEADER) },
+    { &MEDIASUBTYPE_RGB565, BI_BITFIELDS, 16, sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]) /* dwBitMasks */ },
+    { &MEDIASUBTYPE_RGB555, BI_BITFIELDS, 16, sizeof(VIDEOINFOHEADER) + sizeof(DWORD[3]) /* dwBitMasks */ },
+    { &MEDIASUBTYPE_RGB8, BI_RGB, 8, sizeof(VIDEOINFOHEADER) + sizeof(RGBQUAD[256]) /* bmiColors */ },
+};
+
+static const struct subtype *get_subtype(const AM_MEDIA_TYPE *mt)
+{
+    const struct subtype *subtype = NULL;
+    VIDEOINFOHEADER *video_info;
+    int i;
+
+    if (!IsEqualGUID(&mt->majortype, &MEDIATYPE_Video) || !IsEqualGUID(&mt->formattype, &FORMAT_VideoInfo))
+        return NULL;
+
+    for (i = 0; i < ARRAY_SIZE(subtypes); i++)
+    {
+        if (IsEqualGUID(&mt->subtype, subtypes[i].guid))
+        {
+            subtype = subtypes + i;
+            break;
+        }
+    }
+
+    if (!subtype || mt->cbFormat < subtype->cbFormat || !(video_info = (VIDEOINFOHEADER *)mt->pbFormat) ||
+            video_info->bmiHeader.biSize != sizeof(video_info->bmiHeader))
+        return NULL;
+
+    return subtype;
+}
+
 static struct color_converter *impl_from_strmbase_filter(struct strmbase_filter *iface)
 {
     return CONTAINING_RECORD(iface, struct color_converter, filter);
@@ -54,6 +97,14 @@ static HRESULT color_sink_query_interface(struct strmbase_pin *iface, REFIID iid
     return S_OK;
 }
 
+static HRESULT color_sink_query_accept(struct strmbase_pin *iface, const AM_MEDIA_TYPE *mt)
+{
+    if (get_subtype(mt))
+        return S_OK;
+    else
+        return S_FALSE;
+}
+
 static HRESULT color_sink_connect(struct strmbase_sink *iface, IPin *peer, const AM_MEDIA_TYPE *mt)
 {
     FIXME("stub\n");
@@ -63,6 +114,7 @@ static HRESULT color_sink_connect(struct strmbase_sink *iface, IPin *peer, const
 static const struct strmbase_sink_ops sink_ops =
 {
     .base.pin_query_interface = color_sink_query_interface,
+    .base.pin_query_accept = color_sink_query_accept,
     .sink_connect = color_sink_connect,
 };
 
