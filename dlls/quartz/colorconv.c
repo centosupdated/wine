@@ -107,8 +107,15 @@ static HRESULT color_sink_query_accept(struct strmbase_pin *iface, const AM_MEDI
 
 static HRESULT color_sink_connect(struct strmbase_sink *iface, IPin *peer, const AM_MEDIA_TYPE *mt)
 {
+    if (!get_subtype(mt))
+    {
+        TRACE("Connection refused\n");
+        return VFW_E_TYPE_NOT_ACCEPTED;
+    }
+
+    /* TODO: Set up color conversion */
     FIXME("stub\n");
-    return VFW_E_TYPE_NOT_ACCEPTED;
+    return S_OK;
 }
 
 static const struct strmbase_sink_ops sink_ops =

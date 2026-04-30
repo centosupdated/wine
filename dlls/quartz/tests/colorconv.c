@@ -1310,11 +1310,9 @@ static void test_media_types(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_Disconnect(sink);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         /* Test negative height */
@@ -1324,11 +1322,9 @@ static void test_media_types(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_Disconnect(sink);
-        todo_wine
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         winetest_pop_context();
@@ -1350,7 +1346,6 @@ static void test_media_types(void)
     video_info.rcTarget.bottom = 220;
 
     hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IPin_EnumMediaTypes(source, &enum_types);
@@ -1403,7 +1398,6 @@ static void test_media_types(void)
     IEnumMediaTypes_Release(enum_types);
 
     hr = IPin_Disconnect(sink);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     /* The previously accepted media type is no longer accepted after disconnect */
@@ -2322,10 +2316,7 @@ static void test_connect_pin(void)
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IFilterGraph_ConnectDirect(graph, &testsource->source.pin.IPin_iface, sink, &req_mt);
-    todo_wine
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
-    if (hr != S_OK)
-        goto skip_connection_test;
 
     hr = IPin_ConnectedTo(sink, &peer);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
@@ -2394,9 +2385,7 @@ static void test_connect_pin(void)
     hr = IFilterGraph_Disconnect(graph, &testsource->source.pin.IPin_iface);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
-skip_connection_test:
-    if (meminput)
-        IMemInputPin_Release(meminput);
+    IMemInputPin_Release(meminput);
 
     IPin_Release(sink);
     IPin_Release(source);
