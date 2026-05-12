@@ -58,6 +58,18 @@ typedef struct _font_fingerprint {
     WORD result[10];
 } font_fingerprint;
 
+typedef struct _indic_test {
+    CHAR font[25];
+    INT range;
+    WCHAR string[25];
+    INT strlen;
+    INT item_count;
+    INT glyph_count;
+    INT glyphs[25];
+    INT logClust[25];
+    SCRIPT_VISATTR visattr[25];
+} indic_test;
+
 static inline void _test_items_ok(LPCWSTR string, DWORD cchString,
                          SCRIPT_CONTROL *Control, SCRIPT_STATE *State,
                          DWORD nItems, const itemTest* items, BOOL nItemsToDo,
@@ -4187,6 +4199,219 @@ static void test_script_cache_reuse(void)
     DestroyWindow(hwnd2);
 }
 
+#define incomplete_indic(a,b) (winetest_set_location(__FILE__,__LINE__), 0) ? 0 : _incomplete_indic(a,b)
+
+static void _incomplete_indic(HDC hdc, const indic_test *test)
+{
+    HRESULT hr;
+    SCRIPT_CACHE sc = NULL;
+    WORD glyphs[10], logclust[10];
+    SCRIPT_VISATTR attrs[10];
+    SCRIPT_ITEM items[10];
+    int nb, i;
+    HFONT font, oldfont = NULL;
+    int test_valid;
+
+    test_valid = _find_font_for_range(hdc, test->font, test->range, test->string[0], &font, &oldfont, NULL);
+    if (font != NULL && test_valid > 0) {
+        memset(items, 0, sizeof(items));
+        nb = 0;
+        hr = ScriptItemize(test->string, test->strlen, test->strlen, NULL, NULL, items, &nb);
+        winetest_ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        winetest_ok(items[0].a.eScript > 0, "Expected script id.\n");
+        winetest_ok(nb == test->item_count, "Unexpected number of items.\n");
+
+        memset(glyphs, 0xff, sizeof(glyphs));
+        memset(logclust, 0xff, sizeof(logclust));
+        nb = 0;
+        hr = ScriptShape(hdc, &sc, test->string, test->strlen, ARRAY_SIZE(glyphs),
+                &items[0].a, glyphs, logclust, attrs, &nb);
+        winetest_ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+        winetest_ok(nb == test->glyph_count, "Unexpected glyph count %u\n", nb);
+
+        for (i = 0; i < nb; i++) {
+            winetest_ok(glyphs[i] == test->glyphs[i], "Unexpected glyph at %i:  %x != %x\n",i, glyphs[i], test->glyphs[i]);
+        }
+        for (i = 0; i < test->strlen; i++) {
+            winetest_ok(logclust[i] == test->logClust[i], "Unexpected LogClust at %i:  %x != %x\n",i, logclust[i], test->logClust[i]);
+        }
+
+
+        for (i = 0; i < nb; i++)
+        {
+            winetest_ok(attrs[i].uJustification == test->visattr[i].uJustification, "Unexpected uJustification at %i:  %x != %x\n",i, attrs[i].uJustification, test->visattr[i].uJustification);
+            winetest_ok(attrs[i].fClusterStart == test->visattr[i].fClusterStart, "Unexpected fClusterStart at %i:  %x != %x\n",i, attrs[i].fClusterStart, test->visattr[i].fClusterStart);
+            winetest_ok(attrs[i].fDiacritic == test->visattr[i].fDiacritic, "Unexpected fDiacritic at %i:  %x != %x\n",i, attrs[i].fDiacritic, test->visattr[i].fDiacritic);
+            winetest_ok(attrs[i].fZeroWidth == test->visattr[i].fZeroWidth, "Unexpected fZeroWidth at %i:  %x != %x\n",i, attrs[i].fZeroWidth, test->visattr[i].fZeroWidth);
+        }
+
+        ScriptFreeCache(&sc);
+        SelectObject(hdc, oldfont);
+        DeleteObject(font);
+    } else {
+        winetest_skip("%s font not found\n", test->font);
+    }
+}
+
+static void test_incomplete_indic(HDC hdc)
+{
+    const indic_test bengali1 = {
+        "Vrinda", 16,
+        {0x09CC,0x09CC,0x09CC},
+        3,
+        1,
+        9,
+        {0x13a,0xdd,0x11d,0x118,0xdd,0x11d,0x118,0xdd,0x11d},
+        {0,3,6},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,0,0,0}
+        }
+    };
+    const indic_test bengali2 = {
+        "Vrinda", 16,
+        {0x09C7,0x09D7,0x09C7,0x09D7},
+        4,
+        1,
+        8,
+        {0x13a, 0xdd, 0xdd, 0x11d, 0x118, 0xdd, 0xdd, 0x11d},
+        {0,2,4,6},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0}
+        }
+    };
+    const indic_test devanagari1 = {
+        "Mangal", 15,
+        {0x093f, 0x094b},
+        2,
+        1,
+        4,
+        {0x1d4, 0x29c, 0x29c, 0x22a},
+        {0,2},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0}
+        }
+    };
+    const indic_test devanagari2 = {
+        "Mangal", 15,
+        {0x094d, 0x094d},
+        2,
+        1,
+        4,
+        {0x29c,0x51,0x29c,0x51},
+        {0,2},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0}
+        }
+    };
+    const indic_test devanagari3 = {
+        "Mangal", 15,
+        {0x0915, 0x093e, 0x094d},
+        3,
+        1,
+        3,
+        {0x80,0x221,0x51},
+        {0,0,0},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,0,0,0}
+        }
+    };
+    const indic_test devanagari4 = {
+        "Mangal", 15,
+        {0x0915, 0x093f, 0x0941},
+        3,
+        1,
+        3,
+        {0x369,0x80,0x1d5},
+        {0,0,0},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,0,0,0}
+        }
+    };
+    const indic_test devanagari5 = {
+        "Mangal", 15,
+        {0x0915, 0x0924, 0x094d, 0x093f, 0x0930},
+        5,
+        1,
+        6,
+        {0x80, 0x8f, 0x51, 0x1d4, 0x29c, 0x9a},
+        {0,1,1,3,5},
+        {
+            {0,1,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0}
+        }
+    };
+    const indic_test devanagari6 = {
+        "Mangal", 15,
+        {0x094d, 0x0930},
+        2,
+        1,
+        3,
+        {0x29c, 0x51, 0x9a},
+        {0,2},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+        }
+    };
+    const indic_test devanagari7 = {
+        "Mangal", 15,
+        {0x094d, 0x0930, 0x094d, 0x094d},
+        4,
+        1,
+        6,
+        {0x29c, 0x51, 0x9a, 0x51, 0x29c, 0x51},
+        {0,2,2,4},
+        {
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+            {0,1,0,0},
+            {0,0,0,0},
+        }
+    };
+
+    incomplete_indic(hdc, &bengali1);
+    incomplete_indic(hdc, &bengali2);
+    incomplete_indic(hdc, &devanagari1);
+    incomplete_indic(hdc, &devanagari2);
+    incomplete_indic(hdc, &devanagari3);
+    incomplete_indic(hdc, &devanagari4);
+    incomplete_indic(hdc, &devanagari5);
+    incomplete_indic(hdc, &devanagari6);
+    incomplete_indic(hdc, &devanagari7);
+}
+
 START_TEST(usp10)
 {
     HWND            hwnd;
@@ -4246,6 +4471,7 @@ START_TEST(usp10)
 
     test_ScriptIsComplex();
     test_script_cache_reuse();
+    test_incomplete_indic(hdc);
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);
