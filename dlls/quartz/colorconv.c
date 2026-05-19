@@ -21,6 +21,7 @@
 #include "quartz_private.h"
 
 #include "mediaobj.h"
+#include "mfapi.h"
 #include "vfw.h"
 #include "wmcodecdsp.h"
 
@@ -38,7 +39,128 @@ struct color_converter
     struct strmbase_sink sink;
 
     IMediaObject *dmo;
+    LONG sample_output_stride;
+    LONG dmo_output_stride;
+    ULONG dmo_output_sample_size;
 };
+
+struct buffer_for_sample
+{
+    IMediaBuffer IMediaBuffer_iface;
+    LONG refcount;
+
+    IMediaSample *sample;
+};
+
+struct buffer
+{
+    IMediaBuffer IMediaBuffer_iface;
+    LONG refcount;
+
+    BYTE *data;
+    DWORD length;
+    DWORD max_length;
+};
+
+static struct buffer *buffer_from_IMediaBuffer(IMediaBuffer *iface)
+{
+    return CONTAINING_RECORD(iface, struct buffer, IMediaBuffer_iface);
+}
+
+static HRESULT WINAPI buffer_QueryInterface(IMediaBuffer *iface, REFIID iid, void **out)
+{
+    if (IsEqualGUID(iid, &IID_IUnknown) || IsEqualGUID(iid, &IID_IMediaBuffer))
+    {
+        *out = iface;
+    }
+    else
+    {
+        *out = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown *)(*out));
+    return S_OK;
+}
+
+static ULONG WINAPI buffer_AddRef(IMediaBuffer *iface)
+{
+    struct buffer *buffer = buffer_from_IMediaBuffer(iface);
+    ULONG refcount;
+
+    refcount = InterlockedIncrement(&buffer->refcount);
+
+    return refcount;
+}
+
+static ULONG WINAPI buffer_Release(IMediaBuffer *iface)
+{
+    struct buffer *buffer = buffer_from_IMediaBuffer(iface);
+    ULONG refcount;
+
+    refcount = InterlockedDecrement(&buffer->refcount);
+
+    if (!refcount)
+    {
+        free(buffer->data);
+        free(buffer);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI buffer_SetLength(IMediaBuffer *iface, DWORD length)
+{
+    struct buffer *buffer = buffer_from_IMediaBuffer(iface);
+
+    buffer->length = length;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI buffer_GetMaxLength(IMediaBuffer *iface, DWORD *max_length)
+{
+    struct buffer *buffer = buffer_from_IMediaBuffer(iface);
+
+    *max_length = buffer->max_length;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI buffer_GetBufferAndLength(IMediaBuffer *iface, BYTE **data, DWORD *length)
+{
+    struct buffer *buffer = buffer_from_IMediaBuffer(iface);
+
+    *length = buffer->length;
+    if (data)
+        *data = buffer->data;
+
+    return S_OK;
+}
+
+static IMediaBufferVtbl buffer_vtbl =
+{
+    buffer_QueryInterface,
+    buffer_AddRef,
+    buffer_Release,
+    buffer_SetLength,
+    buffer_GetMaxLength,
+    buffer_GetBufferAndLength,
+};
+
+static struct buffer *create_buffer(DWORD max_length)
+{
+    struct buffer *buffer;
+
+    buffer = calloc(1, sizeof(*buffer));
+    buffer->IMediaBuffer_iface.lpVtbl = &buffer_vtbl;
+    buffer->refcount = 1;
+
+    buffer->data = malloc(max_length);
+    buffer->max_length = max_length;
+
+    return buffer;
+}
 
 struct subtype
 {
@@ -111,6 +233,110 @@ static void populate_output_dmo_mt(
     dmo_mt->lSampleSize = video_info->bmiHeader.biSizeImage;
 }
 
+static struct buffer_for_sample *buffer_for_sample_from_IMediaBuffer(IMediaBuffer *iface)
+{
+    return CONTAINING_RECORD(iface, struct buffer_for_sample, IMediaBuffer_iface);
+}
+
+static HRESULT WINAPI buffer_for_sample_QueryInterface(IMediaBuffer *iface, REFIID iid, void **out)
+{
+    TRACE("iface %p, iid %s, out %p.\n", iface, debugstr_guid(iid), out);
+
+    if (IsEqualGUID(iid, &IID_IUnknown) || IsEqualGUID(iid, &IID_IMediaBuffer))
+    {
+        *out = iface;
+    }
+    else
+    {
+        *out = NULL;
+        WARN("%s not implemented, returning E_NOINTERFACE.\n", debugstr_guid(iid));
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown *)(*out));
+    return S_OK;
+}
+
+static ULONG WINAPI buffer_for_sample_AddRef(IMediaBuffer *iface)
+{
+    struct buffer_for_sample *buffer = buffer_for_sample_from_IMediaBuffer(iface);
+    ULONG refcount;
+
+    refcount = InterlockedIncrement(&buffer->refcount);
+
+    return refcount;
+}
+
+static ULONG WINAPI buffer_for_sample_Release(IMediaBuffer *iface)
+{
+    struct buffer_for_sample *buffer = buffer_for_sample_from_IMediaBuffer(iface);
+    ULONG refcount;
+
+    refcount = InterlockedDecrement(&buffer->refcount);
+
+    if (!refcount)
+    {
+        IMediaSample_Release(buffer->sample);
+        free(buffer);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI buffer_for_sample_SetLength(IMediaBuffer *iface, DWORD len)
+{
+    struct buffer_for_sample *buffer = buffer_for_sample_from_IMediaBuffer(iface);
+
+    TRACE("iface %p, len %lu.\n", iface, len);
+
+    return IMediaSample_SetActualDataLength(buffer->sample, len);
+}
+
+static HRESULT WINAPI buffer_for_sample_GetMaxLength(IMediaBuffer *iface, DWORD *len)
+{
+    struct buffer_for_sample *buffer = buffer_for_sample_from_IMediaBuffer(iface);
+
+    TRACE("iface %p, len %p.\n", iface, len);
+
+    *len = IMediaSample_GetSize(buffer->sample);
+    return S_OK;
+}
+
+static HRESULT WINAPI buffer_for_sample_GetBufferAndLength(IMediaBuffer *iface, BYTE **data, DWORD *len)
+{
+    struct buffer_for_sample *buffer = buffer_for_sample_from_IMediaBuffer(iface);
+
+    TRACE("iface %p, data %p, len %p.\n", iface, data, len);
+
+    *len = IMediaSample_GetActualDataLength(buffer->sample);
+    if (data)
+        return IMediaSample_GetPointer(buffer->sample, data);
+    return S_OK;
+}
+
+static const IMediaBufferVtbl buffer_for_sample_vtbl =
+{
+    buffer_for_sample_QueryInterface,
+    buffer_for_sample_AddRef,
+    buffer_for_sample_Release,
+    buffer_for_sample_SetLength,
+    buffer_for_sample_GetMaxLength,
+    buffer_for_sample_GetBufferAndLength,
+};
+
+static struct buffer_for_sample *create_buffer_for_sample(IMediaSample *sample)
+{
+    struct buffer_for_sample *buffer;
+
+    buffer = calloc(1, sizeof(*buffer));
+    buffer->IMediaBuffer_iface.lpVtbl = &buffer_for_sample_vtbl;
+    buffer->refcount = 1;
+
+    IMediaSample_AddRef(buffer->sample = sample);
+
+    return buffer;
+}
+
 static struct color_converter *impl_from_strmbase_filter(struct strmbase_filter *iface)
 {
     return CONTAINING_RECORD(iface, struct color_converter, filter);
@@ -150,13 +376,6 @@ static HRESULT color_sink_connect(struct strmbase_sink *iface, IPin *peer, const
     return hr;
 }
 
-static const struct strmbase_sink_ops sink_ops =
-{
-    .base.pin_query_interface = color_sink_query_interface,
-    .base.pin_query_accept = color_sink_query_accept,
-    .sink_connect = color_sink_connect,
-};
-
 static HRESULT WINAPI color_source_DecideBufferSize(
         struct strmbase_source *iface, IMemAllocator *alloc, ALLOCATOR_PROPERTIES *props)
 {
@@ -171,6 +390,10 @@ static HRESULT WINAPI color_source_DecideBufferSize(
     populate_output_dmo_mt(&filter->sink.pin.mt, &iface->pin.mt, &dmo_mt);
     if (FAILED(hr = IMediaObject_SetOutputType(filter->dmo, 0, &dmo_mt, 0)))
         return hr;
+
+    filter->sample_output_stride = calculate_stride(&((VIDEOINFOHEADER *)iface->pin.mt.pbFormat)->bmiHeader);
+    filter->dmo_output_stride = calculate_stride(&((VIDEOINFOHEADER *)dmo_mt.pbFormat)->bmiHeader);
+    filter->dmo_output_sample_size = dmo_mt.lSampleSize;
 
     if (!props->cbAlign)
         props->cbAlign = 1;
@@ -188,6 +411,141 @@ static HRESULT WINAPI color_source_DecideBufferSize(
 
     return IMemAllocator_SetProperties(alloc, props, &actual);
 }
+
+static HRESULT WINAPI color_sink_Receive(struct strmbase_sink *iface, IMediaSample *src_sample)
+{
+    struct color_converter *filter = impl_from_strmbase_filter(iface->pin.filter);
+    BITMAPINFOHEADER *input_bmi_header, *output_bmi_header;
+    struct buffer_for_sample *src_buffer;
+    BYTE *dst_buff, *src_buff, *dest;
+    DMO_OUTPUT_DATA_BUFFER output;
+    const struct subtype *subtype;
+    struct buffer *dst_buffer;
+    BITMAPINFOHEADER *header;
+    IMediaSample *dst_sample;
+    DWORD flags = 0, status;
+    long output_image_size;
+    LONGLONG start, stop;
+    LONG dst_size;
+    UINT32 *data;
+    HRESULT hr;
+    int i;
+
+    /* We do not expect pin connection state to change while the filter is
+     * running. This guarantee is necessary, since otherwise we would have to
+     * take the filter lock, and we can't take the filter lock from a streaming
+     * thread. */
+    if (!filter->source.pMemInputPin)
+    {
+        WARN("Source is not connected, returning VFW_E_NOT_CONNECTED.\n");
+        return VFW_E_NOT_CONNECTED;
+    }
+
+    if (filter->filter.state == State_Stopped)
+        return VFW_E_WRONG_STATE;
+
+    if (filter->sink.flushing)
+        return S_FALSE;
+
+    hr = IMediaSample_GetPointer(src_sample, &src_buff);
+    if (FAILED(hr))
+    {
+        ERR("Failed to get input buffer pointer, hr %#lx.\n", hr);
+        return hr;
+    }
+
+    if (FAILED(hr = IMemAllocator_GetBuffer(filter->source.pAllocator, &dst_sample, NULL, NULL, 0)))
+    {
+        ERR("Failed to get sample, hr %#lx.\n", hr);
+        return hr;
+    }
+
+    hr = IMediaSample_GetPointer(dst_sample, &dst_buff);
+    if (FAILED(hr))
+    {
+        ERR("Failed to get output buffer pointer, hr %#lx.\n", hr);
+        IMediaSample_Release(dst_sample);
+        return hr;
+    }
+
+    subtype = get_subtype(&filter->source.pin.mt);
+    header = &((VIDEOINFOHEADER *)filter->sink.pin.mt.pbFormat)->bmiHeader;
+    output_image_size = header->biWidth * header->biHeight * (subtype->bitcount / 8);
+    dst_size = IMediaSample_GetSize(dst_sample);
+    if (dst_size < output_image_size)
+    {
+        ERR("Sample size is too small (%ld < %lu).\n", dst_size, output_image_size);
+        IMediaSample_Release(dst_sample);
+        return E_FAIL;
+    }
+
+    if (IMediaSample_IsPreroll(src_sample) == S_OK)
+        flags |= ICDECOMPRESS_PREROLL;
+    hr = IMediaSample_GetTime(src_sample, &start, &stop);
+
+    /* perform color conversion */
+    src_buffer = create_buffer_for_sample(src_sample);
+    hr = IMediaObject_ProcessInput(filter->dmo, 0, &src_buffer->IMediaBuffer_iface,
+            hr == S_OK ? DMO_INPUT_DATA_BUFFERF_TIME & DMO_INPUT_DATA_BUFFERF_TIMELENGTH : 0, start, stop - start);
+    IMediaBuffer_Release(&src_buffer->IMediaBuffer_iface);
+
+    input_bmi_header = &((VIDEOINFOHEADER *)filter->sink.pin.mt.pbFormat)->bmiHeader;
+    output_bmi_header = &((VIDEOINFOHEADER *)filter->source.pin.mt.pbFormat)->bmiHeader;
+    dst_buffer = create_buffer(filter->dmo_output_sample_size);
+    memset(&output, 0, sizeof(output));
+    output.pBuffer = &dst_buffer->IMediaBuffer_iface;
+    hr = IMediaObject_ProcessOutput(filter->dmo, 0, 1, &output, &status);
+    if (input_bmi_header->biBitCount < output_bmi_header->biBitCount && output_bmi_header->biBitCount == 32)
+    {
+        /* Fix the value of the alpha channel. DMO uses 0xff, whilst quartz uses 0x00. */
+        data = (UINT32 *)dst_buffer->data;
+
+        for (i = 0; i < input_bmi_header->biHeight * input_bmi_header->biWidth; i++)
+            *data++ &= 0xffffff;
+    }
+    IMediaSample_GetPointer(dst_sample, &dest);
+    if (filter->sample_output_stride < 0)
+        dest += -filter->sample_output_stride * (input_bmi_header->biHeight - 1);
+
+    MFCopyImage(dest, filter->sample_output_stride, dst_buffer->data, filter->dmo_output_stride,
+            input_bmi_header->biWidth * (output_bmi_header->biBitCount / 8), input_bmi_header->biHeight);
+    IMediaBuffer_Release(output.pBuffer);
+
+    /* Drop sample if it's intended to be dropped */
+    if (flags & ICDECOMPRESS_HURRYUP)
+    {
+        IMediaSample_Release(dst_sample);
+        return S_OK;
+    }
+
+    IMediaSample_SetActualDataLength(dst_sample, output_image_size);
+
+    IMediaSample_SetPreroll(dst_sample, (IMediaSample_IsPreroll(src_sample) == S_OK));
+    IMediaSample_SetDiscontinuity(dst_sample, (IMediaSample_IsDiscontinuity(src_sample) == S_OK));
+    IMediaSample_SetSyncPoint(dst_sample, TRUE);
+
+    if (hr == S_OK)
+        IMediaSample_SetTime(dst_sample, &start, &stop);
+    else if (hr == VFW_S_NO_STOP_TIME)
+        IMediaSample_SetTime(dst_sample, &start, NULL);
+    else
+        IMediaSample_SetTime(dst_sample, NULL, NULL);
+
+    hr = IMemInputPin_Receive(filter->source.pMemInputPin, dst_sample);
+    if (hr != S_OK && hr != VFW_E_NOT_CONNECTED)
+        ERR("Failed to send sample, hr %#lx.\n", hr);
+
+    IMediaSample_Release(dst_sample);
+    return hr;
+}
+
+static const struct strmbase_sink_ops sink_ops =
+{
+    .base.pin_query_interface = color_sink_query_interface,
+    .base.pin_query_accept = color_sink_query_accept,
+    .pfnReceive = color_sink_Receive,
+    .sink_connect = color_sink_connect,
+};
 
 static HRESULT color_source_query_interface(struct strmbase_pin *iface, REFIID iid, void **out)
 {
