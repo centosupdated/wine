@@ -376,6 +376,14 @@ static HRESULT color_sink_connect(struct strmbase_sink *iface, IPin *peer, const
     return hr;
 }
 
+static HRESULT color_sink_end_flush(struct strmbase_sink *iface)
+{
+    struct color_converter *filter = impl_from_strmbase_filter(iface->pin.filter);
+    if (filter->source.pin.peer)
+        return IPin_EndFlush(filter->source.pin.peer);
+    return S_OK;
+}
+
 static HRESULT WINAPI color_source_DecideBufferSize(
         struct strmbase_source *iface, IMemAllocator *alloc, ALLOCATOR_PROPERTIES *props)
 {
@@ -572,6 +580,7 @@ static const struct strmbase_sink_ops sink_ops =
     .base.pin_query_accept = color_sink_query_accept,
     .pfnReceive = color_sink_Receive,
     .sink_connect = color_sink_connect,
+    .sink_end_flush = color_sink_end_flush,
 };
 
 static HRESULT color_source_query_interface(struct strmbase_pin *iface, REFIID iid, void **out)
