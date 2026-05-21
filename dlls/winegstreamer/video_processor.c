@@ -188,7 +188,7 @@ static HRESULT video_processor_init_allocator(struct video_processor *processor)
     if (FAILED(IMFAttributes_GetUINT32(processor->attributes, &MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT, &count)))
         count = 2;
     if (FAILED(hr = IMFVideoSampleAllocatorEx_SetDirectXManager(allocator, processor->device_manager))
-            || FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(allocator, count, max(count + 2, 10),
+            || FAILED(hr = IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(allocator, count, max(count + 2, 30),
             processor->output_attributes, processor->output_type)))
     {
         IMFVideoSampleAllocatorEx_Release(allocator);
