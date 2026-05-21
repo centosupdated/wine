@@ -2119,8 +2119,9 @@ void x11drv_keyboard_init_thread( struct x11drv_thread_data *data )
     HKL hkl;
 
     XkbUseExtension( data->display, NULL, NULL );
-    XkbSelectEvents( data->display, XkbUseCoreKbd, XkbStateNotifyMask | XkbNewKeyboardNotifyMask,
-                     XkbStateNotifyMask | XkbNewKeyboardNotifyMask );
+    XkbSelectEvents( data->display, XkbUseCoreKbd,
+                     XkbStateNotifyMask | XkbNewKeyboardNotifyMask | XkbMapNotifyMask,
+                     XkbStateNotifyMask | XkbNewKeyboardNotifyMask | XkbMapNotifyMask );
     XkbSetDetectableAutoRepeat( data->display, True, NULL );
     init_keyboard_layouts( data->display );
     status = XkbGetState( data->display, XkbUseCoreKbd, &xkb_state );
@@ -2169,6 +2170,11 @@ BOOL x11drv_xkb_event_handler( HWND dummy, XEvent *event )
             if ( !xkb_device_spec || e->new_kbd.device != xkb_device_spec )
                 return TRUE;
             x11drv_update_input_lang( e->new_kbd.display );
+            break;
+        case XkbMapNotify:
+            TRACE( "Received XkbMapNotify event, changed %#x\n", e->map.changed );
+            XkbRefreshKeyboardMapping( &e->map );
+            x11drv_update_input_lang( e->map.display );
             break;
     }
     return TRUE;
