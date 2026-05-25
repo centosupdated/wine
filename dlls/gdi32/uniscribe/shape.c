@@ -923,7 +923,11 @@ static HRESULT mark_invalid_combinations(HDC hdc, const WCHAR* pwcChars, INT cCh
     for (i = 0; i < cChars; i++)
        context_type[i] = lex(pwcChars[i]);
 
-    NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0);
+    if (NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0) == GDI_ERROR || invalid_glyph == 0x0000)
+    {
+        invalid = 0x0020;
+        NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0);
+    }
     for (i = 1, g=1; i < cChars - 1; i++, g++)
     {
         if (context_type[i] != 0 && context_type[i+write_dir]==context_type[i])
