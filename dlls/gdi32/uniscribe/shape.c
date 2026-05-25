@@ -925,6 +925,11 @@ static HRESULT mark_invalid_combinations(HDC hdc, const WCHAR* pwcChars, INT cCh
 
     if (NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0) == GDI_ERROR || invalid_glyph == 0x0000)
     {
+        if (!hdc)
+        {
+            free(context_type);
+            return E_PENDING;
+        }
         invalid = 0x0020;
         NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0);
     }
