@@ -4970,7 +4970,7 @@ static void test_image_format(void)
 
         status = GdipCreateHBITMAPFromBitmap(bitmap, &hbitmap, 0);
         if (fmt[i] == PixelFormat16bppGrayScale || fmt[i] == PixelFormat32bppCMYK)
-            todo_wine expect(InvalidParameter, status);
+            expect(InvalidParameter, status);
         else
         {
             expect(Ok, status);
@@ -5004,7 +5004,7 @@ static void test_image_format(void)
 
         status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead, PixelFormat32bppPARGB, &data);
         if (fmt[i] == PixelFormat16bppGrayScale || fmt[i] == PixelFormat32bppCMYK)
-            todo_wine expect(InvalidParameter, status);
+            expect(InvalidParameter, status);
         else
         {
             expect(Ok, status);
@@ -5506,15 +5506,15 @@ static void test_CMYK_conversion(void)
     memset(&data, 0, sizeof(data));
     status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead,
         PixelFormat32bppARGB, &data);
-    todo_wine ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat32bppARGB\n");
+    ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat32bppARGB\n");
 
     status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead,
         PixelFormat8bppIndexed, &data);
-    todo_wine ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat8bppIndexed\n");
+    ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat8bppIndexed\n");
 
     status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead,
         PixelFormat16bppGrayScale, &data);
-    todo_wine ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat16bppGrayScale\n");
+    ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat16bppGrayScale\n");
 
     GdipDisposeImage((GpImage *)bitmap);
 }
@@ -6260,7 +6260,6 @@ static void test_png_save_palette(void)
         status = GdipSaveImageToStream((GpImage *)bitmap, stream, &clsid, NULL);
         GdipDisposeImage((GpImage*)bitmap);
 
-        todo_wine_if(formats[i] == PixelFormat16bppGrayScale)
         ok(formats[i] == PixelFormat16bppGrayScale ?
                 (status == GenericError || status == Win32Error) : status == Ok,
             "Unexpected return value %d saving image for PixelFormat %#x\n", status, formats[i]);

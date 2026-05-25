@@ -608,6 +608,11 @@ GpStatus convert_pixels(INT width, INT height,
         return Ok;
     }
 
+    /* gdiplus rejectes CMYK convertion on Win7 and WIN11 */
+    if (src_format == PixelFormat32bppCMYK || dst_format == PixelFormat32bppCMYK ||
+        src_format == PixelFormat16bppGrayScale || dst_format == PixelFormat16bppGrayScale)
+    return InvalidParameter;
+
 #define convert_indexed_to_rgb(getpixel_function, setpixel_function) do { \
     for (y=0; y<height; y++) \
         for (x=0; x<width; x++) { \
