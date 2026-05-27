@@ -121,6 +121,8 @@ const int bluez_timeout = -1;
 #define BLUEZ_DEST "org.bluez"
 #define BLUEZ_INTERFACE_ADAPTER "org.bluez.Adapter1"
 #define BLUEZ_INTERFACE_DEVICE  "org.bluez.Device1"
+#define BLUEZ_INTERFACE_BEARER_BREDR "org.bluez.Bearer.BREDR1"
+#define BLUEZ_INTERFACE_BEARER_LE "org.bluez.Bearer.LE1"
 #define BLUEZ_INTERFACE_AGENT_MANAGER "org.bluez.AgentManager1"
 #define BLUEZ_INTERFACE_AGENT "org.bluez.Agent1"
 #define BLUEZ_INTERFACE_GATT_SERVICE "org.bluez.GattService1"
@@ -869,6 +871,37 @@ static void bluez_device_prop_from_dict_entry( const char *prop_name, DBusMessag
     {
         p_dbus_message_iter_get_basic( variant, &props->class );
         *props_mask |= WINEBLUETOOTH_DEVICE_PROPERTY_CLASS;
+    }
+}
+
+static void bluez_device_bearer_prop_from_dict_entry( const char *prop_name, DBusMessageIter *variant,
+                                                      struct winebluetooth_device_bearer_properties *props )
+{
+    const struct {
+        const char *name;
+        BOOL *val;
+        UINT8 flag;
+    } obj_props[] = {
+        { "Bonded", &props->bonded, WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_BONDED },
+        { "Connected", &props->connected, WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_CONNECTED },
+        { "Paired", &props->paired, WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_PAIRED },
+    };
+    int i;
+
+    TRACE_( dbus )( "(%s, %s, %p)\n", debugstr_a( prop_name ), dbgstr_dbus_iter( variant ), props );
+
+    if (p_dbus_message_iter_get_arg_type( variant ) != DBUS_TYPE_BOOLEAN) return;
+    for (i = 0; i < ARRAY_SIZE( obj_props ); i++)
+    {
+        if (!strcmp( prop_name, obj_props[i].name ))
+        {
+            dbus_bool_t val;
+
+            p_dbus_message_iter_get_basic( variant, &val );
+            *(obj_props[i].val) = !!val;
+            props->props_mask |= obj_props[i].flag;
+            break;
+        }
     }
 }
 
@@ -1958,6 +1991,96 @@ static void winebluetooth_watcher_event_free( enum winebluetooth_watcher_event_t
     }
 }
 
+/* Populate winebluetooth_watcher_event_device_added for a newly discovered BlueZ remote device object.
+ * Return TRUE if a valid remote device was discovered.
+ * cur_iface should be one of "org.bluez.Device1", "org.bluez.Bearer.BREDR1", or "org.bluez.BearerLE1".
+ */
+static BOOL bluez_new_device_object_get_event( const char *path, const char *cur_iface, DBusMessageIter *iface_iter,
+                                               DBusMessageIter *props_iter,
+                                               struct winebluetooth_watcher_event_device_added *device_added,
+                                               BOOL *oom )
+{
+    TRACE_( dbus )( "(%s, %s, %s, %s, %p, %p)\n", debugstr_a( path ), debugstr_a( cur_iface ),
+                    dbgstr_dbus_iter( iface_iter ), dbgstr_dbus_iter( props_iter ), device_added, oom );
+
+    /* Objects for remote devices expose three interfaces that we're interested in:
+     * - org.bluez.Device1
+     * - org.bluez.Bearer.BREDR1: Present if the device supports BREDR (Bluetooth Classic)
+     * - org.bluez.Bearer.LE1: Present if the device supports Low Energy
+     * The last two interfaces are only present in newer versions of BlueZ, so we cannot always rely
+     * on them to figure out BR/EDR and LE support. */
+    do
+    {
+        if (!strcmp( cur_iface, BLUEZ_INTERFACE_DEVICE ))
+        {
+            DBusMessageIter variant;
+            const char *prop_name;
+
+            if (!(device_added->device.handle = (UINT_PTR)unix_name_get_or_create( path )))
+            {
+                *oom = TRUE;
+                return FALSE;
+            }
+
+            while ((prop_name = bluez_next_dict_entry( props_iter, &variant )))
+            {
+                if (!strcmp( prop_name, "Adapter" ) &&
+                    p_dbus_message_iter_get_arg_type( &variant ) == DBUS_TYPE_OBJECT_PATH)
+                {
+                    const char *adapter_path;
+
+                    p_dbus_message_iter_get_basic( &variant, &adapter_path );
+                    if (!(device_added->radio.handle = (UINT_PTR)unix_name_get_or_create( adapter_path )))
+                    {
+                        *oom = TRUE;
+                        unix_name_free( (struct unix_name *)device_added->device.handle );
+                        return FALSE;
+                    }
+                }
+                else
+                    bluez_device_prop_from_dict_entry( prop_name, &variant, &device_added->props,
+                                                       &device_added->known_props_mask,
+                                                       WINEBLUETOOTH_DEVICE_ALL_PROPERTIES );
+            }
+
+            if (!device_added->radio.handle)
+            {
+                unix_name_free( (struct unix_name *)device_added->device.handle );
+                ERR( "Could not find the associated adapter for device %s\n", debugstr_a( path ) );
+                return FALSE;
+            }
+        }
+        else if (!strcmp( cur_iface, BLUEZ_INTERFACE_BEARER_BREDR ) || !strcmp( cur_iface, BLUEZ_INTERFACE_BEARER_LE ))
+        {
+            struct winebluetooth_device_bearer_properties *props;
+            DBusMessageIter variant;
+            const char *prop_name;
+
+            if (!strcmp( cur_iface, BLUEZ_INTERFACE_BEARER_BREDR ))
+            {
+                device_added->known_props_mask |= WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR;
+                props = &device_added->props.bredr;
+            }
+            else
+            {
+                device_added->known_props_mask |= WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE;
+                props = &device_added->props.le;
+            }
+
+            while ((prop_name = bluez_next_dict_entry( props_iter, &variant )))
+                bluez_device_bearer_prop_from_dict_entry( prop_name, &variant, props );
+        }
+    } while ((cur_iface = bluez_next_dict_entry( iface_iter, props_iter )));
+
+    if (!device_added->device.handle)
+    {
+        assert( !device_added->radio.handle ); /* This is only set when iterating org.bluez.Device1 properties. */
+        ERR( "Object %s does not implement org.bluez.Device1, skipping.\n" ,debugstr_a( path ) );
+        return FALSE;
+    }
+    return TRUE;
+}
+
 /* Examine a new BlueZ DBus object available at path and queue a BLUETOOTH_WATCHER_* event if it is an object we
  * are interested in.
  * ifaces_iter should point to the start of the interfaces + properties dict.
@@ -1968,7 +2091,7 @@ static BOOL bluez_handle_new_object( DBusMessage *msg, const char *path, DBusMes
                                      struct list *event_list, BOOL *ret_oom )
 {
     enum winebluetooth_watcher_event_type event_type = 0;
-    union winebluetooth_watcher_event_data event = {0};
+    union winebluetooth_watcher_event_data event;
     BOOL new_object = FALSE, oom = FALSE;
     DBusMessageIter props_iter;
     const char *iface;
@@ -1981,6 +2104,7 @@ static BOOL bluez_handle_new_object( DBusMessage *msg, const char *path, DBusMes
         DBusMessageIter variant;
         const char *prop_name;
 
+        memset( &event, 0, sizeof( event ) );
         if (!strcmp( iface, BLUEZ_INTERFACE_ADAPTER ))
         {
             if (!(event.radio_added.radio.handle = (UINT_PTR)unix_name_get_or_create( path )))
@@ -1999,44 +2123,21 @@ static BOOL bluez_handle_new_object( DBusMessage *msg, const char *path, DBusMes
             TRACE( "New BlueZ org.bluez.Adapter1 object %s: %#" PRIxPTR "\n", debugstr_a( path ),
                    event.radio_added.radio.handle );
         }
-        else if (!strcmp( iface, BLUEZ_INTERFACE_DEVICE ))
+        else if (!strcmp( iface, BLUEZ_INTERFACE_DEVICE ) || !strcmp( iface, BLUEZ_INTERFACE_BEARER_BREDR ) ||
+                 !strcmp( iface, BLUEZ_INTERFACE_BEARER_LE ))
         {
-            if (!(event.device_added.device.handle = (UINT_PTR)unix_name_get_or_create( path )))
-            {
-                oom = TRUE;
-                break;
-            }
-            event.device_added.init_entry = init_entry;
+            BOOL has_bredr_iface = FALSE, has_le_iface = FALSE;
 
-            while ((prop_name = bluez_next_dict_entry( &props_iter, &variant )))
+            new_object =
+                bluez_new_device_object_get_event( path, iface, ifaces_iter, &props_iter, &event.device_added, &oom );
+            if (oom) break;
+            if (new_object)
             {
-                if (!strcmp( prop_name, "Adapter" ) &&
-                    p_dbus_message_iter_get_arg_type( &variant ) == DBUS_TYPE_OBJECT_PATH)
-                {
-                    const char *path;
-                    p_dbus_message_iter_get_basic( &variant, &path );
-                    if (!(event.device_added.radio.handle = (UINT_PTR)unix_name_get_or_create( path )))
-                    {
-                        oom = TRUE;
-                        goto done;
-                    }
-                }
-                else
-                    bluez_device_prop_from_dict_entry( prop_name, &variant, &event.device_added.props,
-                                                       &event.device_added.known_props_mask,
-                                                       WINEBLUETOOTH_DEVICE_ALL_PROPERTIES );
-            }
-            if (!event.device_added.radio.handle)
-            {
-                unix_name_free( (struct unix_name *)event.device_added.device.handle );
-                ERR( "Could not find the associated adapter for device %s\n", debugstr_a( path ) );
-            }
-            else
-            {
-                TRACE( "New org.bluez.Device1 object %s: %#" PRIxPTR "\n", debugstr_a( path ),
-                       event.device_added.device.handle );
                 event_type = BLUETOOTH_WATCHER_EVENT_TYPE_DEVICE_ADDED;
-                new_object = TRUE;
+                has_bredr_iface = !!(event.device_added.known_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR);
+                has_le_iface = !!(event.device_added.known_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE);
+                TRACE( "New org.bluez.Device1 object (has_bredr_iface: %d, has_le_iface: %d) %s: %#" PRIxPTR "\n",
+                       has_bredr_iface, has_le_iface, debugstr_a( path ), event.device_added.device.handle );
             }
         }
         else if (!strcmp( iface ,BLUEZ_INTERFACE_GATT_SERVICE ))
@@ -2386,8 +2487,8 @@ static void bluez_signal_handler( DBusConnection *conn, DBusMessage *msg, const 
                 return;
 
             object_path = p_dbus_message_get_path( msg );
-            TRACE( "Properties changed for device %s, changed %#x, invalidated %#x\n", debugstr_a( object_path ),
-                   props_changed.changed_props_mask, props_changed.invalid_props_mask );
+            TRACE( "Properties changed for device %s, interface org.bluez.Device1, changed %#x, invalidated %#x\n",
+                   debugstr_a( object_path ), props_changed.changed_props_mask, props_changed.invalid_props_mask );
 
             device = unix_name_get_or_create( object_path );
             if (!device)
@@ -2428,6 +2529,45 @@ static void bluez_signal_handler( DBusConnection *conn, DBusMessage *msg, const 
             {
 
                 unix_name_free( device );
+                return;
+            }
+        }
+        else if (!strcmp( iface, BLUEZ_INTERFACE_BEARER_BREDR ) || !strcmp( iface, BLUEZ_INTERFACE_BEARER_LE ))
+        {
+            struct winebluetooth_device_bearer_properties *bearer_props;
+            union winebluetooth_watcher_event_data event = {0};
+            DBusMessageIter changed_props_iter, variant;
+            const char *prop_name, *path;
+
+            if (!strcmp( iface, BLUEZ_INTERFACE_BEARER_BREDR ))
+            {
+                event.device_props_changed.changed_props_mask = WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR;
+                bearer_props = &event.device_props_changed.props.bredr;
+            }
+            else
+            {
+                event.device_props_changed.changed_props_mask = WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE;
+                bearer_props = &event.device_props_changed.props.le;
+            }
+
+            p_dbus_message_iter_next( &iter );
+            p_dbus_message_iter_recurse( &iter, &changed_props_iter );
+            while ((prop_name = bluez_next_dict_entry( &changed_props_iter, &variant )))
+                bluez_device_bearer_prop_from_dict_entry( prop_name, &variant, bearer_props );
+            if (!bearer_props->props_mask) return;
+
+            path = p_dbus_message_get_path( msg );
+            if (!(event.device_props_changed.device.handle = (UINT_PTR)unix_name_get_or_create( path )))
+            {
+                ERR( "Failed to allocate memory for device path %s\n", path );
+                return;
+            }
+            TRACE( "Properties changed for device %s, interface %s, changed %#x\n", debugstr_a( path ),
+                   debugstr_a( iface ), bearer_props->props_mask );
+            if (!bluez_event_list_queue_new_event( event_list, BLUETOOTH_WATCHER_EVENT_TYPE_DEVICE_PROPERTIES_CHANGED,
+                                                   event ))
+            {
+                unix_name_free( (struct unix_name *)event.device_props_changed.device.handle );
                 return;
             }
         }
