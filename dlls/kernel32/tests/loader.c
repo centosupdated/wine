@@ -4532,6 +4532,7 @@ static void test_ResolveDelayLoadedAPI(void)
         DeleteFileA(dll_name);
         return;
     }
+    ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s not to be loaded\n", test_dll);
 
     delaydir = pRtlImageDirectoryEntryToData(hlib, TRUE, IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, &file_size);
     if (!delaydir)
@@ -4618,10 +4619,21 @@ static void test_ResolveDelayLoadedAPI(void)
                     ok(0, "Test %lu: ResolveDelayLoadedAPI succeeded with %p\n", i, ret);
             }
         }
+        FreeLibrary(htarget);
         delaydir++;
     }
 
+    ok(GetModuleHandleA(dll_name) != NULL, "Expected DLL %s still to be loaded\n", dll_name);
     FreeLibrary(hlib);
+    ok(GetModuleHandleA(dll_name) == NULL, "Expected DLL %s to be unloaded\n", dll_name);
+    todo_wine
+        ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s to be unloaded\n", test_dll);
+    /* to be removed once Wine is fixed */
+    if (GetModuleHandleA(test_dll) && winetest_platform_is_wine)
+    {
+        FreeLibrary(GetModuleHandleA(test_dll));
+        ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s to be unloaded\n", test_dll);
+    }
     trace("deleting %s\n", dll_name);
     DeleteFileA(dll_name);
 }
