@@ -4664,14 +4664,7 @@ static void test_ResolveDelayLoadedAPI(void)
     ok(GetModuleHandleA(dll_name) != NULL, "Expected DLL %s still to be loaded\n", dll_name);
     FreeLibrary(hlib);
     ok(GetModuleHandleA(dll_name) == NULL, "Expected DLL %s to be unloaded\n", dll_name);
-    todo_wine
-        ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s to be unloaded\n", test_dll);
-    /* to be removed once Wine is fixed */
-    if (GetModuleHandleA(test_dll) && winetest_platform_is_wine)
-    {
-        FreeLibrary(GetModuleHandleA(test_dll));
-        ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s to be unloaded\n", test_dll);
-    }
+    ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s to be unloaded\n", test_dll);
 
     if (!pResolveDelayLoadsFromDll)
     {
