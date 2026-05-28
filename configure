@@ -1368,6 +1368,7 @@ enable_msxml6
 enable_mtxdm
 enable_ncrypt
 enable_nddeapi
+enable_ndfapi
 enable_ndis_sys
 enable_netapi32
 enable_netcfgx
@@ -1600,6 +1601,7 @@ enable_wintab32
 enable_wintrust
 enable_wintypes
 enable_winusb
+enable_wkscli
 enable_wlanapi
 enable_wlanui
 enable_wldap32
@@ -2582,7 +2584,7 @@ Optional Features:
   --disable-option-checking  ignore unrecognized --enable/--with options
   --disable-FEATURE       do not include FEATURE (same as --enable-FEATURE=no)
   --enable-FEATURE[=ARG]  include FEATURE [ARG=yes]
-  --enable-archs={i386,x86_64,arm,aarch64}
+  --enable-archs={i386,x86_64,arm,aarch64,arm64ec,none}
                           enable multiple architectures for PE compilation
   --disable-win16         do not include Win16 support
   --enable-win64          build a Win64 emulator on AMD64 (won't run Win32
@@ -23512,6 +23514,7 @@ wine_fn_config_makefile dlls/mtxdm enable_mtxdm
 wine_fn_config_makefile dlls/ncrypt enable_ncrypt
 wine_fn_config_makefile dlls/ncrypt/tests enable_tests
 wine_fn_config_makefile dlls/nddeapi enable_nddeapi
+wine_fn_config_makefile dlls/ndfapi enable_ndfapi
 wine_fn_config_makefile dlls/ndis.sys enable_ndis_sys
 wine_fn_config_makefile dlls/ndis.sys/tests enable_tests
 wine_fn_config_makefile dlls/netapi32 enable_netapi32
@@ -23905,6 +23908,7 @@ wine_fn_config_makefile dlls/wintrust/tests enable_tests
 wine_fn_config_makefile dlls/wintypes enable_wintypes
 wine_fn_config_makefile dlls/wintypes/tests enable_tests
 wine_fn_config_makefile dlls/winusb enable_winusb
+wine_fn_config_makefile dlls/wkscli enable_wkscli
 wine_fn_config_makefile dlls/wlanapi enable_wlanapi
 wine_fn_config_makefile dlls/wlanapi/tests enable_tests
 wine_fn_config_makefile dlls/wlanui enable_wlanui
