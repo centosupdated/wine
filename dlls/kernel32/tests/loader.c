@@ -4318,27 +4318,169 @@ static PVOID WINAPI failuresyshook(const char *dll, const char *function)
     return (void*)0x12345678;
 }
 
+struct test_delay_import_data
+{
+    BOOL func;
+    UINT_PTR ordinal;
+    BOOL succeeds;
+};
+
+static BOOL create_delay_import_dll(char dll_name[MAX_PATH], const struct test_delay_import_data *td, size_t num_td,
+                                    const char *test_dll, const char *test_func)
+{
+    char temp_path[MAX_PATH];
+    HANDLE hfile;
+    IMAGE_NT_HEADERS nt_header;
+    IMAGE_DELAYLOAD_DESCRIPTOR idd;
+    IMAGE_THUNK_DATA itd32;
+    WORD hint = 0;
+    DWORD dummy;
+    BOOL ret;
+    size_t i;
+
+    GetTempPathA(MAX_PATH, temp_path);
+    GetTempFileNameA(temp_path, "ldr", 0, dll_name);
+    trace("creating %s\n", dll_name);
+    hfile = CreateFileA(dll_name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
+    if (hfile == INVALID_HANDLE_VALUE)
+    {
+        ok(0, "could not create %s\n", dll_name);
+        return FALSE;
+    }
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &dos_header, sizeof(dos_header), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    nt_header = nt_header_template;
+    nt_header.FileHeader.NumberOfSections = 2;
+    nt_header.FileHeader.SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER);
+
+    nt_header.OptionalHeader.SectionAlignment = 0x1000;
+    nt_header.OptionalHeader.FileAlignment = 0x1000;
+    nt_header.OptionalHeader.SizeOfImage = sizeof(dos_header) + sizeof(nt_header) + sizeof(IMAGE_SECTION_HEADER) + 0x2200;
+    nt_header.OptionalHeader.SizeOfHeaders = sizeof(dos_header) + sizeof(nt_header) + 2 * sizeof(IMAGE_SECTION_HEADER);
+    nt_header.OptionalHeader.NumberOfRvaAndSizes = IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
+    nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress = 0x1000;
+    nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].Size = 2 * sizeof(idd);
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &nt_header, sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &nt_header.OptionalHeader, sizeof(IMAGE_OPTIONAL_HEADER), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    /* sections */
+    section.PointerToRawData = nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress;
+    section.VirtualAddress = nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress;
+    section.Misc.VirtualSize = 0x1000;
+    section.SizeOfRawData = 2 * sizeof(idd);
+    section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ;
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &section, sizeof(section), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    section.PointerToRawData = 0x2000;
+    section.VirtualAddress = 0x2000;
+    section.SizeOfRawData = strlen(test_dll) + 1 + sizeof(hint) + strlen(test_func) + 1 + sizeof(HMODULE) +
+                               2 * (num_td + 1) * sizeof(IMAGE_THUNK_DATA);
+    ok(section.SizeOfRawData <= 0x1000, "Too much tests, add a new section!\n");
+    section.Misc.VirtualSize = 0x1000;
+    section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &section, sizeof(section), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    /* fill up to delay data */
+    SetFilePointer( hfile, nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress, NULL, FILE_BEGIN );
+
+    /* delay data */
+    idd.Attributes.AllAttributes = 1;
+    idd.DllNameRVA = 0x2000;
+    idd.ModuleHandleRVA = idd.DllNameRVA + strlen(test_dll) + 1 + sizeof(hint) + strlen(test_func) + 1;
+    idd.ImportAddressTableRVA = idd.ModuleHandleRVA + sizeof(HMODULE);
+    idd.ImportNameTableRVA = idd.ImportAddressTableRVA + (num_td + 1) * sizeof(IMAGE_THUNK_DATA);
+    idd.BoundImportAddressTableRVA = 0;
+    idd.UnloadInformationTableRVA = 0;
+    idd.TimeDateStamp = 0;
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &idd, sizeof(idd), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, filler, sizeof(idd), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    /* fill up to extended delay data */
+    SetFilePointer( hfile, idd.DllNameRVA, NULL, FILE_BEGIN );
+
+    /* extended delay data */
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, test_dll, strlen(test_dll) + 1, &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &hint, sizeof(hint), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, test_func, strlen(test_func) + 1, &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    SetFilePointer( hfile, idd.ImportAddressTableRVA, NULL, FILE_BEGIN );
+
+    for (i = 0; i < num_td; i++)
+    {
+        /* 0x1a00 is an empty space between delay data and extended delay data, real thunks are not necessary */
+        itd32.u1.Function = nt_header.OptionalHeader.ImageBase + 0x1a00 + i * 0x20;
+        SetLastError(0xdeadbeef);
+        ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
+        ok(ret, "WriteFile error %ld\n", GetLastError());
+    }
+
+    itd32.u1.Function = 0;
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    for (i = 0; i < num_td; i++)
+    {
+        if (td[i].func)
+            itd32.u1.AddressOfData = idd.DllNameRVA + strlen(test_dll) + 1;
+        else
+            itd32.u1.Ordinal = td[i].ordinal;
+        SetLastError(0xdeadbeef);
+        ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
+        ok(ret, "WriteFile error %ld\n", GetLastError());
+    }
+
+    itd32.u1.Ordinal = 0;
+    SetLastError(0xdeadbeef);
+    ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
+    ok(ret, "WriteFile error %ld\n", GetLastError());
+
+    /* fill up to eof */
+    SetFilePointer( hfile, section.VirtualAddress + section.Misc.VirtualSize, NULL, FILE_BEGIN );
+    SetEndOfFile( hfile );
+    CloseHandle(hfile);
+
+    return TRUE;
+}
+
 static void test_ResolveDelayLoadedAPI(void)
 {
-    static const char test_dll[] = "secur32.dll";
-    static const char test_func[] = "SealMessage";
-    char temp_path[MAX_PATH];
+    static const char *test_dll = "secur32.dll";
+    static const char *test_func = "SealMessage";
     char dll_name[MAX_PATH];
-    IMAGE_DELAYLOAD_DESCRIPTOR idd, *delaydir;
-    IMAGE_THUNK_DATA itd32;
-    HANDLE hfile;
+    IMAGE_DELAYLOAD_DESCRIPTOR *delaydir;
     HMODULE hlib;
-    DWORD dummy, file_size, i;
-    WORD hint = 0;
+    DWORD file_size, i;
     BOOL ret;
-    IMAGE_NT_HEADERS nt_header;
 
-    static const struct test_data
-    {
-        BOOL func;
-        UINT_PTR ordinal;
-        BOOL succeeds;
-    } td[] =
+    static const struct test_delay_import_data td[] =
     {
         {
             TRUE, 0, TRUE
@@ -4378,135 +4520,8 @@ static void test_ResolveDelayLoadedAPI(void)
         ok(cb_count == 1, "Wrong callback count: %d\n", cb_count);
     }
 
-    GetTempPathA(MAX_PATH, temp_path);
-    GetTempFileNameA(temp_path, "ldr", 0, dll_name);
-    trace("creating %s\n", dll_name);
-    hfile = CreateFileA(dll_name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, 0);
-    if (hfile == INVALID_HANDLE_VALUE)
-    {
-        ok(0, "could not create %s\n", dll_name);
-        return;
-    }
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &dos_header, sizeof(dos_header), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    nt_header = nt_header_template;
-    nt_header.FileHeader.NumberOfSections = 2;
-    nt_header.FileHeader.SizeOfOptionalHeader = sizeof(IMAGE_OPTIONAL_HEADER);
-
-    nt_header.OptionalHeader.SectionAlignment = 0x1000;
-    nt_header.OptionalHeader.FileAlignment = 0x1000;
-    nt_header.OptionalHeader.SizeOfImage = sizeof(dos_header) + sizeof(nt_header) + sizeof(IMAGE_SECTION_HEADER) + 0x2200;
-    nt_header.OptionalHeader.SizeOfHeaders = sizeof(dos_header) + sizeof(nt_header) + 2 * sizeof(IMAGE_SECTION_HEADER);
-    nt_header.OptionalHeader.NumberOfRvaAndSizes = IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
-    nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress = 0x1000;
-    nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].Size = 2 * sizeof(idd);
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &nt_header, sizeof(DWORD) + sizeof(IMAGE_FILE_HEADER), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &nt_header.OptionalHeader, sizeof(IMAGE_OPTIONAL_HEADER), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    /* sections */
-    section.PointerToRawData = nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress;
-    section.VirtualAddress = nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress;
-    section.Misc.VirtualSize = 0x1000;
-    section.SizeOfRawData = 2 * sizeof(idd);
-    section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ;
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &section, sizeof(section), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    section.PointerToRawData = 0x2000;
-    section.VirtualAddress = 0x2000;
-    i = ARRAY_SIZE(td);
-    section.SizeOfRawData = sizeof(test_dll) + sizeof(hint) + sizeof(test_func) + sizeof(HMODULE) +
-                               2 * (i + 1) * sizeof(IMAGE_THUNK_DATA);
-    ok(section.SizeOfRawData <= 0x1000, "Too much tests, add a new section!\n");
-    section.Misc.VirtualSize = 0x1000;
-    section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &section, sizeof(section), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    /* fill up to delay data */
-    SetFilePointer( hfile, nt_header.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress, NULL, FILE_BEGIN );
-
-    /* delay data */
-    idd.Attributes.AllAttributes = 1;
-    idd.DllNameRVA = 0x2000;
-    idd.ModuleHandleRVA = idd.DllNameRVA + sizeof(test_dll) + sizeof(hint) + sizeof(test_func);
-    idd.ImportAddressTableRVA = idd.ModuleHandleRVA + sizeof(HMODULE);
-    idd.ImportNameTableRVA = idd.ImportAddressTableRVA + (i + 1) * sizeof(IMAGE_THUNK_DATA);
-    idd.BoundImportAddressTableRVA = 0;
-    idd.UnloadInformationTableRVA = 0;
-    idd.TimeDateStamp = 0;
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &idd, sizeof(idd), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, filler, sizeof(idd), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    /* fill up to extended delay data */
-    SetFilePointer( hfile, idd.DllNameRVA, NULL, FILE_BEGIN );
-
-    /* extended delay data */
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, test_dll, sizeof(test_dll), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &hint, sizeof(hint), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, test_func, sizeof(test_func), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    SetFilePointer( hfile, idd.ImportAddressTableRVA, NULL, FILE_BEGIN );
-
-    for (i = 0; i < ARRAY_SIZE(td); i++)
-    {
-        /* 0x1a00 is an empty space between delay data and extended delay data, real thunks are not necessary */
-        itd32.u1.Function = nt_header.OptionalHeader.ImageBase + 0x1a00 + i * 0x20;
-        SetLastError(0xdeadbeef);
-        ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
-        ok(ret, "WriteFile error %ld\n", GetLastError());
-    }
-
-    itd32.u1.Function = 0;
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    for (i = 0; i < ARRAY_SIZE(td); i++)
-    {
-        if (td[i].func)
-            itd32.u1.AddressOfData = idd.DllNameRVA + sizeof(test_dll);
-        else
-            itd32.u1.Ordinal = td[i].ordinal;
-        SetLastError(0xdeadbeef);
-        ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
-        ok(ret, "WriteFile error %ld\n", GetLastError());
-    }
-
-    itd32.u1.Ordinal = 0;
-    SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
-    ok(ret, "WriteFile error %ld\n", GetLastError());
-
-    /* fill up to eof */
-    SetFilePointer( hfile, section.VirtualAddress + section.Misc.VirtualSize, NULL, FILE_BEGIN );
-    SetEndOfFile( hfile );
-    CloseHandle(hfile);
+    ret = create_delay_import_dll(dll_name, td, ARRAY_SIZE(td), test_dll, test_func);
+    ok(ret, "Couldn't create test library\n");
 
     SetLastError(0xdeadbeef);
     hlib = LoadLibraryA(dll_name);
@@ -4545,7 +4560,7 @@ static void test_ResolveDelayLoadedAPI(void)
             void *ret, *load;
 
             /* relocate thunk address by hand since we don't generate reloc records */
-            itda[i].u1.AddressOfData += (char *)hlib - (char *)nt_header.OptionalHeader.ImageBase;
+            itda[i].u1.AddressOfData += (char *)hlib - (char *)nt_header_template.OptionalHeader.ImageBase;
 
             if (IMAGE_SNAP_BY_ORDINAL(itdn[i].u1.Ordinal))
                 load = (void *)GetProcAddress(htarget, (LPSTR)IMAGE_ORDINAL(itdn[i].u1.Ordinal));
