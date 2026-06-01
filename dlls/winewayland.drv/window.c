@@ -203,8 +203,10 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
                (!(exstyle & WS_EX_LAYERED) || data->layered_attribs_set);
 
     if (!visible) role = WAYLAND_SURFACE_ROLE_NONE;
-    else if (owner_surface) role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
-    else role = WAYLAND_SURFACE_ROLE_TOPLEVEL;
+    else if (owner_surface && !data->managed) role = WAYLAND_SURFACE_ROLE_POPUP;
+    else if (!owner_surface || !data->managed) role = WAYLAND_SURFACE_ROLE_TOPLEVEL;
+    /* managed child windows do not need subsurfaces */
+    else role = WAYLAND_SURFACE_ROLE_NONE;
 
     /* we can temporarily clear the role of a surface but cannot assign a different one after it's set */
     if ((surface = data->wayland_surface) && role && surface->role && surface->role != role)
@@ -224,6 +226,8 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     wl_surface_set_input_region(surface->wl_surface, input_region);
     if (input_region) wl_region_destroy(input_region);
 
+    wayland_win_data_get_config(data, &surface->window);
+
     /* If the window is a visible toplevel make it a wayland
      * xdg_toplevel. Otherwise keep it role-less to avoid polluting the
      * compositor with empty xdg_toplevels. */
@@ -232,16 +236,15 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     case WAYLAND_SURFACE_ROLE_NONE:
         wayland_surface_clear_role(surface);
         break;
+    case WAYLAND_SURFACE_ROLE_POPUP:
+        wayland_surface_make_popup(surface, owner_surface);
+        break;
     case WAYLAND_SURFACE_ROLE_TOPLEVEL:
         wayland_surface_make_toplevel(surface);
-        break;
-    case WAYLAND_SURFACE_ROLE_SUBSURFACE:
-        wayland_surface_make_subsurface(surface, owner_surface);
         break;
     }
 
     if (visible && client) wayland_client_surface_attach(client, data->hwnd);
-    wayland_win_data_get_config(data, &surface->window);
 
     /* Size/position changes affect the effective pointer constraint, so update
      * it as needed. */
@@ -309,17 +312,12 @@ static void wayland_win_data_update_wayland_state(struct wayland_win_data *data)
     switch (surface->role)
     {
     case WAYLAND_SURFACE_ROLE_NONE:
+    /* popups do not have any state to update */
+    case WAYLAND_SURFACE_ROLE_POPUP:
         break;
     case WAYLAND_SURFACE_ROLE_TOPLEVEL:
         if (!surface->xdg_surface) break; /* surface role has been cleared */
         wayland_surface_update_state_toplevel(surface);
-        break;
-    case WAYLAND_SURFACE_ROLE_SUBSURFACE:
-        TRACE("hwnd=%p subsurface owner=%p\n", surface->hwnd, surface->owner_hwnd);
-        /* Although subsurfaces don't have a dedicated surface config mechanism,
-         * we use the config fields to mark them as updated. */
-        surface->processing.serial = 1;
-        surface->processing.processed = TRUE;
         break;
     }
 
@@ -447,21 +445,24 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
                               const struct window_rects *new_rects, struct window_surface *surface)
 {
     HWND owner = NtUserGetAncestor(hwnd, GA_ROOT);
-    struct wayland_surface *owner_surface;
+    struct wayland_surface *owner_surface = NULL;
     struct wayland_client_surface *client;
     struct wayland_win_data *data, *owner_data;
     BOOL managed, fullscreen = swp_flags & WINE_SWP_FULLSCREEN;
-
-    TRACE("hwnd %p new_rects %s after %p flags %08x\n", hwnd, debugstr_window_rects(new_rects), insert_after, swp_flags);
 
     /* Get the managed state with win_data unlocked, as is_window_managed
      * may need to query win_data information about other HWNDs and thus
      * acquire the lock itself internally. */
     if (!(managed = is_window_managed(hwnd, swp_flags, fullscreen)) && surface) owner = owner_hint;
 
+    TRACE("hwnd %p owner %p new_rects %s after %p flags %08x\n", hwnd,
+          owner, debugstr_window_rects(new_rects), insert_after, swp_flags);
+
     if (!(data = wayland_win_data_get(hwnd))) return;
     owner_data = owner && owner != hwnd ? wayland_win_data_get_nolock(owner) : NULL;
     owner_surface = owner_data ? owner_data->wayland_surface : NULL;
+    /* for it to be a popup, we need a valid xdg surface. */
+    if (owner_surface && !owner_surface->xdg_surface) owner_surface = NULL;
 
     data->rects = *new_rects;
     data->is_fullscreen = fullscreen;
