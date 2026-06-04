@@ -727,8 +727,21 @@ HRESULT WINAPI GetRestrictedErrorInfo(IRestrictedErrorInfo **info)
  */
 HRESULT WINAPI SetRestrictedErrorInfo(IRestrictedErrorInfo *info)
 {
-    FIXME( "(%p)\n", info );
-    return E_NOTIMPL;
+    IErrorInfo *error_info = NULL;
+    HRESULT hr;
+
+    TRACE("(%p)\n", info);
+
+    if (!info)
+        return set_error_info(NULL);
+
+    hr = IRestrictedErrorInfo_QueryInterface(info, &IID_IErrorInfo, (void **)&error_info);
+    if (FAILED(hr))
+        return hr;
+
+    hr = set_error_info(error_info);
+    IErrorInfo_Release(error_info);
+    return hr;
 }
 
 /***********************************************************************
