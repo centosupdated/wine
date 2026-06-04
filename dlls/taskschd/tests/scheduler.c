@@ -1766,6 +1766,39 @@ static void test_action_collection(IActionCollection *actions_col)
     ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
 }
 
+static void test_principal(IPrincipal *principal)
+{
+    static const BSTR userid = (BSTR)L"TestUser";
+    HRESULT hr;
+    BSTR bstr;
+
+    hr = IPrincipal_get_UserId(principal, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    bstr = (BSTR)0xdeadbeef;
+    hr = IPrincipal_get_UserId(principal, &bstr);
+    ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
+    ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IPrincipal_put_UserId(principal, userid);
+    ok(hr == S_OK, "put_UserId failed: %08lx\n", hr);
+
+    bstr = NULL;
+    hr = IPrincipal_get_UserId(principal, &bstr);
+    ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
+    ok(bstr != NULL, "UserId not set\n");
+    ok(!lstrcmpW(bstr, userid), "expected %s, got %s\n", wine_dbgstr_w(userid), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+
+    hr = IPrincipal_put_UserId(principal, NULL);
+    ok(hr == S_OK, "put_UserId failed: %08lx\n", hr);
+
+    bstr = (BSTR)0xdeadbeef;
+    hr = IPrincipal_get_UserId(principal, &bstr);
+    ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
+    ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+}
+
 static void test_TaskDefinition(void)
 {
     static WCHAR xml0[] = L"";
@@ -1869,6 +1902,7 @@ static void test_TaskDefinition(void)
         VARIANT_TRUE, VARIANT_TRUE };
     ITriggerCollection *trigger_col, *trigger_col2;
     IActionCollection *actions_col;
+    IPrincipal *principal;
     HRESULT hr;
     ITaskService *service;
     ITaskDefinition *taskdef;
@@ -2094,6 +2128,12 @@ static void test_TaskDefinition(void)
     ok(actions_col != NULL, "Actions = NULL\n");
     test_action_collection(actions_col);
     IActionCollection_Release(actions_col);
+
+    hr = ITaskDefinition_get_Principal(taskdef, &principal);
+    ok(hr == S_OK, "get_Principal failed: %08lx\n", hr);
+    ok(principal != NULL, "Principal = NULL\n");
+    test_principal(principal);
+    IPrincipal_Release(principal);
 
     IRegistrationInfo_Release(reginfo);
     ITaskDefinition_Release(taskdef);

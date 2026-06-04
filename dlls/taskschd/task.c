@@ -2401,6 +2401,7 @@ typedef struct
 {
     IPrincipal IPrincipal_iface;
     LONG ref;
+    BSTR user_id;
 } Principal;
 
 static inline Principal *impl_from_IPrincipal(IPrincipal *iface)
@@ -2422,6 +2423,8 @@ static ULONG WINAPI Principal_Release(IPrincipal *iface)
     if (!ref)
     {
         TRACE("destroying %p\n", iface);
+        if (principal->user_id)
+            SysFreeString(principal->user_id);
         free(principal);
     }
 
@@ -2501,13 +2504,40 @@ static HRESULT WINAPI Principal_put_DisplayName(IPrincipal *iface, BSTR name)
 
 static HRESULT WINAPI Principal_get_UserId(IPrincipal *iface, BSTR *user_id)
 {
-    FIXME("%p,%p: stub\n", iface, user_id);
-    return E_NOTIMPL;
+    Principal *principal = impl_from_IPrincipal(iface);
+
+    TRACE("%p,%p\n", iface, user_id);
+
+    if (!user_id) return E_POINTER;
+
+    if (!principal->user_id)
+        *user_id = NULL;
+    else
+    {
+        *user_id = SysAllocString(principal->user_id);
+        if (!*user_id) return E_OUTOFMEMORY;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Principal_put_UserId(IPrincipal *iface, BSTR user_id)
 {
-    FIXME("%p,%s: stub\n", iface, debugstr_w(user_id));
+    Principal *principal = impl_from_IPrincipal(iface);
+    BSTR copy = NULL;
+
+    TRACE("%p,%s\n", iface, debugstr_w(user_id));
+
+    if (user_id)
+    {
+        copy = SysAllocString(user_id);
+        if (!copy) return E_OUTOFMEMORY;
+    }
+
+    if (principal->user_id)
+        SysFreeString(principal->user_id);
+
+    principal->user_id = copy;
     return S_OK;
 }
 
@@ -2579,6 +2609,7 @@ static HRESULT Principal_create(IPrincipal **obj)
 
     principal->IPrincipal_iface.lpVtbl = &Principal_vtbl;
     principal->ref = 1;
+    principal->user_id = NULL;
 
     *obj = &principal->IPrincipal_iface;
 
