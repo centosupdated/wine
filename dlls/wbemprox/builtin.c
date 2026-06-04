@@ -4753,10 +4753,11 @@ done:
     return ret;
 }
 
-#define HW_VENDOR_AMD    0x1002
-#define HW_VENDOR_NVIDIA 0x10de
-#define HW_VENDOR_INTEL  0x8086
-#define HW_VENDOR_WINE   0x0000
+#define HW_VENDOR_AMD      0x1002
+#define HW_VENDOR_NVIDIA   0x10de
+#define HW_VENDOR_QUALCOMM 0x5143
+#define HW_VENDOR_INTEL    0x8086
+#define HW_VENDOR_WINE     0x0000
 
 static DWORD get_adapter_vendor_id( const WCHAR *desc )
 {
@@ -4764,6 +4765,7 @@ static DWORD get_adapter_vendor_id( const WCHAR *desc )
     if (wcsstr( desc, L"AMD" )) return HW_VENDOR_AMD;
     if (wcsstr( desc, L"NVIDIA" )) return HW_VENDOR_NVIDIA;
     if (wcsstr( desc, L"Intel" )) return HW_VENDOR_INTEL;
+    if (wcsstr( desc, L"Qualcomm" )) return HW_VENDOR_QUALCOMM;
     return HW_VENDOR_WINE;
 }
 
@@ -4773,6 +4775,7 @@ static const WCHAR *get_videocontroller_installeddriver( const WCHAR *desc )
     if (vendor_id == HW_VENDOR_AMD) return L"aticfx32.dll";
     if (vendor_id == HW_VENDOR_NVIDIA) return L"nvd3dum.dll";
     if (vendor_id == HW_VENDOR_INTEL) return L"igdudim32.dll";
+    if (vendor_id == HW_VENDOR_QUALCOMM) return L"qdcmlib.ARM64.dll";
     return L"wine.dll";
 }
 

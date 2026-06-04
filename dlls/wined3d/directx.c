@@ -320,6 +320,9 @@ static const struct driver_version_information driver_version_table[] =
     {DRIVER_NVIDIA_FERMI,       DRIVER_MODEL_NT6X,  "nvd3dum.dll",     13, 9135},
     {DRIVER_NVIDIA_KEPLER,      DRIVER_MODEL_NT6X,  "nvd3dum.dll",     15, 3118}, /* 531.18 */
 
+    /* Qualcomm */
+    {DRIVER_QUALCOMM_ADRENO,    DRIVER_MODEL_GENERIC, "qdcmlib.ARM64.dll", 0,    0},
+
     /* Red Hat */
     {DRIVER_REDHAT_VIRGL,       DRIVER_MODEL_GENERIC, "virgl.dll",      0,    0},
 
@@ -583,6 +586,9 @@ static const struct wined3d_gpu_description gpu_description_table[] =
 
     /* VMware */
     {HW_VENDOR_VMWARE,     CARD_VMWARE_SVGA3D,             "VMware SVGA 3D (Microsoft Corporation - WDDM)",             DRIVER_VMWARE,        1024},
+
+    /* Qualcomm cards */
+    {HW_VENDOR_QUALCOMM,   CARD_QUALCOMM_ADRENO_640,       "Turnip Adreno (TM) 640",                                    DRIVER_QUALCOMM_ADRENO,  5540 },
 
     /* Intel cards */
     {HW_VENDOR_INTEL,      CARD_INTEL_830M,                "Intel(R) 82830M Graphics Controller",                       DRIVER_INTEL_GMA800,  32 },
@@ -971,6 +977,19 @@ enum wined3d_pci_device wined3d_gpu_from_feature_level(enum wined3d_pci_vendor *
         {WINED3D_FEATURE_LEVEL_10,    CARD_INTEL_G45},
         {WINED3D_FEATURE_LEVEL_11,    CARD_INTEL_IVBD},
         {WINED3D_FEATURE_LEVEL_NONE},
+    },
+    card_fallback_qualcomm[] =
+    {
+        {WINED3D_FEATURE_LEVEL_5,     CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_6,     CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_7,     CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_8,     CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_9_1,   CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_9_2,   CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_9_3,   CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_10,    CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_11,    CARD_QUALCOMM_ADRENO_640},
+        {WINED3D_FEATURE_LEVEL_NONE},
     };
 
     static const struct
@@ -980,10 +999,11 @@ enum wined3d_pci_device wined3d_gpu_from_feature_level(enum wined3d_pci_vendor *
     }
     fallbacks[] =
     {
-        {HW_VENDOR_AMD,    card_fallback_amd},
-        {HW_VENDOR_NVIDIA, card_fallback_nvidia},
-        {HW_VENDOR_VMWARE, card_fallback_amd},
-        {HW_VENDOR_INTEL,  card_fallback_intel},
+        {HW_VENDOR_AMD,       card_fallback_amd},
+        {HW_VENDOR_NVIDIA,    card_fallback_nvidia},
+        {HW_VENDOR_VMWARE,    card_fallback_amd},
+        {HW_VENDOR_INTEL,     card_fallback_intel},
+        {HW_VENDOR_QUALCOMM,  card_fallback_qualcomm},
     };
 
     const struct wined3d_fallback_card *cards;

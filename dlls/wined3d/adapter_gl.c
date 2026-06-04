@@ -37,6 +37,7 @@ enum wined3d_gl_vendor
     GL_VENDOR_FGLRX,
     GL_VENDOR_MESA,
     GL_VENDOR_NVIDIA,
+    GL_VENDOR_QUALCOMM,
 };
 
 struct wined3d_extension_map
@@ -1228,6 +1229,9 @@ static enum wined3d_pci_vendor wined3d_guess_card_vendor(const char *gl_vendor_s
     if (strstr(gl_renderer, "SVGA3D"))
         return HW_VENDOR_VMWARE;
 
+    if (strstr(gl_renderer, "Adreno"))
+        return HW_VENDOR_QUALCOMM;
+
     if (strstr(gl_vendor_string, "Mesa")
             || strstr(gl_vendor_string, "Brian Paul")
             || strstr(gl_vendor_string, "Tungsten Graphics, Inc")
@@ -1838,6 +1842,10 @@ cards_nvidia_mesa[] =
     {"nv04",                        CARD_NVIDIA_RIVA_TNT},
     {"nv03",                        CARD_NVIDIA_RIVA_128},
 },
+cards_qualcomm[] =
+{
+    {"adreno",                      CARD_QUALCOMM_ADRENO_640},      /* Adreno (TM) 640 */
+},
 cards_redhat[] =
 {
     {"virgl",                       CARD_REDHAT_VIRGL},
@@ -1865,6 +1873,11 @@ nvidia_gl_vendor_table[] =
     {GL_VENDOR_APPLE,   "Apple OSX NVidia binary driver",   cards_nvidia_binary,    ARRAY_SIZE(cards_nvidia_binary)},
     {GL_VENDOR_MESA,    "Mesa Nouveau driver",              cards_nvidia_mesa,      ARRAY_SIZE(cards_nvidia_mesa)},
     {GL_VENDOR_NVIDIA,  "NVIDIA binary driver",             cards_nvidia_binary,    ARRAY_SIZE(cards_nvidia_binary)},
+},
+qualcomm_gl_vendor_table[] =
+{
+    {GL_VENDOR_QUALCOMM,"Qualcomm binary driver",           cards_qualcomm,         ARRAY_SIZE(cards_qualcomm)},
+    {GL_VENDOR_MESA,    "Mesa Qualcomm driver",             cards_qualcomm,         ARRAY_SIZE(cards_qualcomm)},
 },
 redhat_gl_vendor_table[] =
 {
@@ -1914,11 +1927,12 @@ static const struct
 }
 card_vendor_table[] =
 {
-    {HW_VENDOR_AMD,    "AMD",    amd_gl_vendor_table,    ARRAY_SIZE(amd_gl_vendor_table)},
-    {HW_VENDOR_NVIDIA, "NVIDIA", nvidia_gl_vendor_table, ARRAY_SIZE(nvidia_gl_vendor_table)},
-    {HW_VENDOR_REDHAT, "Red Hat",redhat_gl_vendor_table, ARRAY_SIZE(redhat_gl_vendor_table)},
-    {HW_VENDOR_VMWARE, "VMware", vmware_gl_vendor_table, ARRAY_SIZE(vmware_gl_vendor_table)},
-    {HW_VENDOR_INTEL,  "Intel",  intel_gl_vendor_table,  ARRAY_SIZE(intel_gl_vendor_table)},
+    {HW_VENDOR_AMD,      "AMD",      amd_gl_vendor_table,      ARRAY_SIZE(amd_gl_vendor_table)},
+    {HW_VENDOR_NVIDIA,   "NVIDIA",   nvidia_gl_vendor_table,   ARRAY_SIZE(nvidia_gl_vendor_table)},
+    {HW_VENDOR_REDHAT,   "Red Hat",  redhat_gl_vendor_table,   ARRAY_SIZE(redhat_gl_vendor_table)},
+    {HW_VENDOR_VMWARE,   "VMware",   vmware_gl_vendor_table,   ARRAY_SIZE(vmware_gl_vendor_table)},
+    {HW_VENDOR_QUALCOMM, "Qualcomm", qualcomm_gl_vendor_table, ARRAY_SIZE(qualcomm_gl_vendor_table)},
+    {HW_VENDOR_INTEL,    "Intel",    intel_gl_vendor_table,    ARRAY_SIZE(intel_gl_vendor_table)},
 };
 
 static enum wined3d_pci_device wined3d_guess_card(enum wined3d_feature_level feature_level,

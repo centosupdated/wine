@@ -2083,6 +2083,7 @@ enum wined3d_pci_vendor
     HW_VENDOR_NVIDIA                = 0x10de,
     HW_VENDOR_VMWARE                = 0x15ad,
     HW_VENDOR_REDHAT                = 0x1af4,
+    HW_VENDOR_QUALCOMM              = 0x5143,
     HW_VENDOR_INTEL                 = 0x8086,
 };
 
@@ -2332,6 +2333,8 @@ enum wined3d_pci_device
     CARD_NVIDIA_GEFORCE_RTX4080SUPER = 0x2702,
     CARD_NVIDIA_GEFORCE_RTX4090     = 0x2684,
 
+    CARD_QUALCOMM_ADRENO_640        = 0x6040001,
+
     CARD_REDHAT_VIRGL               = 0x1010,
 
     CARD_VMWARE_SVGA3D              = 0x0405,
@@ -2441,6 +2444,7 @@ enum wined3d_display_driver
     DRIVER_NVIDIA_GEFORCE8,
     DRIVER_NVIDIA_FERMI,
     DRIVER_NVIDIA_KEPLER,
+    DRIVER_QUALCOMM_ADRENO,
     DRIVER_REDHAT_VIRGL,
     DRIVER_VMWARE,
     DRIVER_WINE,
