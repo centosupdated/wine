@@ -2402,6 +2402,7 @@ typedef struct
     IPrincipal IPrincipal_iface;
     LONG ref;
     BSTR user_id;
+    TASK_LOGON_TYPE logon_type;
 } Principal;
 
 static inline Principal *impl_from_IPrincipal(IPrincipal *iface)
@@ -2543,14 +2544,27 @@ static HRESULT WINAPI Principal_put_UserId(IPrincipal *iface, BSTR user_id)
 
 static HRESULT WINAPI Principal_get_LogonType(IPrincipal *iface, TASK_LOGON_TYPE *logon_type)
 {
-    FIXME("%p,%p: stub\n", iface, logon_type);
-    return E_NOTIMPL;
+    Principal *principal = impl_from_IPrincipal(iface);
+
+    TRACE("%p,%p\n", iface, logon_type);
+
+    if (!logon_type) return E_POINTER;
+
+    *logon_type = principal->logon_type;
+    return S_OK;
 }
 
 static HRESULT WINAPI Principal_put_LogonType(IPrincipal *iface, TASK_LOGON_TYPE logon_type)
 {
-    FIXME("%p,%u: stub\n", iface, logon_type);
-    return E_NOTIMPL;
+    Principal *principal = impl_from_IPrincipal(iface);
+
+    TRACE("%p,%u\n", iface, logon_type);
+
+    if (logon_type == TASK_LOGON_NONE)
+        return E_INVALIDARG;
+
+    principal->logon_type = logon_type;
+    return S_OK;
 }
 
 static HRESULT WINAPI Principal_get_GroupId(IPrincipal *iface, BSTR *group_id)
@@ -2610,6 +2624,7 @@ static HRESULT Principal_create(IPrincipal **obj)
     principal->IPrincipal_iface.lpVtbl = &Principal_vtbl;
     principal->ref = 1;
     principal->user_id = NULL;
+    principal->logon_type = TASK_LOGON_INTERACTIVE_TOKEN;
 
     *obj = &principal->IPrincipal_iface;
 

@@ -1769,6 +1769,7 @@ static void test_action_collection(IActionCollection *actions_col)
 static void test_principal(IPrincipal *principal)
 {
     static const BSTR userid = (BSTR)L"TestUser";
+    TASK_LOGON_TYPE logon_type;
     HRESULT hr;
     BSTR bstr;
 
@@ -1797,6 +1798,33 @@ static void test_principal(IPrincipal *principal)
     hr = IPrincipal_get_UserId(principal, &bstr);
     ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
     ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IPrincipal_get_LogonType(principal, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    logon_type = 0xdeadbeef;
+    hr = IPrincipal_get_LogonType(principal, &logon_type);
+    ok(hr == S_OK, "get_LogonType failed: %08lx\n", hr);
+    ok(logon_type == TASK_LOGON_INTERACTIVE_TOKEN, "expected TASK_LOGON_INTERACTIVE_TOKEN, got %u\n", logon_type);
+
+    hr = IPrincipal_put_LogonType(principal, TASK_LOGON_NONE);
+    ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#lx\n", hr);
+
+    hr = IPrincipal_put_LogonType(principal, TASK_LOGON_PASSWORD);
+    ok(hr == S_OK, "put_LogonType failed: %08lx\n", hr);
+
+    logon_type = 0xdeadbeef;
+    hr = IPrincipal_get_LogonType(principal, &logon_type);
+    ok(hr == S_OK, "get_LogonType failed: %08lx\n", hr);
+    ok(logon_type == TASK_LOGON_PASSWORD, "expected TASK_LOGON_PASSWORD, got %u\n", logon_type);
+
+    hr = IPrincipal_put_LogonType(principal, TASK_LOGON_INTERACTIVE_TOKEN);
+    ok(hr == S_OK, "put_LogonType failed: %08lx\n", hr);
+
+    logon_type = 0xdeadbeef;
+    hr = IPrincipal_get_LogonType(principal, &logon_type);
+    ok(hr == S_OK, "get_LogonType failed: %08lx\n", hr);
+    ok(logon_type == TASK_LOGON_INTERACTIVE_TOKEN, "expected TASK_LOGON_INTERACTIVE_TOKEN, got %u\n", logon_type);
 }
 
 static void test_TaskDefinition(void)
