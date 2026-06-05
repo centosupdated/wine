@@ -134,6 +134,41 @@ static HRESULT set_doc_event(domdoc *doc, eventid_t eid, const VARIANT *v)
     return S_OK;
 }
 
+/* Invoke a registered event handler (e.g. onreadystatechange) with no arguments.
+ * Called after a successful synchronous load to match native MSXML behavior. */
+static void fire_doc_event(domdoc *doc, eventid_t eid)
+{
+    DISPPARAMS dp = {NULL, NULL, 0, 0};
+    IDispatchEx *dispex;
+    IDispatch *disp;
+    HRESULT hr;
+
+    disp = doc->events[eid];
+    if (!disp) return;
+
+    IDispatch_AddRef(disp);
+
+    TRACE("firing event %d on %p\n", eid, disp);
+
+    hr = IDispatch_QueryInterface(disp, &IID_IDispatchEx, (void **)&dispex);
+    if (SUCCEEDED(hr))
+    {
+        hr = IDispatchEx_InvokeEx(dispex, DISPID_VALUE, LOCALE_SYSTEM_DEFAULT,
+                DISPATCH_METHOD, &dp, NULL, NULL, NULL);
+        IDispatchEx_Release(dispex);
+    }
+    else
+    {
+        hr = IDispatch_Invoke(disp, DISPID_VALUE, &IID_NULL, LOCALE_SYSTEM_DEFAULT,
+                DISPATCH_METHOD, &dp, NULL, NULL, NULL);
+    }
+
+    if (FAILED(hr))
+        TRACE("event handler returned %#lx\n", hr);
+
+    IDispatch_Release(disp);
+}
+
 static inline ConnectionPoint *impl_from_IConnectionPoint(IConnectionPoint *iface)
 {
     return CONTAINING_RECORD(iface, ConnectionPoint, IConnectionPoint_iface);
@@ -1283,6 +1318,9 @@ static HRESULT WINAPI domdoc_load(IXMLDOMDocument3 *iface, VARIANT source, VARIA
                     TRACE("failed to parse document\n");
                 }
 
+                if (*result == VARIANT_TRUE)
+                    fire_doc_event(doc, EVENTID_READYSTATECHANGE);
+
                 return doc->error == S_OK ? S_OK : S_FALSE;
             default:
                 FIXME("unhandled SAFEARRAY dim: %d\n", dim);
@@ -1317,6 +1355,9 @@ static HRESULT WINAPI domdoc_load(IXMLDOMDocument3 *iface, VARIANT source, VARIA
                 if (SUCCEEDED(hr))
                     *result = VARIANT_TRUE;
 
+                if (*result == VARIANT_TRUE)
+                    fire_doc_event(doc, EVENTID_READYSTATECHANGE);
+
                 return hr;
             }
         }
@@ -1331,6 +1372,8 @@ static HRESULT WINAPI domdoc_load(IXMLDOMDocument3 *iface, VARIANT source, VARIA
             if (hr == S_OK)
                 *result = VARIANT_TRUE;
             ISequentialStream_Release(stream);
+            if (*result == VARIANT_TRUE)
+                fire_doc_event(doc, EVENTID_READYSTATECHANGE);
             return hr;
         }
 
@@ -1387,6 +1430,9 @@ static HRESULT WINAPI domdoc_load(IXMLDOMDocument3 *iface, VARIANT source, VARIA
         if (SUCCEEDED(hr))
             hr = S_FALSE;
     }
+
+    if (*result == VARIANT_TRUE)
+        fire_doc_event(doc, EVENTID_READYSTATECHANGE);
 
     TRACE("hr %#lx.\n", hr);
 
@@ -1510,6 +1556,9 @@ static HRESULT WINAPI domdoc_loadXML(IXMLDOMDocument3 *iface, BSTR data, VARIANT
 
         hr = S_FALSE;
     }
+
+    if (*result == VARIANT_TRUE)
+        fire_doc_event(doc, EVENTID_READYSTATECHANGE);
 
     return hr;
 }
