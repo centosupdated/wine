@@ -29,6 +29,7 @@
 #include <wine/debug.h>
 #include <wine/unixlib.h>
 
+#include "bthdef.h"
 #include "winebth_priv.h"
 #include "unixlib.h"
 
@@ -175,6 +176,20 @@ void winebluetooth_device_properties_to_info( winebluetooth_device_props_mask_t 
         info->classOfDevice = props->class;
         info->flags |= BDIF_COD;
     }
+    if (props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR)
+        info->flags |= BDIF_BR;
+    if (props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE)
+    {
+        const struct winebluetooth_device_bearer_properties *le = &props->le;
+
+        info->flags |= BDIF_LE;
+        if (le->props_mask & WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_BONDED && le->bonded)
+            info->flags |= (BDIF_LE_PERSONAL | BDIF_LE_PAIRED);
+        if (le->props_mask & WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_CONNECTED && le->connected)
+            info->flags |= BDIF_LE_CONNECTED;
+        if (le->props_mask & WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_PAIRED && le->paired)
+            info->flags |= BDIF_LE_PAIRED;
+    }
 }
 
 NTSTATUS winebluetooth_auth_send_response( winebluetooth_device_t device, BLUETOOTH_AUTHENTICATION_METHOD method,
@@ -270,6 +285,16 @@ NTSTATUS winebluetooth_get_event( struct winebluetooth_event *result )
     status = UNIX_BLUETOOTH_CALL( bluetooth_get_event, &params );
     *result = params.result;
     return status;
+}
+
+void winebluetooth_device_bearer_properties_update( struct winebluetooth_device_bearer_properties *props,
+                                                    const struct winebluetooth_device_bearer_properties *new_props )
+{
+    props->props_mask |= new_props->props_mask;
+
+    if (new_props->props_mask & WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_BONDED) props->bonded = new_props->bonded;
+    if (new_props->props_mask & WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_CONNECTED) props->connected = new_props->connected;
+    if (new_props->props_mask & WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_PAIRED) props->paired = new_props->paired;
 }
 
 NTSTATUS winebluetooth_init( void )

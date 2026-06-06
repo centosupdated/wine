@@ -46,6 +46,7 @@
 #include <wine/list.h>
 
 #include "winebth_priv.h"
+#include "winnt.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL( winebth );
 
@@ -1146,6 +1147,8 @@ static void bluetooth_device_set_properties( struct bluetooth_remote_device *dev
                                              const struct winebluetooth_device_properties *props,
                                              winebluetooth_device_props_mask_t mask )
 {
+    BTH_DEVICE_INFO info = {0};
+
     if (mask & WINEBLUETOOTH_DEVICE_PROPERTY_ADDRESS)
     {
         WCHAR addr_str[18], aep_id[59];
@@ -1168,6 +1171,10 @@ static void bluetooth_device_set_properties( struct bluetooth_remote_device *dev
             IoSetDeviceInterfacePropertyData( &device->bthle_symlink_name,
                                               (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_DeviceAddress,
                                               LOCALE_NEUTRAL, 0, DEVPROP_TYPE_STRING, 26, addr_str );
+        if (device->bredr_symlink_name.Buffer)
+            IoSetDeviceInterfacePropertyData( &device->bredr_symlink_name,
+                                              (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_DeviceAddress,
+                                              LOCALE_NEUTRAL, 0, DEVPROP_TYPE_STRING, 26, addr_str );
 
         swprintf( addr_str, ARRAY_SIZE( addr_str ), L"%02x:%02x:%02x:%02x:%02x:%02x", device_addr[0], device_addr[1],
                   device_addr[2], device_addr[3], device_addr[4], device_addr[5] );
@@ -1188,7 +1195,21 @@ static void bluetooth_device_set_properties( struct bluetooth_remote_device *dev
             IoSetDeviceInterfacePropertyData( &device->bthle_symlink_name,
                                               (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_LastConnectedTime,
                                               LOCALE_NEUTRAL, 0, DEVPROP_TYPE_FILETIME, sizeof( time ), (void *)&time );
+        if (device->bredr_symlink_name.Buffer)
+            IoSetDeviceInterfacePropertyData( &device->bredr_symlink_name,
+                                              (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_LastConnectedTime,
+                                              LOCALE_NEUTRAL, 0, DEVPROP_TYPE_FILETIME, sizeof( time ), (void *)&time );
     }
+
+    winebluetooth_device_properties_to_info( mask, props, &info );
+    if (device->bthle_symlink_name.Buffer)
+        IoSetDeviceInterfacePropertyData( &device->bthle_symlink_name,
+                                          (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_Flags, LOCALE_NEUTRAL, 0,
+                                          DEVPROP_TYPE_UINT32, sizeof( info.flags ), &info.flags );
+    if (device->bredr_symlink_name.Buffer)
+        IoSetDeviceInterfacePropertyData( &device->bredr_symlink_name,
+                                          (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_Flags, LOCALE_NEUTRAL, 0,
+                                          DEVPROP_TYPE_UINT32, sizeof( info.flags ), &info.flags );
 }
 
 static void bluetooth_radio_update_device_props( struct winebluetooth_watcher_event_device_props_changed event )
@@ -1232,6 +1253,10 @@ static void bluetooth_radio_update_device_props( struct winebluetooth_watcher_ev
                     device->props.trusted = event.props.trusted;
                 if (event.changed_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_CLASS)
                     device->props.class = event.props.class;
+                if (event.changed_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR)
+                    winebluetooth_device_bearer_properties_update( &device->props.bredr, &event.props.bredr );
+                if (event.changed_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE)
+                    winebluetooth_device_bearer_properties_update( &device->props.le, &event.props.le );
                 winebluetooth_device_properties_to_info( device->props_mask, &device->props, &device_new_info );
                 bluetooth_device_set_properties( device, adapter_addr.rgBytes, &device->props, device->props_mask );
                 LeaveCriticalSection( &device->props_cs );

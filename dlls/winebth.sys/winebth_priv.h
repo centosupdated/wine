@@ -209,6 +209,9 @@ struct winebluetooth_device_bearer_properties
     BOOL connected;
     BOOL paired;
 };
+
+void winebluetooth_device_bearer_properties_update( struct winebluetooth_device_bearer_properties *props,
+                                                    const struct winebluetooth_device_bearer_properties *new_props );
 struct winebluetooth_device_properties
 {
     BLUETOOTH_ADDRESS address;
