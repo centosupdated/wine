@@ -27,9 +27,10 @@
 #include <winreg.h>
 #include <setupapi.h>
 
-#include <setupapi.h>
-
 #include <initguid.h>
+#include <wtypes.h>
+#include <propkey.h>
+#include <bthdef.h>
 #include <bthledef.h>
 #include <bluetoothleapis.h>
 #include <devpkey.h>
@@ -37,6 +38,7 @@
 
 #include <wine/test.h>
 
+const char *debugstr_BDIF_flags( UINT32 flags );
 static void le_to_uuid( const BTH_LE_UUID *le_uuid, GUID *uuid )
 {
     if (le_uuid->IsShortUuid)
@@ -72,6 +74,7 @@ static void test_for_all_le_devices( int line, void (*func)( HANDLE, const WCHAR
         DEVPROPTYPE type;
         WCHAR addr_str[13];
         BOOL success;
+        UINT32 flags = 0;
 
         devinfo_data.cbSize = sizeof( devinfo_data );
         success = SetupDiGetDeviceInterfaceDetailW( devinfo, &iface_data, iface_detail, sizeof( buffer ), NULL,
@@ -82,6 +85,12 @@ static void test_for_all_le_devices( int line, void (*func)( HANDLE, const WCHAR
                                              (BYTE *)addr_str, sizeof( addr_str ), NULL, 0 );
         ok( success, "SetupDiGetDevicePropertyW failed: %lu\n", GetLastError() );
         ok( type == DEVPROP_TYPE_STRING, "got type %lu\n", type );
+        success = SetupDiGetDeviceInterfacePropertyW( devinfo, &iface_data,
+                                                      (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_Flags, &type,
+                                                      (BYTE *)&flags, sizeof( flags ), NULL, 0 );
+        ok( success, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", GetLastError() );
+        ok( type == DEVPROP_TYPE_UINT32, "got type %lu\n", type );
+        ok( flags & BDIF_LE, "Got flags %s\n", debugstr_BDIF_flags( flags ) );
         device = CreateFileW( iface_detail->DevicePath, GENERIC_READ | GENERIC_WRITE,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL );
         winetest_push_context( "device %lu", n++ );
