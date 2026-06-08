@@ -147,6 +147,12 @@ static UINT_PTR CALLBACK printer_properties_hook_procA(HWND hdlg, UINT msg, WPAR
     return 0;
 }
 
+static UINT_PTR CALLBACK check_hook_proc_not_called(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    ok(0, "Hook proc should not be called\n");
+    return 0;
+}
+
 static UINT_PTR CALLBACK check_hook_proc_msg_handlingA(HWND hdlg, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_INITDIALOG)
@@ -346,6 +352,40 @@ static void test_PrintDlgA(void)
     ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
     ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
 
+    /* Validate some message handling behaviors of a setup dialog hook. */
+    ZeroMemory(pDlg, sizeof(*pDlg));
+    hook_inited = FALSE;
+    pDlg->lStructSize = sizeof(*pDlg);
+    pDlg->Flags = PD_PRINTSETUP | PD_ENABLESETUPHOOK;
+    pDlg->lpfnSetupHook = check_hook_proc_msg_handlingA;
+    pDlg->lCustData = (LPARAM)&hook_inited;
+    res = PrintDlgA(pDlg);
+    ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
+    ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
+
+    /* If both hooks are specified, only the appropriate one for the specified mode is invoked. */
+    ZeroMemory(pDlg, sizeof(*pDlg));
+    hook_inited = FALSE;
+    pDlg->lStructSize = sizeof(*pDlg);
+    pDlg->Flags = PD_ENABLEPRINTHOOK | PD_ENABLESETUPHOOK;
+    pDlg->lpfnPrintHook = check_hook_proc_msg_handlingA;
+    pDlg->lpfnSetupHook = check_hook_proc_not_called;
+    pDlg->lCustData = (LPARAM)&hook_inited;
+    res = PrintDlgA(pDlg);
+    ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
+    ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
+
+    ZeroMemory(pDlg, sizeof(*pDlg));
+    hook_inited = FALSE;
+    pDlg->lStructSize = sizeof(*pDlg);
+    pDlg->Flags = PD_PRINTSETUP | PD_ENABLEPRINTHOOK | PD_ENABLESETUPHOOK;
+    pDlg->lpfnPrintHook = check_hook_proc_not_called;
+    pDlg->lpfnSetupHook = check_hook_proc_msg_handlingA;
+    pDlg->lCustData = (LPARAM)&hook_inited;
+    res = PrintDlgA(pDlg);
+    ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
+    ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
+
     free(pDlg);
 }
 
@@ -433,6 +473,40 @@ void test_PrintDlgW(void)
     pd.lStructSize = sizeof(pd);
     pd.Flags = PD_ENABLEPRINTHOOK;
     pd.lpfnPrintHook = check_hook_proc_msg_handlingW;
+    pd.lCustData = (LPARAM)&hook_inited;
+    res = PrintDlgW(&pd);
+    ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
+    ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
+
+    /* Validate some message handling behaviors of a setup dialog hook. */
+    ZeroMemory(&pd, sizeof(pd));
+    hook_inited = FALSE;
+    pd.lStructSize = sizeof(pd);
+    pd.Flags = PD_PRINTSETUP | PD_ENABLESETUPHOOK;
+    pd.lpfnSetupHook = check_hook_proc_msg_handlingW;
+    pd.lCustData = (LPARAM)&hook_inited;
+    res = PrintDlgW(&pd);
+    ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
+    ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
+
+    /* If both hooks are specified, only the appropriate one for the specified mode is invoked. */
+    ZeroMemory(&pd, sizeof(pd));
+    hook_inited = FALSE;
+    pd.lStructSize = sizeof(pd);
+    pd.Flags = PD_ENABLEPRINTHOOK | PD_ENABLESETUPHOOK;
+    pd.lpfnPrintHook = check_hook_proc_msg_handlingW;
+    pd.lpfnSetupHook = check_hook_proc_not_called;
+    pd.lCustData = (LPARAM)&hook_inited;
+    res = PrintDlgW(&pd);
+    ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
+    ok(hook_inited, "expected hook procedure to be called with WM_INITDIALOG\n");
+
+    ZeroMemory(&pd, sizeof(pd));
+    hook_inited = FALSE;
+    pd.lStructSize = sizeof(pd);
+    pd.Flags = PD_PRINTSETUP | PD_ENABLEPRINTHOOK | PD_ENABLESETUPHOOK;
+    pd.lpfnPrintHook = check_hook_proc_not_called;
+    pd.lpfnSetupHook = check_hook_proc_msg_handlingW;
     pd.lCustData = (LPARAM)&hook_inited;
     res = PrintDlgW(&pd);
     ok(res, "PrintDlg error %#lx\n", CommDlgExtendedError());
