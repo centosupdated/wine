@@ -3132,19 +3132,19 @@ static void test_swp_owner_popups(void)
     ok( ret, "[case1] SetWindowPos(popup1, owner) failed\n" );
 
     /* Verify that hwndInsertAfter is not the window itself, should be owner */
-    todo_wine ok( test_swp_owner_captured_insert_after == owner,
+    ok( test_swp_owner_captured_insert_after == owner,
         "hwndInsertAfter should be owner (%p), got %p\n",
         owner, test_swp_owner_captured_insert_after);
 
     /* Verify z-order: popup2 should still be the topmost owned popup above owner */
     prev = GetWindow(owner, GW_HWNDPREV);
-    todo_wine ok( prev == popup2,
+    ok( prev == popup2,
         "[case1] window above owner should be popup2 (%p), got %p\n",
         popup2, prev);
 
     /* popup1 was inserted right after owner, so owner should be directly above popup1 */
     prev = GetWindow(popup1, GW_HWNDPREV);
-    todo_wine ok( prev == owner,
+    ok( prev == owner,
         "[case1] window above popup1 should be owner (%p), got %p\n",
         owner, prev);
 
@@ -3158,7 +3158,7 @@ static void test_swp_owner_popups(void)
     ok( ret, "[case2] SetWindowPos(popup1, other) failed\n" );
 
     /* hwndInsertAfter should be adjusted to popup2 to keep popup1 above owner */
-    todo_wine ok( test_swp_owner_captured_insert_after == popup2,
+    ok( test_swp_owner_captured_insert_after == popup2,
         "[case2] captured hwndInsertAfter should be popup2 (%p), got %p\n",
         popup2, test_swp_owner_captured_insert_after);
 
@@ -3177,13 +3177,13 @@ static void test_swp_owner_popups(void)
     ok( ret, "[case3] SetWindowPos(popup1, other) failed\n" );
 
     /* hwndInsertAfter should again be adjusted to other */
-    todo_wine ok( test_swp_owner_captured_insert_after == other2,
+    ok( test_swp_owner_captured_insert_after == other2,
         "[case3] captured hwndInsertAfter should still be other2 (%p), got %p\n",
         other2, test_swp_owner_captured_insert_after);
 
     /* Verify z-order: popup2 should still be above owner */
     prev = GetWindow(owner, GW_HWNDPREV);
-    todo_wine ok( prev == popup2,
+    ok( prev == popup2,
         "[case3] window above owner should still be popup2 (%p), got %p\n",
         popup2, prev);
 
