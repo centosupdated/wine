@@ -313,11 +313,31 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
     free(monitor.edid);
 }
 
-static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *mode)
+static void populate_devmode(struct output_info *output_info,
+                             struct wayland_output_mode *output_mode, DEVMODEW *mode)
 {
     mode->dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT |
                      DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY;
-    mode->dmDisplayOrientation = DMDO_DEFAULT;
+
+    switch (output_info->output->transform)
+    {
+    case WL_OUTPUT_TRANSFORM_90:
+    case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+        mode->dmDisplayOrientation = DMDO_90;
+        break;
+    case WL_OUTPUT_TRANSFORM_180:
+    case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+        mode->dmDisplayOrientation = DMDO_180;
+        break;
+    case WL_OUTPUT_TRANSFORM_270:
+    case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+        mode->dmDisplayOrientation = DMDO_270;
+        break;
+    default:
+        mode->dmDisplayOrientation = DMDO_DEFAULT;
+        break;
+    }
+
     mode->dmDisplayFlags = 0;
     mode->dmBitsPerPel = 32;
     mode->dmPelsWidth = output_mode->width;
@@ -336,7 +356,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
     if (!(modes = malloc(output_info->output->modes_count * sizeof(*modes))))
         return;
 
-    populate_devmode(output_info->output->current_mode, &current);
+    populate_devmode(output_info, output_info->output->current_mode, &current);
     current.dmFields |= DM_POSITION;
     current.dmPosition.x = output_info->x;
     current.dmPosition.y = output_info->y;
@@ -345,7 +365,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
                       struct wayland_output_mode, entry)
     {
         DEVMODEW mode = {.dmSize = sizeof(mode)};
-        populate_devmode(output_mode, &mode);
+        populate_devmode(output_info, output_mode, &mode);
         modes[modes_count++] = mode;
     }
 
