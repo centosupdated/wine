@@ -1501,7 +1501,7 @@ static HRESULT WINAPI WshShell3_Popup(IWshShell3 *iface, BSTR text, VARIANT *sec
     param.text = text;
     param.button = -1;
     hthread = CreateThread(NULL, 0, popup_thread_proc, &param, 0, &tid);
-    status = WaitForHandles(1, &hthread, V_I4(&timeout) ? V_I4(&timeout) * 1000: INFINITE);
+    status = WaitForHandles(1, &hthread, V_I4(&timeout) ? V_I4(&timeout) * 1000 : INFINITE);
     if (status == WAIT_TIMEOUT)
     {
         PostThreadMessageW(tid, WM_QUIT, 0, 0);
