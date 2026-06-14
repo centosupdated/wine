@@ -29,6 +29,24 @@ extern HRESULT WINAPI DoOpenPipeStream(HANDLE pipe, IOMode mode, ITextStream **s
 
 WINE_DEFAULT_DEBUG_CHANNEL(wshom);
 
+DWORD WaitForHandles(DWORD nCount, const HANDLE *pHandles, DWORD dwTimeout)
+{
+    for (;;)
+    {
+        DWORD status = MsgWaitForMultipleObjects(nCount, pHandles, FALSE, dwTimeout, QS_ALLINPUT);
+        if (status == WAIT_OBJECT_0 + nCount)
+        {
+            for (MSG msg; PeekMessageW(&msg, NULL, 0, 0, TRUE);)
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            continue;
+        }
+        return status;
+    }
+}
+
 typedef struct
 {
     struct provideclassinfo classinfo;
@@ -1410,7 +1428,7 @@ static HRESULT WINAPI WshShell3_Run(IWshShell3 *iface, BSTR cmd, VARIANT *style,
         if (waitforprocess)
         {
             DWORD code;
-            WaitForSingleObject(info.hProcess, INFINITE);
+            WaitForHandles(1, &info.hProcess, INFINITE);
             GetExitCodeProcess(info.hProcess, &code);
             CloseHandle(info.hProcess);
             *exit_code = code;
@@ -1483,11 +1501,11 @@ static HRESULT WINAPI WshShell3_Popup(IWshShell3 *iface, BSTR text, VARIANT *sec
     param.text = text;
     param.button = -1;
     hthread = CreateThread(NULL, 0, popup_thread_proc, &param, 0, &tid);
-    status = MsgWaitForMultipleObjects(1, &hthread, FALSE, V_I4(&timeout) ? V_I4(&timeout) * 1000: INFINITE, 0);
+    status = WaitForHandles(1, &hthread, V_I4(&timeout) ? V_I4(&timeout) * 1000: INFINITE);
     if (status == WAIT_TIMEOUT)
     {
         PostThreadMessageW(tid, WM_QUIT, 0, 0);
-        MsgWaitForMultipleObjects(1, &hthread, FALSE, INFINITE, 0);
+        WaitForHandles(1, &hthread, INFINITE); /* Wait for thread because it will write to param.button */
         param.button = -1;
     }
     *button = param.button;
