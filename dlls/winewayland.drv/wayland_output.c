@@ -151,6 +151,13 @@ static void wayland_output_done(struct wayland_output *output)
     {
         RB_FOR_EACH_ENTRY(mode, &output->pending.modes, struct wayland_output_mode, entry)
         {
+            /* switch the width and height of a mode if the output is rotated by 90/270 degrees */
+            if (output->current.transform & WL_OUTPUT_TRANSFORM_90)
+            {
+                uint32_t temp = mode->width;
+                mode->width = mode->height;
+                mode->height = temp;
+            }
             wayland_output_state_add_mode(&output->current,
                                           mode->width, mode->height, mode->refresh,
                                           mode == output->pending.current_mode);
