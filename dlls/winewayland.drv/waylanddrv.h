@@ -115,6 +115,7 @@ struct wayland_pointer
     HWND constraint_hwnd;
     BOOL relative_mode;
     BOOL pending_warp;
+    POINT warp;
     uint32_t enter_serial;
     uint32_t button_serial;
     struct wayland_cursor cursor;
