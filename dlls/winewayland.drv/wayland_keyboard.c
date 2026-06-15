@@ -900,8 +900,11 @@ static void keyboard_handle_modifiers(void *data, struct wl_keyboard *wl_keyboar
           serial, mods_depressed, mods_latched, mods_locked, xkb_group);
 
     pthread_mutex_lock(&keyboard->mutex);
-    xkb_state_update_mask(keyboard->xkb_state, mods_depressed, mods_latched,
-                          mods_locked, 0, 0, xkb_group);
+    if (keyboard->xkb_state)
+    {
+        xkb_state_update_mask(keyboard->xkb_state, mods_depressed, mods_latched,
+                              mods_locked, 0, 0, xkb_group);
+    }
     pthread_mutex_unlock(&keyboard->mutex);
 
     set_current_xkb_group(xkb_group);
