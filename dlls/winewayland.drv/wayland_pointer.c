@@ -1070,6 +1070,8 @@ BOOL WAYLAND_SetCursorPos(INT x, INT y)
         return FALSE;
     }
     pointer->pending_warp = TRUE;
+    pointer->warp_x = x;
+    pointer->warp_y = y;
     pthread_mutex_unlock(&pointer->mutex);
 
     TRACE("warping to %d,%d\n", x, y);
@@ -1096,6 +1098,15 @@ BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset)
 
     NtUserGetCursorPos(&cursor_pos);
     hwnd = NtUserGetForegroundWindow();
+
+    /* the cursor pos may have changed between SetCursorPos and ClipCursor calls */
+    pthread_mutex_lock(&pointer->mutex);
+    if (pointer->pending_warp)
+    {
+        cursor_pos.x = pointer->warp_x;
+        cursor_pos.y = pointer->warp_y;
+    }
+    pthread_mutex_unlock(&pointer->mutex);
 
     if (!(data = wayland_win_data_get(hwnd))) return FALSE;
     if ((surface = data->wayland_surface))
