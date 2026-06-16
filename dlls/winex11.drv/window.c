@@ -1616,8 +1616,8 @@ static void window_set_wm_state( struct x11drv_win_data *data, UINT new_state, B
 
     if (new_state == NormalState)
     {
-        /* try forcing activation if the window is supposed to be foreground or if it is fullscreen */
-        if (data->hwnd == foreground || data->is_fullscreen) activate = TRUE;
+        /* try forcing activation if the window is supposed to be foreground */
+        if (data->hwnd == foreground) activate = TRUE;
         window_set_user_time( data, activate ? -1 : 0, TRUE );
     }
 
