@@ -1543,7 +1543,7 @@ static HRESULT WINAPI source_reader_async_commands_callback_Invoke(IMFAsyncCallb
                 }
                 else
                 {
-                    stub_stream.index = command->u.read.stream_index;
+                    stub_stream.index = hr == MF_E_MEDIA_SOURCE_NO_STREAMS_SELECTED ? 0 : stream_index;
                     source_reader_queue_response(reader, &stub_stream, hr, MF_SOURCE_READERF_ERROR, 0, NULL);
                 }
             }
