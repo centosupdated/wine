@@ -1356,7 +1356,7 @@ static void test_async_source_reader(void)
         if (res) break;
     }
 
-    todo_wine ok(!res, "ReadSample didn't finish\n");
+    ok(!res, "ReadSample didn't finish\n");
 
     IMFSourceReaderCallback_Release(&callback->IMFSourceReaderCallback_iface);
     IMFSourceReader_Release(reader);
