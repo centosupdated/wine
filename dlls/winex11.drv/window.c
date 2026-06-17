@@ -1801,6 +1801,11 @@ static void window_request_desired_state( struct x11drv_win_data *data )
     window_set_config( data, data->desired_state.rect, FALSE );
 }
 
+/* Process-wide last _NET_ACTIVE_WINDOW request target (volatile for cross-thread visibility).
+ * If current_state.net_active_window != this value, we're seeing an intermediate state
+ * from rapid back-to-back SetActiveWindow calls and should suppress foreground changes. */
+static volatile Window process_last_nav_request;
+
 /***********************************************************************
  *      GetWindowStateUpdates   (X11DRV.@)
  */
@@ -1831,6 +1836,15 @@ BOOL X11DRV_GetWindowStateUpdates( HWND hwnd, UINT *state_cmd, UINT *swp_flags, 
     {
         *foreground = hwnd_from_window( thread_data->display, thread_data->current_state.net_active_window );
         if (*foreground == old_foreground) *foreground = 0;
+        /* Suppress foreground change when current _NET_ACTIVE_WINDOW doesn't match the
+         * last request we sent — it's an intermediate state from rapid back-to-back
+         * SetActiveWindow calls (e.g. app does A then B; WM confirms A before B arrives). */
+        if (*foreground)
+        {
+            Window last_request = process_last_nav_request;
+            if (last_request && last_request != thread_data->current_state.net_active_window)
+                *foreground = 0;
+        }
     }
 
     if ((data = get_win_data( hwnd )))
@@ -2005,9 +2019,31 @@ void net_active_window_notify( unsigned long serial, Window value, Time time )
 
     received = wine_dbg_sprintf( "_NET_ACTIVE_WINDOW %p/%lx serial %lu time %lu", current_hwnd, value, serial, time );
     expected = *expect_serial ? wine_dbg_sprintf( ", expected %p/%lx serial %lu", pending_hwnd, *pending, *expect_serial ) : "";
-    if (!handle_state_change( serial, expect_serial, sizeof(value), &value, desired, pending,
-                              current, expected, "", received, NULL ))
-        return;
+    {
+        /* Save what we last requested before handle_state_change overwrites it on mismatch. */
+        Window prev_pending = *pending;
+        BOOL had_serial = !!(*expect_serial);
+        if (!handle_state_change( serial, expect_serial, sizeof(value), &value, desired, pending,
+                                  current, expected, "", received, NULL ))
+            return;
+        /* When we sent rapid back-to-back _NET_ACTIVE_WINDOW requests (A then B), the WM
+         * confirms A before our B request arrives. The A confirmation is a "mismatch" against
+         * our last requested state B. Forwarding that intermediate A state would trigger a
+         * spurious Win32 foreground change. Instead: restore desired/pending to B and keep
+         * expect_serial non-zero so X11DRV_GetWindowStateUpdates defers foreground updates
+         * until the WM confirms B. */
+        if (had_serial && value != prev_pending)
+        {
+            *desired = prev_pending;
+            *pending = prev_pending;
+            *expect_serial = 1; /* non-zero sentinel: blocks foreground update until B is confirmed */
+            return;
+        }
+    }
+
+    /* Confirmed value matches our last request — clear the global so future
+     * PropertyNotify events are not incorrectly treated as intermediate states. */
+    if (value == process_last_nav_request) process_last_nav_request = 0;
 
     NtUserPostMessage( NtUserGetForegroundWindow(), WM_WINE_WINDOW_STATE_CHANGED, 0, 0 );
 }
@@ -2061,8 +2097,14 @@ void set_net_active_window( HWND hwnd, HWND previous )
 
     if (!is_net_supported( x11drv_atom(_NET_ACTIVE_WINDOW) )) return;
     if (!(window = X11DRV_get_whole_window( hwnd ))) return;
+    /* Both early returns below skip sending any _NET_ACTIVE_WINDOW request, so no
+     * confirmation will ever arrive for "window". Only record it as the expected
+     * target once we know we're actually about to send a request below - otherwise
+     * process_last_nav_request could get stuck on a value that never gets confirmed,
+     * permanently suppressing every later, unrelated foreground update. */
     if (data->pending_state.net_active_window == window) return;
     if (window_set_pending_activate( hwnd, &withdrawn )) return;
+    process_last_nav_request = window;
 
     xev.xclient.type = ClientMessage;
     xev.xclient.window = window;
