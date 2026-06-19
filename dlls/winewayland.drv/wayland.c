@@ -105,6 +105,8 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
     {
         struct wayland_output *output;
 
+        if (version < 2) return;
+
         process_wayland.zxdg_output_manager_v1 =
             wl_registry_bind(registry, id, &zxdg_output_manager_v1_interface,
                              version < 3 ? version : 3);
@@ -332,6 +334,11 @@ BOOL wayland_process_init(void)
     if (!process_wayland.wp_viewporter)
     {
         ERR("Wayland compositor doesn't support wp_viewporter\n");
+        return FALSE;
+    }
+    if (!process_wayland.zxdg_output_manager_v1)
+    {
+        ERR("Wayland compositor doesn't support zxdg_output_manager_v1!\n");
         return FALSE;
     }
 
