@@ -275,6 +275,41 @@ START_TEST(propstore)
         IMMDevice_Release(dev);
     }
 
+    if (count > 0)
+    {
+        PROPVARIANT pv;
+
+        trace("EnumAudioEndpoints eAll[0] eRender listed first?\n");
+        hr = IMMDeviceEnumerator_EnumAudioEndpoints(mme, eAll, DEVICE_STATE_ACTIVE, &collection);
+        ok(hr == S_OK, "Got EnumAudioEndpoints eAll hr %#lx.\n", hr);
+        hr = IMMDeviceCollection_GetCount(collection, &count);
+        ok(hr == S_OK, "Got GetCount eAll hr %#lx.\n", hr);
+
+        if (count > 0)
+        {
+            IMMDevice *dev;
+
+            hr = IMMDeviceCollection_Item(collection, 0, &dev);
+            ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+            store = NULL;
+            hr = IMMDevice_OpenPropertyStore(dev, STGM_READWRITE, &store);
+            if (hr == E_ACCESSDENIED)
+                hr = IMMDevice_OpenPropertyStore(dev, STGM_READ, &store);
+            ok(hr == S_OK, "Opening valid store returned %08lx\n", hr);
+
+            pv.vt = VT_EMPTY;
+            hr = IPropertyStore_GetValue(store, (const PROPERTYKEY*)&DEVPKEY_Device_DeviceDesc, &pv);
+            ok(hr == S_OK, "Failed with %#lx\n", hr);
+            ok(pv.vt == VT_LPWSTR && pv.pwszVal, "Device_DeviceDesc value had wrong type: %#x or was NULL\n", pv.vt);
+            todo_wine ok(!wcscmp(L"Speakers", pv.pwszVal), "Expected EnumAudioEndpoints eAll[0] to be eRender but DeviceDesc != 'Speakers'\n");
+
+            IPropertyStore_Release(store);
+            IMMDevice_Release(dev);
+        }
+    }
+
+
     IMMDeviceCollection_Release(collection);
     IMMDeviceEnumerator_Release(mme);
     CoUninitialize();
