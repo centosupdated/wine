@@ -302,7 +302,7 @@ START_TEST(propstore)
             hr = IPropertyStore_GetValue(store, (const PROPERTYKEY*)&DEVPKEY_Device_DeviceDesc, &pv);
             ok(hr == S_OK, "Failed with %#lx\n", hr);
             ok(pv.vt == VT_LPWSTR && pv.pwszVal, "Device_DeviceDesc value had wrong type: %#x or was NULL\n", pv.vt);
-            todo_wine ok(!wcscmp(L"Speakers", pv.pwszVal), "Expected EnumAudioEndpoints eAll[0] to be eRender but DeviceDesc != 'Speakers'\n");
+            ok(!wcscmp(L"Speakers", pv.pwszVal), "Expected EnumAudioEndpoints eAll[0] to be eRender but DeviceDesc != 'Speakers'\n");
 
             IPropertyStore_Release(store);
             IMMDevice_Release(dev);

@@ -588,8 +588,8 @@ HRESULT load_devices_from_reg(void)
     if (ret == ERROR_SUCCESS)
         ret = RegCreateKeyExW(root, L"Render", 0, NULL, 0, KEY_READ|KEY_WRITE|KEY_WOW64_64KEY, NULL, &key_render, NULL);
     RegCloseKey(root);
-    cur = key_capture;
-    curflow = eCapture;
+    cur = key_render;
+    curflow = eRender;
     if (ret != ERROR_SUCCESS)
     {
         RegCloseKey(key_capture);
@@ -608,10 +608,10 @@ HRESULT load_devices_from_reg(void)
         ret = RegEnumKeyExW(cur, i++, guidvalue, &len, NULL, NULL, NULL, NULL);
         if (ret == ERROR_NO_MORE_ITEMS)
         {
-            if (cur == key_capture)
+            if (cur == key_render)
             {
-                cur = key_render;
-                curflow = eRender;
+                cur = key_capture;
+                curflow = eCapture;
                 i = 0;
                 continue;
             }
