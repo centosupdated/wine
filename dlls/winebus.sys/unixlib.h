@@ -39,6 +39,9 @@ struct device_desc
     UINT input;
     UINT uid;
     UINT bus_type;
+    UINT class;
+    UINT subclass;
+    UINT protocol;
     BOOL is_gamepad;
     BOOL is_hidraw;
 
@@ -159,9 +162,10 @@ enum unix_funcs
 static inline const char *debugstr_device_desc(struct device_desc *desc)
 {
     if (!desc) return "(null)";
-    return wine_dbg_sprintf("{vid %04x, pid %04x, version %04x, input %d, uid %08x, is_gamepad %u, is_hidraw %u, bus_type %u}",
+    return wine_dbg_sprintf("{vid %04x, pid %04x, version %04x, input %d, uid %08x, is_gamepad %u, is_hidraw %u, bus_type %u, class %02x, subclass %02x, protocol %02x}",
                             desc->vid, desc->pid, desc->version, desc->input, desc->uid,
-                            desc->is_gamepad, desc->is_hidraw, desc->bus_type);
+                            desc->is_gamepad, desc->is_hidraw, desc->bus_type,
+                            desc->class, desc->subclass, desc->protocol);
 }
 
 static inline BOOL is_xbox_gamepad(WORD vid, WORD pid)
