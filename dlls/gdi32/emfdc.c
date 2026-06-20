@@ -1507,6 +1507,34 @@ BOOL EMFDC_ExtTextOut( DC_ATTR *dc_attr, INT x, INT y, UINT flags, const RECT *r
         emr->rclBounds.top    = top;
         emr->rclBounds.bottom = bottom + text_height + 1;
     }
+
+    /* ETO_OPAQUE extends the bounds to cover the background fill rectangle.
+     * ETO_CLIPPED restricts the bounds since drawing is clipped to rect.
+     * The rectangle is exclusive on the right/bottom, while EMF record
+     * bounds are inclusive, so adjust by one when merging the rectangle. */
+    if (rect && (flags & ETO_OPAQUE))
+    {
+        emr->rclBounds.left   = min( emr->rclBounds.left,   rect->left );
+        emr->rclBounds.top    = min( emr->rclBounds.top,    rect->top );
+        emr->rclBounds.right  = max( emr->rclBounds.right,  rect->right - 1 );
+        emr->rclBounds.bottom = max( emr->rclBounds.bottom, rect->bottom - 1 );
+    }
+    if (rect && (flags & ETO_CLIPPED))
+    {
+        emr->rclBounds.left   = max( emr->rclBounds.left,   rect->left );
+        emr->rclBounds.top    = max( emr->rclBounds.top,    rect->top );
+        emr->rclBounds.right  = min( emr->rclBounds.right,  rect->right - 1 );
+        emr->rclBounds.bottom = min( emr->rclBounds.bottom, rect->bottom - 1 );
+
+        if (emr->rclBounds.left > emr->rclBounds.right ||
+            emr->rclBounds.top  > emr->rclBounds.bottom)
+        {
+            /* Nothing is drawn after clipping, emit an empty bounding rect. */
+            emr->rclBounds.left = emr->rclBounds.top = 0;
+            emr->rclBounds.right = emr->rclBounds.bottom = -1;
+            goto no_bounds;
+        }
+    }
     emfdc_update_bounds( emf, &emr->rclBounds );
 
 no_bounds:
