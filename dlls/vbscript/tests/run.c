@@ -3592,12 +3592,26 @@ static void test_redefine_scope(void)
         L"Class S\nEnd Class\nSub Other\nDim s\nEnd Sub\n",
         L"Sub Other\nDim s\nEnd Sub\nClass S\nEnd Class\n",
     };
+    /* A class member lives in a separate namespace, so its name may collide
+     * with a global Dim or Const. Each script also calls the member to prove
+     * it stays usable. */
+    static const WCHAR *valid_class_member[] = {
+        L"Class C\nPublic Function M\nM = 42\nEnd Function\nEnd Class\n"
+        L"Dim M\nDim o : Set o = New C\nCall ok(o.M = 42, \"o.M = \" & o.M)\n",
+        L"Class C\nPublic Function M\nM = 42\nEnd Function\nEnd Class\n"
+        L"Const M = 7\nDim o : Set o = New C\nCall ok(o.M = 42, \"o.M = \" & o.M)\n",
+    };
     HRESULT hres;
     unsigned i;
 
     for (i = 0; i < ARRAY_SIZE(valid); i++) {
         hres = parse_script_wr(valid[i]);
         ok(hres == S_OK, "[%u] parse returned %08lx\n", i, hres);
+    }
+
+    for (i = 0; i < ARRAY_SIZE(valid_class_member); i++) {
+        hres = parse_script_wr(valid_class_member[i]);
+        ok(hres == S_OK, "[%u] class member parse returned %08lx\n", i, hres);
     }
 }
 
@@ -3658,6 +3672,77 @@ static void test_external_caller_method_error(void)
     hres = parse_script_wr(src);
     ok(hres == S_OK, "parse_script_wr returned %08lx\n", hres);
     CHECK_CALLED(OnScriptError);
+}
+
+static void test_class_decl_scope(void)
+{
+    static const struct {
+        const WCHAR *src;
+        BOOL expect_ok;     /* whether the script should compile */
+        USHORT error_code;  /* expected error number when it should not */
+        ULONG error_line;   /* expected 0-based error line when it should not */
+    } tests[] = {
+        { L"Dim x : Class C\nPublic v\nEnd Class\n", TRUE },
+        { L"Sub S\nClass C\nEnd Class\nEnd Sub\n", FALSE, 1002, 1 },
+        { L"If True Then\nClass C\nEnd Class\nEnd If\n", FALSE, 1002, 1 },
+        { L"Class C\nEnd Class\nDim x : Class C\nEnd Class\n", FALSE, 1041, 2 },
+    };
+    HRESULT hres;
+    unsigned i;
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++) {
+        error_line = ~0;
+        error_code = 0;
+        onerror_hres = S_OK;
+        SET_EXPECT(OnScriptError);
+        hres = parse_script_wr(tests[i].src);
+        CLEAR_CALLED(OnScriptError);
+
+        if (tests[i].expect_ok)
+            ok(hres == S_OK, "[%u] %s: hres=%08lx\n", i, wine_dbgstr_w(tests[i].src), hres);
+        else
+            ok(FAILED(hres) && error_code == tests[i].error_code && error_line == tests[i].error_line,
+               "[%u] %s: hres=%08lx code=%u line=%lu\n", i, wine_dbgstr_w(tests[i].src),
+               hres, error_code, error_line);
+    }
+}
+
+/* Like a Class, a Sub or Function is only valid at script global scope (a
+   global If/Select block hoists it, a loop or procedure body does not). Native
+   rejects the disallowed cases; the parser does not yet, so these are todo. */
+static void test_sub_decl_scope(void)
+{
+    static const struct {
+        const WCHAR *src;
+        BOOL expect_ok;     /* whether the script should compile */
+        USHORT error_code;  /* expected native error number when it should not */
+        ULONG error_line;   /* expected 0-based native error line when it should not */
+        BOOL todo;          /* the parser does not yet reject this case */
+    } tests[] = {
+        { L"If False Then\nSub S\nEnd Sub\nEnd If\nCall S\n", TRUE, 0, 0, FALSE },
+        { L"Select Case 1\nCase 1\nSub S\nEnd Sub\nEnd Select\nCall S\n", TRUE, 0, 0, FALSE },
+        { L"Sub S\nSub T\nEnd Sub\nEnd Sub\n", FALSE, 1002, 1, TRUE },
+        { L"For i = 1 To 1\nSub S\nEnd Sub\nNext\n", FALSE, 1002, 1, TRUE },
+    };
+    HRESULT hres;
+    unsigned i;
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++) {
+        error_line = ~0;
+        error_code = 0;
+        onerror_hres = S_OK;
+        SET_EXPECT(OnScriptError);
+        hres = parse_script_wr(tests[i].src);
+        CLEAR_CALLED(OnScriptError);
+
+        if (tests[i].expect_ok)
+            ok(hres == S_OK, "[%u] %s: hres=%08lx\n", i, wine_dbgstr_w(tests[i].src), hres);
+        else
+            todo_wine_if(tests[i].todo)
+            ok(FAILED(hres) && error_code == tests[i].error_code && error_line == tests[i].error_line,
+               "[%u] %s: hres=%08lx code=%u line=%lu\n", i, wine_dbgstr_w(tests[i].src),
+               hres, error_code, error_line);
+    }
 }
 
 static void test_msgbox(void)
@@ -4356,6 +4441,8 @@ static void run_tests(void)
     test_isexpression();
     test_option_explicit_errors();
     test_parse_errors();
+    test_class_decl_scope();
+    test_sub_decl_scope();
     test_redefine_scope();
     test_getref_error_reporting();
     test_getref_external_caller_error();

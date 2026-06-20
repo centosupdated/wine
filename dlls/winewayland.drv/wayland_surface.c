@@ -138,6 +138,48 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener =
     xdg_toplevel_handle_close
 };
 
+void wp_fractional_scale_handle_scale(void* user_data,
+                                      struct wp_fractional_scale_v1 *fractional_scale_v1,
+                                      uint32_t scale_fixed)
+{
+    struct wayland_win_data *data;
+    struct wayland_client_surface *client;
+    struct wayland_surface *surface;
+    double scale = scale_fixed / 120.0;
+    HWND hwnd = user_data;
+
+    TRACE("hwnd=%p scale=%lf\n", hwnd, scale);
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+    if (!(surface = data->wayland_surface) || scale == surface->window.scale)
+    {
+        wayland_win_data_release(data);
+        return;
+    }
+
+    surface->window.scale = scale;
+
+    /* reattach the client surface as its rect has changed */
+    if ((client = data->client_surface))
+        wayland_client_surface_attach(client, client->toplevel);
+
+    /* the subsurface rect has changed */
+    if (surface->role == WAYLAND_SURFACE_ROLE_SUBSURFACE)
+    {
+        surface->processing.serial = 1;
+        surface->processing.processed = TRUE;
+    }
+
+    wayland_win_data_release(data);
+
+    NtUserExposeWindowSurface(hwnd, 0, NULL, 0);
+}
+
+static const struct wp_fractional_scale_v1_listener wp_fractional_scale_listener =
+{
+    wp_fractional_scale_handle_scale
+};
+
 /**********************************************************************
  *          wayland_surface_create
  *
@@ -172,6 +214,18 @@ struct wayland_surface *wayland_surface_create(HWND hwnd)
     {
         ERR("Failed to create wp_viewport Wayland surface\n");
         goto err;
+    }
+    if (process_wayland.wp_alpha_modifier_v1)
+    {
+        COLORREF key;
+        DWORD flags;
+        BYTE alpha;
+
+        surface->wp_alpha_modifier_surface_v1 =
+            wp_alpha_modifier_v1_get_surface(process_wayland.wp_alpha_modifier_v1, surface->wl_surface);
+
+        if (!NtUserGetLayeredWindowAttributes(hwnd, &key, &alpha, &flags)) flags = 0;
+        wayland_surface_set_opacity(surface, alpha, flags);
     }
 
     surface->window.scale = 1.0;
@@ -212,6 +266,12 @@ void wayland_surface_destroy(struct wayland_surface *surface)
 
     wayland_surface_clear_role(surface);
 
+    if (surface->wp_alpha_modifier_surface_v1)
+    {
+        wp_alpha_modifier_surface_v1_destroy(surface->wp_alpha_modifier_surface_v1);
+        surface->wp_alpha_modifier_surface_v1 = NULL;
+    }
+
     if (surface->wp_viewport)
     {
         wp_viewport_destroy(surface->wp_viewport);
@@ -239,6 +299,28 @@ void wayland_surface_destroy(struct wayland_surface *surface)
     wl_display_flush(process_wayland.wl_display);
 
     free(surface);
+}
+
+static void wayland_surface_init_fractional_scale(struct wayland_surface *surface,
+                                                  double initial_scale)
+{
+    surface->window.scale = initial_scale;
+
+    if (!process_wayland.wp_fractional_scale_manager_v1) return;
+
+    surface->wp_fractional_scale_v1 =
+        wp_fractional_scale_manager_v1_get_fractional_scale(
+            process_wayland.wp_fractional_scale_manager_v1,
+            surface->wl_surface);
+    if (!surface->wp_fractional_scale_v1)
+    {
+        ERR("Failed to create wp_fractional_scale_v1\n");
+        return;
+    }
+    wp_fractional_scale_v1_add_listener(
+        surface->wp_fractional_scale_v1,
+        &wp_fractional_scale_listener,
+        surface->hwnd);
 }
 
 /**********************************************************************
@@ -276,6 +358,8 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
 
     wayland_surface_assign_icon(surface);
 
+    wayland_surface_init_fractional_scale(surface, 1.0);
+
     wl_surface_commit(surface->wl_surface);
     wl_display_flush(process_wayland.wl_display);
 
@@ -312,6 +396,8 @@ void wayland_surface_make_subsurface(struct wayland_surface *surface,
         goto err;
     }
 
+    wayland_surface_init_fractional_scale(surface, parent->window.scale);
+
     surface->role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
     surface->toplevel_hwnd = parent->hwnd;
 
@@ -337,6 +423,14 @@ err:
 void wayland_surface_clear_role(struct wayland_surface *surface)
 {
     TRACE("surface=%p\n", surface);
+
+    /* some objects are shared between several roles */
+
+    if (surface->wp_fractional_scale_v1)
+    {
+        wp_fractional_scale_v1_destroy(surface->wp_fractional_scale_v1);
+        surface->wp_fractional_scale_v1 = NULL;
+    }
 
     switch (surface->role)
     {
@@ -466,6 +560,14 @@ BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf,
     static enum wayland_surface_config_state mask =
         WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED;
 
+    /* The fullscreen state requires a size smaller or equal to the configured
+     * size. If we have a larger size, we can use surface geometry during
+     * surface reconfiguration to provide the smaller size, so we are always
+     * compatible with a fullscreen state.
+     * NOTE: Fullscreen combined with maximized is the same as fullscreen. */
+    if (conf->state & WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN)
+        return TRUE;
+
     /* We require the same state. */
     if ((state & mask) != (conf->state & mask)) return FALSE;
 
@@ -477,11 +579,6 @@ BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf,
     {
         return FALSE;
     }
-
-    /* The fullscreen state requires a size smaller or equal to the configured
-     * size. If we have a larger size, we can use surface geometry during
-     * surface reconfiguration to provide the smaller size, so we are always
-     * compatible with a fullscreen state. */
 
     return TRUE;
 }
@@ -536,6 +633,7 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
         /* If the window rect in the monitor is smaller than required,
          * fall back to an appropriately sized rect at the top-left. */
         if ((surface->current.state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) &&
+            !(surface->current.state & WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN) &&
             (rect.right - rect.left < surface->current.width ||
              rect.bottom - rect.top < surface->current.height))
         {
@@ -557,10 +655,20 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
 
     if (!IsRectEmpty(&rect))
     {
+        int width = rect.right - rect.left, height = rect.bottom - rect.top;
         xdg_surface_set_window_geometry(surface->xdg_surface,
                                         rect.left, rect.top,
-                                        rect.right - rect.left,
-                                        rect.bottom - rect.top);
+                                        width, height);
+        if (surface->window.resizeable)
+        {
+            xdg_toplevel_set_min_size(surface->xdg_toplevel, 0, 0);
+            xdg_toplevel_set_max_size(surface->xdg_toplevel, 0, 0);
+        }
+        else
+        {
+            xdg_toplevel_set_min_size(surface->xdg_toplevel, width, height);
+            xdg_toplevel_set_max_size(surface->xdg_toplevel, width, height);
+        }
     }
 }
 
@@ -688,7 +796,7 @@ static void wayland_surface_reconfigure_subsurface(struct wayland_surface *surfa
         TRACE("hwnd=%p pos=%d,%d\n", surface->hwnd, x, y);
 
         wl_subsurface_set_position(surface->wl_subsurface, x, y);
-        if (toplevel_data->client_surface)
+        if (toplevel_data->client_surface && toplevel_data->client_surface->wl_subsurface)
             wl_subsurface_place_above(surface->wl_subsurface, toplevel_data->client_surface->wl_surface);
         else
             wl_subsurface_place_above(surface->wl_subsurface, toplevel_surface->wl_surface);
@@ -1041,11 +1149,6 @@ void wayland_surface_coords_to_window(struct wayland_surface *surface,
     *window_y = round(surface_y * surface->window.scale);
 }
 
-static struct wayland_client_surface *impl_from_client_surface(struct client_surface *client)
-{
-    return CONTAINING_RECORD(client, struct wayland_client_surface, client);
-}
-
 static void wayland_client_surface_destroy(struct client_surface *client)
 {
     struct wayland_client_surface *surface = impl_from_client_surface(client);
@@ -1105,7 +1208,13 @@ static const struct client_surface_funcs wayland_client_surface_funcs =
     .present = wayland_client_surface_present,
 };
 
-struct wayland_client_surface *wayland_client_surface_create(HWND hwnd)
+struct wayland_client_surface *impl_from_client_surface(struct client_surface *client)
+{
+    assert(client->funcs == &wayland_client_surface_funcs);
+    return CONTAINING_RECORD(client, struct wayland_client_surface, client);
+}
+
+struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format)
 {
     struct wayland_client_surface *client;
     struct wl_region *empty_region;
@@ -1140,7 +1249,7 @@ struct wayland_client_surface *wayland_client_surface_create(HWND hwnd)
         goto err;
     }
 
-    return client;
+    return &client->client;
 
 err:
     client_surface_release(&client->client);
@@ -1360,5 +1469,16 @@ void wayland_surface_assign_icon(struct wayland_surface *surface)
 
         xdg_toplevel_icon_manager_v1_set_icon(process_wayland.xdg_toplevel_icon_manager_v1,
                                               surface->xdg_toplevel, surface->xdg_toplevel_icon);
+    }
+}
+
+void wayland_surface_set_opacity(struct wayland_surface *surface, BYTE alpha, UINT flags)
+{
+    if (surface->wp_alpha_modifier_surface_v1)
+    {
+        uint32_t opacity = (flags & LWA_ALPHA) ? (UINT32_MAX / 0xff) * alpha : UINT32_MAX;
+        wp_alpha_modifier_surface_v1_set_multiplier(surface->wp_alpha_modifier_surface_v1, opacity);
+        wl_surface_commit(surface->wl_surface);
+        wl_display_flush(process_wayland.wl_display);
     }
 }

@@ -49,8 +49,6 @@ extern const bitsgetfunc getbpp[5];
 void putieee32(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
 void putieee32_sum(const IDirectSoundBufferImpl *dsb, DWORD pos, DWORD channel, float value);
 void mixieee32(float *src, float *dst, unsigned samples);
-typedef void (*normfunc)(const void *, void *, unsigned);
-extern const normfunc normfunctions[4];
 
 typedef struct _DSVOLUMEPAN
 {
@@ -92,8 +90,6 @@ struct DirectSoundDevice
     CO_MTA_USAGE_COOKIE         mta_cookie;
 
     DSVOLUMEPAN                 volpan;
-
-    normfunc normfunction;
 
     /* DirectSound3DListener fields */
     DS3DLISTENER                ds3dl;
@@ -145,8 +141,8 @@ struct IDirectSoundBufferImpl
     DSBUFFERDESC                dsbd;
     /* used for frequency conversion (PerfectPitch) */
     float                       firgain;
-    LONG64                      freqAdjustNum,freqAdjustDen;
-    LONG64                      freqAccNum;
+    DWORD                       freqAdjustNum,freqAdjustDen;
+    DWORD                       freqAccNum;
     /* used for mixing */
     DWORD                       sec_mixpos;
     /* Holds a copy of the next 'writelead' bytes, to be used for mixing. This makes it

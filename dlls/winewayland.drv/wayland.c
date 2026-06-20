@@ -205,6 +205,16 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         process_wayland.wp_pointer_warp_v1 =
             wl_registry_bind(registry, id, &wp_pointer_warp_v1_interface, 1);
     }
+    else if (strcmp(interface, "wp_alpha_modifier_v1") == 0)
+    {
+        process_wayland.wp_alpha_modifier_v1 =
+            wl_registry_bind(registry, id, &wp_alpha_modifier_v1_interface, 1);
+    }
+    else if (strcmp(interface, "wp_fractional_scale_manager_v1") == 0)
+    {
+        process_wayland.wp_fractional_scale_manager_v1 =
+            wl_registry_bind(registry, id, &wp_fractional_scale_manager_v1_interface, 1);
+    }
 }
 
 static void registry_handle_global_remove(void *data, struct wl_registry *registry,
@@ -260,7 +270,12 @@ BOOL wayland_process_init(void)
 
     TRACE("wl_display=%p\n", process_wayland.wl_display);
 
+#if (WAYLAND_VERSION_MAJOR == 1 && WAYLAND_VERSION_MINOR >= 23)
+    if (!(process_wayland.wl_event_queue =
+          wl_display_create_queue_with_name(process_wayland.wl_display, process_name ? process_name : "winewayland")))
+#else
     if (!(process_wayland.wl_event_queue = wl_display_create_queue(process_wayland.wl_display)))
+#endif
     {
         ERR("Failed to create event queue\n");
         return FALSE;
@@ -337,6 +352,9 @@ BOOL wayland_process_init(void)
 
     if (!process_wayland.xdg_toplevel_icon_manager_v1)
         ERR("Wayland compositor doesn't support xdg_toplevel_icon_manager_v1 (window icons will not be supported)\n");
+
+    if (!process_wayland.wp_fractional_scale_manager_v1)
+        ERR("Wayland compositor doesn't support wp_fractional_scale_manager_v1 (fractional scaling will be broken)\n");
 
     process_wayland.initialized = TRUE;
 

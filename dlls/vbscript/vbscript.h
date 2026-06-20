@@ -119,9 +119,26 @@ typedef struct _dynamic_var_t {
     const WCHAR *name;
     BOOL is_const;
     SAFEARRAY *array;
-    struct rb_entry entry;
     size_t index;
 } dynamic_var_t;
+
+typedef enum {
+    SCRIPTDISP_VAR,
+    SCRIPTDISP_FUNC,
+} scriptdisp_entry_type_t;
+
+/* A single named member of a ScriptDisp. A global name resolves to exactly
+   one member, so variables and functions share one tree; the payload selected
+   by type can grow to cover further kinds (e.g. cached host properties). */
+typedef struct {
+    struct rb_entry entry;
+    const WCHAR *name;
+    scriptdisp_entry_type_t type;
+    union {
+        dynamic_var_t *var;
+        function_t *func;
+    } u;
+} scriptdisp_entry_t;
 
 typedef struct {
     IDispatchEx IDispatchEx_iface;
@@ -130,12 +147,13 @@ typedef struct {
     dynamic_var_t **global_vars;
     size_t global_vars_cnt;
     size_t global_vars_size;
-    struct rb_tree var_tree;
 
     function_t **global_funcs;
     size_t global_funcs_cnt;
     size_t global_funcs_size;
-    struct rb_tree func_tree;
+
+    /* maps a global name to its scriptdisp_entry_t */
+    struct rb_tree members;
 
     class_desc_t *classes;
 
@@ -145,6 +163,9 @@ typedef struct {
     unsigned int rnd;
 } ScriptDisp;
 
+scriptdisp_entry_t *script_disp_find_member(ScriptDisp *disp, const WCHAR *name);
+scriptdisp_entry_t *script_disp_add_var(ScriptDisp *disp, dynamic_var_t *var);
+scriptdisp_entry_t *script_disp_add_func(ScriptDisp *disp, function_t *func);
 dynamic_var_t *script_disp_find_var(ScriptDisp *disp, const WCHAR *name);
 
 typedef struct _builtin_prop_t builtin_prop_t;
@@ -165,6 +186,7 @@ typedef struct named_item_t {
     LPWSTR name;
 
     struct list entry;
+    struct list bucket_entry;
 } named_item_t;
 
 HRESULT create_vbdisp(const class_desc_t*,vbdisp_t**);
@@ -225,12 +247,17 @@ struct _script_ctx_t {
     unsigned call_depth;
 
     EXCEPINFO ei;
+    BSTR ei_identifier;
     vbscode_t *error_loc_code;
     unsigned error_loc_offset;
 
     struct list objects;
     struct list code_list;
     struct list named_items;
+
+    /* named items indexed by name, each tree entry listing the items
+       sharing that name in registration order */
+    struct rb_tree named_item_tree;
 };
 
 HRESULT init_global(script_ctx_t*);
@@ -258,9 +285,11 @@ typedef enum {
 #define OP_LIST                                   \
     X(add,            1, 0,           0)          \
     X(and,            1, 0,           0)          \
-    X(assign_ident,   1, ARG_BSTR,    ARG_UINT)   \
-    X(assign_member,  1, ARG_BSTR,    ARG_UINT)   \
-    X(assign_call,    1, ARG_UINT,    0)          \
+    X(assign_ident,      1, ARG_BSTR,    ARG_UINT)   \
+    X(assign_local,      1, ARG_INT,     ARG_UINT)   \
+    X(assign_local_prop, 1, ARG_UINT,    ARG_UINT)   \
+    X(assign_member,     1, ARG_BSTR,    ARG_UINT)   \
+    X(assign_call,       1, ARG_UINT,    0)          \
     X(bool,           1, ARG_INT,     0)          \
     X(catch,          1, ARG_ADDR,    ARG_UINT)   \
     X(case,           0, ARG_ADDR,    ARG_UINT)   \
@@ -287,11 +316,14 @@ typedef enum {
     X(idiv,           1, 0,           0)          \
     X(imp,            1, 0,           0)          \
     X(incc,           1, ARG_BSTR,    0)          \
+    X(incc_local,     1, ARG_INT,     0)          \
     X(int,            1, ARG_INT,     0)          \
     X(is,             1, 0,           0)          \
     X(jmp,            0, ARG_ADDR,    0)          \
     X(jmp_false,      0, ARG_ADDR,    0)          \
     X(jmp_true,       0, ARG_ADDR,    0)          \
+    X(local,          1, ARG_INT,     0)          \
+    X(local_prop,     1, ARG_UINT,    0)          \
     X(lt,             1, ARG_UINT,    0)          \
     X(lteq,           1, ARG_UINT,    0)          \
     X(mcall,          1, ARG_BSTR,    ARG_UINT)   \
@@ -315,10 +347,13 @@ typedef enum {
     X(ret,            0, 0,           0)          \
     X(retval,         1, 0,           0)          \
     X(set_ident,      1, ARG_BSTR,    ARG_UINT)   \
+    X(set_local,      1, ARG_INT,     ARG_UINT)   \
+    X(set_local_prop, 1, ARG_UINT,    ARG_UINT)   \
     X(set_member,     1, ARG_BSTR,    ARG_UINT)   \
     X(set_call,       1, ARG_UINT,    0)          \
     X(stack,          1, ARG_UINT,    0)          \
     X(step,           0, ARG_ADDR,    ARG_BSTR)   \
+    X(step_local,     0, ARG_ADDR,    ARG_INT)    \
     X(stop,           1, 0,           0)          \
     X(string,         1, ARG_STR,     0)          \
     X(sub,            1, 0,           0)          \
@@ -382,7 +417,6 @@ struct _function_t {
     unsigned code_off;
     vbscode_t *code_ctx;
     function_t *next;
-    struct rb_entry entry;
     size_t index;
 };
 
@@ -430,6 +464,7 @@ named_item_t *lookup_named_item(script_ctx_t*,const WCHAR*,unsigned);
 void release_named_item(named_item_t*);
 void clear_error_loc(script_ctx_t*);
 void clear_ei(EXCEPINFO*);
+void clear_error(script_ctx_t*);
 HRESULT report_script_error(script_ctx_t*,vbscode_t*,unsigned,BOOL);
 void detach_global_objects(script_ctx_t*);
 HRESULT get_builtin_id(BuiltinDisp*,const WCHAR*,DISPID*);

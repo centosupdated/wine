@@ -81,7 +81,6 @@ struct desktop
     struct thread_input *foreground_input; /* thread input of foreground thread */
     process_id_t         foreground_pid;   /* id of the foreground process */
     unsigned int         users;            /* processes and threads using this desktop */
-    unsigned char        keystate[256];    /* asynchronous key state */
     unsigned char        alt_pressed;      /* last key press was Alt (used to determine msg on release) */
     struct key_repeat    key_repeat;       /* key auto-repeat */
     unsigned int         clip_flags;       /* last cursor clip flags */
@@ -189,13 +188,14 @@ extern struct window_class *get_window_class( user_handle_t window );
 /* window class functions */
 
 extern void destroy_process_classes( struct process *process );
-extern struct window_class *grab_class( struct process *process, atom_t atom, mod_handle_t instance,
-                                        int *extra_bytes, struct obj_locator *locator );
+extern struct window_class *grab_class( struct process *process, atom_t atom, mod_handle_t instance, struct obj_locator *locator );
 extern void release_class( struct window_class *class );
 extern int is_desktop_class( struct window_class *class );
 extern int is_message_class( struct window_class *class );
 extern int get_class_style( struct window_class *class );
 extern atom_t get_class_atom( struct window_class *class );
+extern unsigned int get_class_fnid( struct window_class *class, data_size_t *extra_size, data_size_t *private_size );
+extern client_ptr_t get_class_wndproc( struct window_class *class, bool *ansi );
 extern client_ptr_t get_class_client_ptr( struct window_class *class );
 
 /* windows station functions */

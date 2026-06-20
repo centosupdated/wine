@@ -1316,6 +1316,9 @@ static void test_BCryptEncrypt(void)
         ok(tag[i] == expected_tag[i], "%lu: %02x != %02x\n", i, tag[i], expected_tag[i]);
     ok(!memcmp(ivbuf, iv, sizeof(iv)), "wrong iv data.\n");
 
+    ret = BCryptEncrypt(key, data2, 32, &auth_info, ivbuf, 16, ciphertext, 31, &size, 0);
+    ok(ret == STATUS_BUFFER_TOO_SMALL, "got %#lx\n", ret);
+
     /* NULL initialization vector */
     size = 0;
     memset(ciphertext, 0xff, sizeof(ciphertext));
@@ -1917,6 +1920,16 @@ static void test_BCryptDecrypt(void)
     ok(!memcmp(ivbuf, iv, sizeof(iv)), "wrong iv.\n");
 
     size = 0;
+    ret = BCryptDecrypt(key, ciphertext4, 32, &auth_info, ivbuf, 16, NULL, 0, &size, 0);
+    ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
+    ok(size == 32, "got %lu\n", size);
+
+    size = 0;
+    ret = BCryptDecrypt(key, ciphertext4, 32, &auth_info, ivbuf, 16, plaintext, 31, &size, 0);
+    ok(ret == STATUS_BUFFER_TOO_SMALL, "got %#lx\n", ret);
+    ok(size == 32, "got %lu\n", size);
+
+    size = 0;
     memset(plaintext, 0, sizeof(plaintext));
     ret = BCryptDecrypt(key, ciphertext4, 32, &auth_info, NULL, 0, plaintext, 32, &size, 0);
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
@@ -2059,8 +2072,10 @@ static void test_BCryptDecrypt(void)
     ret = BCryptDestroyKey(key);
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
 
+    if (0) {
     ret = BCryptDestroyKey(key);
     ok(ret == STATUS_INVALID_HANDLE, "got %#lx\n", ret);
+    }
     free(buf);
 
     ret = BCryptDestroyKey(NULL);
@@ -2254,6 +2269,9 @@ static BYTE cert521Signature[] =
 
 static void test_ECDSA(void)
 {
+    static UCHAR hash[] =
+        {0x7e, 0xe3, 0x74, 0xe7, 0xc5, 0x0b, 0x6b, 0x70, 0xdb, 0xab, 0x32, 0x6d, 0x1d, 0x51, 0xd6,
+         0x74, 0x79, 0x8e, 0x5b, 0x4b};
     BYTE buffer[sizeof(BCRYPT_ECCKEY_BLOB) + sizeof(ecc521Privkey)];
     BCRYPT_ECCKEY_BLOB *ecckey = (void *)buffer;
     BCRYPT_ALG_HANDLE alg;
@@ -2261,6 +2279,7 @@ static void test_ECDSA(void)
     NTSTATUS status;
     DWORD keylen;
     ULONG size, strength;
+    UCHAR sig[64];
 
     status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDSA_P256_ALGORITHM, NULL, 0);
     ok(!status, "got %#lx\n", status);
@@ -2440,7 +2459,7 @@ static void test_ECDSA(void)
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
 
     status = BCryptGenerateKeyPair(alg, &key, 255, 0);
-    todo_wine ok(status == STATUS_INVALID_PARAMETER, "got %#lx\n", status);
+    ok(status == STATUS_INVALID_PARAMETER, "got %#lx\n", status);
 
     status = BCryptGenerateKeyPair(alg, &key, 0, 0);
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
@@ -2460,6 +2479,35 @@ static void test_ECDSA(void)
 
     status = BCryptSetProperty(alg, BCRYPT_ECC_CURVE_NAME, (UCHAR *)BCRYPT_ECC_CURVE_25519, sizeof(BCRYPT_ECC_CURVE_25519), 0);
     ok(status == STATUS_NOT_SUPPORTED, "got %#lx\n", status);
+    BCryptCloseAlgorithmProvider(alg, 0);
+
+    /* Brainpool curve */
+    status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDSA_ALGORITHM, NULL, 0);
+    ok(!status, "got %#lx\n", status);
+
+    status = BCryptSetProperty(alg, BCRYPT_ECC_CURVE_NAME, (UCHAR *)BCRYPT_ECC_CURVE_BRAINPOOLP256R1,
+                               sizeof(BCRYPT_ECC_CURVE_BRAINPOOLP256R1), 0 );
+    ok(!status, "got %#lx\n", status);
+
+    status = BCryptGenerateKeyPair(alg, &key, 256, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+
+    strength = 0;
+    status = BCryptGetProperty(key, BCRYPT_KEY_STRENGTH, (UCHAR *)&strength, sizeof(strength), &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(strength == 256, "got %lu\n", strength);
+
+    status = BCryptFinalizeKeyPair(key, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+
+    size = 0;
+    status = BCryptSignHash(key, NULL, hash, sizeof(hash), sig, sizeof(sig), &size, 0);
+    ok (status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok (size == 64, "got %lu\n", size);
+
+    status = BCryptVerifySignature(key, NULL, hash, sizeof(hash), sig, size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    BCryptDestroyKey(key);
     BCryptCloseAlgorithmProvider(alg, 0);
 }
 
@@ -2658,7 +2706,6 @@ static void test_rsa_encrypt(void)
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
 
     /*   No padding    */
-    todo_wine {
     memset(input_no_padding, 0, sizeof(input_no_padding));
 
     encrypted_size = 0;
@@ -2690,11 +2737,9 @@ static void test_rsa_encrypt(void)
 
     ret = BCryptEncrypt(key, input_no_padding, sizeof(input_no_padding), NULL, NULL, 0, encrypted_b, encrypted_size, &encrypted_size, BCRYPT_PAD_NONE);
     ok(ret == STATUS_SUCCESS, "got %lx\n", ret);
-    }
     ok(!memcmp(encrypted_a, encrypted_b, encrypted_size), "Both outputs should be the same\n");
     ok(!memcmp(encrypted_b, rsa_encrypted_no_padding, encrypted_size), "Data mismatch.\n");
 
-    todo_wine {
     decrypted_size = 0;
     ret = BCryptDecrypt(key, encrypted_a, encrypted_size, NULL, NULL, 0, NULL, 0, &decrypted_size, BCRYPT_PAD_NONE);
     ok(ret == STATUS_SUCCESS, "got %lx\n", ret);
@@ -2704,7 +2749,6 @@ static void test_rsa_encrypt(void)
     ok(ret == STATUS_SUCCESS, "got %lx\n", ret);
     ok(decrypted_size == sizeof(input_no_padding), "got %lu\n", decrypted_size);
     ok(!memcmp(decrypted, input_no_padding, sizeof(input_no_padding)), "unexpected output\n");
-    }
 
     /*  PKCS1 Padding  */
     encrypted_size = 0;
@@ -2849,7 +2893,7 @@ static void test_rsa_encrypt(void)
             encrypted_null = malloc(encrypted_null_size);
             ret = BCryptEncrypt(key, input, sizeof(input), NULL, NULL, 0, encrypted_null, encrypted_null_size,
                                 &encrypted_null_size, BCRYPT_PAD_OAEP);
-            ok(ret == STATUS_INVALID_PARAMETER || broken(ret == STATUS_SUCCESS),
+            todo_wine ok(ret == STATUS_INVALID_PARAMETER || broken(ret == STATUS_SUCCESS),
                "unexpected OAEP(NULL) encrypt status %lx\n", ret);
 
             free(encrypted_null);
@@ -2868,6 +2912,31 @@ static void test_rsa_encrypt(void)
         BCryptDestroyKey(key);
     }
 }
+
+/* legacy RSA key with public exponent 1 */
+static UCHAR legacy_rsa_key[] =
+{
+    0x07, 0x02, 0x00, 0x00, 0x00, 0xa4, 0x00, 0x00, 0x52, 0x53, 0x41, 0x32, 0x00, 0x02, 0x00, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0xab, 0xef, 0xfa, 0xc6, 0x7d, 0xe8, 0xde, 0xfb, 0x68, 0x38, 0x09, 0x92,
+    0xd9, 0x42, 0x7e, 0x6b, 0x89, 0x9e, 0x21, 0xd7, 0x52, 0x1c, 0x99, 0x3c, 0x17, 0x48, 0x4e, 0x3a,
+    0x44, 0x02, 0xf2, 0xfa, 0x74, 0x57, 0xda, 0xe4, 0xd3, 0xc0, 0x35, 0x67, 0xfa, 0x6e, 0xdf, 0x78,
+    0x4c, 0x75, 0x35, 0x1c, 0xa0, 0x74, 0x49, 0xe3, 0x20, 0x13, 0x71, 0x35, 0x65, 0xdf, 0x12, 0x20,
+    0xf5, 0xf5, 0xf5, 0xc1, 0xed, 0x5c, 0x91, 0x36, 0x75, 0xb0, 0xa9, 0x9c, 0x04, 0xdb, 0x0c, 0x8c,
+    0xbf, 0x99, 0x75, 0x13, 0x7e, 0x87, 0x80, 0x4b, 0x71, 0x94, 0xb8, 0x00, 0xa0, 0x7d, 0xb7, 0x53,
+    0xdd, 0x20, 0x63, 0xee, 0xf7, 0x83, 0x41, 0xfe, 0x16, 0xa7, 0x6e, 0xdf, 0x21, 0x7d, 0x76, 0xc0,
+    0x85, 0xd5, 0x65, 0x7f, 0x00, 0x23, 0x57, 0x45, 0x52, 0x02, 0x9d, 0xea, 0x69, 0xac, 0x1f, 0xfd,
+    0x3f, 0x8c, 0x4a, 0xd0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x64, 0xd5, 0xaa, 0xb1, 0xa6, 0x03, 0x18, 0x92, 0x03, 0xaa, 0x31, 0x2e,
+    0x48, 0x4b, 0x65, 0x20, 0x99, 0xcd, 0xc6, 0x0c, 0x15, 0x0c, 0xbf, 0x3e, 0xff, 0x78, 0x95, 0x67,
+    0xb2, 0x74, 0x5b, 0x60, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00,
+};
 
 static void test_RSA(void)
 {
@@ -3102,6 +3171,9 @@ static void test_RSA(void)
     ok(!memcmp(buf, rsaFullPrivateBlob, size), "wrong data\n");
     free(buf);
     BCryptDestroyKey(key);
+
+    ret = BCryptImportKeyPair(alg, NULL, LEGACY_RSAPRIVATE_BLOB, &key, legacy_rsa_key, sizeof(legacy_rsa_key), 0);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
 
     ret = BCryptCloseAlgorithmProvider(alg, 0);
     ok(!ret, "got %#lx\n", ret);
@@ -3550,7 +3622,7 @@ static void test_ECDH(void)
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
 
     status = BCryptGenerateKeyPair(alg, &key, 255, 0);
-    todo_wine ok(status == STATUS_INVALID_PARAMETER, "got %#lx\n", status);
+    ok(status == STATUS_INVALID_PARAMETER, "got %#lx\n", status);
 
     status = BCryptGenerateKeyPair(alg, &key, 0, 0);
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
@@ -3599,6 +3671,20 @@ static void test_ECDH(void)
 
     free( buf );
     BCryptDestroyKey(key2);
+    BCryptDestroyKey(key);
+    BCryptCloseAlgorithmProvider(alg, 0);
+
+    /* Brainpool curve */
+    status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDH_ALGORITHM, NULL, 0);
+    ok(!status, "got %#lx\n", status);
+
+    status = BCryptSetProperty(alg, BCRYPT_ECC_CURVE_NAME, (UCHAR *)BCRYPT_ECC_CURVE_BRAINPOOLP256R1,
+                               sizeof(BCRYPT_ECC_CURVE_BRAINPOOLP256R1), 0 );
+    ok(!status, "got %#lx\n", status);
+
+    status = BCryptGenerateKeyPair(alg, &key, 256, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+
     BCryptDestroyKey(key);
     BCryptCloseAlgorithmProvider(alg, 0);
 }
@@ -3974,9 +4060,9 @@ static void test_BCryptSignHash(void)
     ok(!ret, "got %#lx\n", ret);
 
     ret = BCryptGenerateKeyPair(alg, &key, 256, 0);
-    todo_wine ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
     ret = BCryptGenerateKeyPair(alg, &key, 522, 0);
-    todo_wine ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
 
     ret = BCryptGenerateKeyPair(alg, &key, 521, 0);
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
@@ -4257,7 +4343,7 @@ static void test_DSA(void)
     ok(size == sizeof(*dsablob) + dsablob->cbKey * 3, "got %lu\n", size);
 
     ret = BCryptExportKey(key, NULL, BCRYPT_DSA_PRIVATE_BLOB, buf2, sizeof(buf2), &size, 0);
-    todo_wine ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
+    ok(ret == STATUS_INVALID_PARAMETER, "got %#lx\n", ret);
 
     ret = BCryptVerifySignature(key, NULL, dsaHash, sizeof(dsaHash), dsaSignature, sizeof(dsaSignature), 0);
     ok(!ret, "got %#lx\n", ret);
@@ -4890,6 +4976,40 @@ static void test_PBKDF2(void)
     ok(status == STATUS_SUCCESS, "got %#lx\n", status);
 }
 
+static void test_CHACHA20_POLY1305(void)
+{
+    BCRYPT_ALG_HANDLE alg;
+    NTSTATUS status;
+    ULONG len, size;
+
+    status = BCryptOpenAlgorithmProvider(&alg, BCRYPT_CHACHA20_POLY1305_ALGORITHM, NULL, 0);
+    if (status == STATUS_NOT_FOUND)
+    {
+        win_skip("CHACHA20_POLY1305 not supported\n");
+        return;
+    }
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+
+    len = size = 0;
+    status = BCryptGetProperty(alg, BCRYPT_OBJECT_LENGTH, (UCHAR *)&len, sizeof(len), &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(len, "expected non-zero len\n");
+    ok(size == sizeof(len), "got %lu\n", size);
+
+    len = size = 0;
+    status = BCryptGetProperty(alg, BCRYPT_BLOCK_LENGTH, (UCHAR *)&len, sizeof(len), &size, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+    ok(len == 1, "got %lu\n", len);
+    ok(size == sizeof(len), "got %lu\n", size);
+
+    size = sizeof(BCRYPT_CHAIN_MODE_NA);
+    status = BCryptSetProperty(alg, BCRYPT_CHAINING_MODE, (UCHAR *)BCRYPT_CHAIN_MODE_NA, size, 0);
+    ok(!status, "got %#lx\n", status);
+
+    status = BCryptCloseAlgorithmProvider(alg, 0);
+    ok(status == STATUS_SUCCESS, "got %#lx\n", status);
+}
+
 START_TEST(bcrypt)
 {
     HMODULE module;
@@ -4930,6 +5050,7 @@ START_TEST(bcrypt)
     test_rsa_encrypt();
     test_RC4();
     test_PBKDF2();
+    test_CHACHA20_POLY1305();
 
     FreeLibrary(module);
 }

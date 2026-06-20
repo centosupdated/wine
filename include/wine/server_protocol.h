@@ -1042,16 +1042,30 @@ typedef volatile struct
     data_size_t          name_offset;
     data_size_t          name_len;
     WCHAR                name[MAX_ATOM_LEN];
-    unsigned short       __pad;
+    unsigned short       local;
     struct class_info    info;
     char                 extra[];
 } class_shm_t;
+
+struct window_info
+{
+    lparam_t             id;
+    mod_handle_t         instance;
+    lparam_t             user_data;
+    client_ptr_t         wndproc;
+};
 
 typedef volatile struct
 {
     struct obj_locator   class;
     unsigned int         dpi_context;
+    unsigned int         fnid;
+    unsigned int         ansi;
+    int                  __pad;
     data_size_t          private_size;
+    data_size_t          extra_size;
+    struct window_info   info;
+    char                 extra[];
 } window_shm_t;
 
 typedef volatile union
@@ -3492,8 +3506,8 @@ struct create_window_request
     unsigned int   dpi_context;
     unsigned int   style;
     unsigned int   ex_style;
+    unsigned int   ansi;
     /* VARARG(class,unicode_str); */
-    char __pad_52[4];
 };
 struct create_window_reply
 {
@@ -3501,7 +3515,7 @@ struct create_window_reply
     user_handle_t  handle;
     user_handle_t  parent;
     user_handle_t  owner;
-    int            extra;
+    char __pad_20[4];
     client_ptr_t   class_ptr;
 };
 
@@ -3560,7 +3574,7 @@ struct get_window_info_reply
 {
     struct reply_header __header;
     user_handle_t  last_active;
-    int            is_unicode;
+    char __pad_12[4];
     lparam_t       info;
 };
 
@@ -3572,8 +3586,6 @@ struct init_window_info_request
     user_handle_t  handle;
     unsigned int   style;
     unsigned int   ex_style;
-    short int      is_unicode;
-    char __pad_26[6];
 };
 struct init_window_info_reply
 {
@@ -3589,11 +3601,15 @@ struct set_window_info_request
     int            offset;
     data_size_t    size;
     lparam_t       new_info;
+    unsigned int   new_ansi;
+    unsigned int   internal;
 };
 struct set_window_info_reply
 {
     struct reply_header __header;
     lparam_t       old_info;
+    unsigned int   old_ansi;
+    char __pad_20[4];
 };
 
 
@@ -4529,9 +4545,9 @@ struct get_hook_info_reply
 struct create_class_request
 {
     struct request_header __header;
-    int            local;
     atom_t         atom;
-    char __pad_20[4];
+    unsigned int   fnid;
+    unsigned int   ansi;
     client_ptr_t   client_ptr;
     data_size_t    name_offset;
     /* VARARG(info,class_info); */
@@ -4573,6 +4589,8 @@ struct set_class_info_request
     int            offset;
     data_size_t    size;
     lparam_t       new_info;
+    unsigned int   ansi;
+    char __pad_36[4];
 };
 struct set_class_info_reply
 {
@@ -7130,6 +7148,6 @@ union generic_reply
     struct d3dkmt_mutex_release_reply d3dkmt_mutex_release_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 941
+#define SERVER_PROTOCOL_VERSION 951
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

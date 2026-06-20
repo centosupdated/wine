@@ -46,7 +46,6 @@ SYSTEM_BASIC_INFORMATION system_info;
 typedef struct tagCLASS
 {
     struct list  entry;         /* Entry in class list */
-    BOOL         local;         /* Local class? */
     struct dce  *dce;           /* Opaque pointer to class DCE */
     HICON        icon_internal; /* internal small icon, derived from hIcon */
     const shared_object_t *shared; /* class object in session shared memory */
@@ -69,7 +68,7 @@ static struct builtin_class_descr builtin_classes[] =
     {
         .name = "ScrollBar",
         .style = CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW | CS_PARENTDC,
-        .extra = sizeof(struct scroll_bar_win_data),
+        .extra = sizeof(struct scroll_info *),
         .cursor = IDC_ARROW,
     },
     [NTUSER_WNDPROC_MESSAGE] =
@@ -203,16 +202,10 @@ static WINDOWPROC *find_winproc( WNDPROC func, BOOL ansi )
 static WINDOWPROC *get_winproc_ptr( WNDPROC handle )
 {
     UINT index = LOWORD(handle);
-    if ((ULONG_PTR)handle >> 16 != WINPROC_HANDLE) return NULL;
+    if (handle != MAKE_WNDPROC(index)) return NULL;
     if (index >= MAX_WINPROCS) return WINPROC_PROC16;
     if (index >= winproc_used) return NULL;
     return &winproc_array[index];
-}
-
-/* create a handle for a given window proc */
-static inline WNDPROC proc_to_handle( WINDOWPROC *proc )
-{
-    return (WNDPROC)(ULONG_PTR)((proc - winproc_array) | (WINPROC_HANDLE << 16));
 }
 
 /* allocate and initialize a new winproc */
@@ -234,13 +227,12 @@ static inline WINDOWPROC *alloc_winproc_ptr( WNDPROC func, BOOL ansi )
             proc = &winproc_array[winproc_used++];
             if (ansi) proc->procA = func;
             else proc->procW = func;
-            TRACE_(win)( "allocated %p for %c %p (%d/%d used)\n",
-                         proc_to_handle(proc), ansi ? 'A' : 'W', func,
-                         winproc_used, MAX_WINPROCS );
+            TRACE_(win)( "allocated %p for %c %p (%d/%d used)\n", MAKE_WNDPROC(proc - winproc_array),
+                         ansi ? 'A' : 'W', func, winproc_used, MAX_WINPROCS );
         }
         else WARN_(win)( "too many winprocs, cannot allocate one for %p\n", func );
     }
-    else TRACE_(win)( "reusing %p for %p\n", proc_to_handle(proc), func );
+    else TRACE_(win)( "reusing %p for %p\n", MAKE_WNDPROC(proc - winproc_array), func );
 
     pthread_mutex_unlock( &winproc_lock );
     return proc;
@@ -261,7 +253,7 @@ WNDPROC alloc_winproc( WNDPROC func, BOOL ansi )
 
     if (!(proc = alloc_winproc_ptr( func, ansi ))) return func;
     if (proc == WINPROC_PROC16) return func;
-    return proc_to_handle( proc );
+    return MAKE_WNDPROC(proc - winproc_array);
 }
 
 /* Get a window procedure pointer that can be passed to the Windows program. */
@@ -280,17 +272,6 @@ WNDPROC get_winproc( WNDPROC proc, BOOL ansi )
         if (ptr->procW) return ptr->procW;
         return proc;
     }
-}
-
-/* Return the window procedure type, or the default value if not a winproc handle. */
-BOOL is_winproc_unicode( WNDPROC proc, BOOL def_val )
-{
-    WINDOWPROC *ptr = get_winproc_ptr( proc );
-
-    if (!ptr) return def_val;
-    if (ptr == WINPROC_PROC16) return FALSE;  /* 16-bit is always A */
-    if (ptr->procA && ptr->procW) return def_val;  /* can be both */
-    return ptr->procW != NULL;
 }
 
 void get_winproc_params( struct win_proc_params *params, BOOL fixup_ansi_dst )
@@ -538,6 +519,12 @@ static BOOL class_name_matches( CLASS *class, UNICODE_STRING *name )
     return name->Length == len && !wcsnicmp( class_name, name->Buffer, len / sizeof(WCHAR) );
 }
 
+static BOOL is_local_class( CLASS *class )
+{
+    /* class local flag is safe to read without shared object locking as it is constant */
+    return class->shared->shm.class.local;
+}
+
 static UINT_PTR get_class_instance( CLASS *class )
 {
     struct object_lock lock = OBJECT_LOCK_INIT;
@@ -563,7 +550,7 @@ static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
         UINT_PTR class_instance = get_class_instance( class );
         if (!class_name_matches( class, name )) continue;
         is_win16 = !(class_instance >> 16);
-        if (!instance || !class->local || class_instance == instance ||
+        if (!instance || !is_local_class( class ) || class_instance == instance ||
             (!is_win16 && ((class_instance & ~0xffff) == (instance & ~0xffff))))
         {
             TRACE( "%s %lx -> %p\n", debugstr_us(name), instance, class );
@@ -572,22 +559,6 @@ static CLASS *find_class( HINSTANCE module, UNICODE_STRING *name )
     }
     user_unlock();
     return NULL;
-}
-
-/***********************************************************************
- *           get_class_winproc
- */
-WNDPROC get_class_winproc( CLASS *class )
-{
-    struct object_lock lock = OBJECT_LOCK_INIT;
-    const class_shm_t *class_shm;
-    WNDPROC wndproc = NULL;
-    NTSTATUS status;
-
-    while ((status = get_shared_class( class, &lock, &class_shm )) == STATUS_PENDING)
-        wndproc = wine_server_get_ptr( class_shm->info.wndproc );
-    if (status) return 0;
-    return wndproc;
 }
 
 /***********************************************************************
@@ -614,7 +585,7 @@ struct dce *set_class_dce( CLASS *class, struct dce *dce )
 ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *name, UNICODE_STRING *version,
                                       struct client_menu_name *menu_name, DWORD fnid, DWORD flags, DWORD *wow )
 {
-    const BOOL is_builtin = fnid, ansi = flags;
+    const BOOL ansi = flags;
     const shared_object_t *shared;
     struct obj_locator locator;
     HICON icon_internal;
@@ -625,10 +596,10 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
     BOOL ret;
 
     /* create the desktop window to trigger builtin class registration */
-    if (!is_builtin) get_desktop_window();
+    if (!fnid) get_desktop_window();
 
     if (wc->cbSize != sizeof(*wc) || wc->cbClsExtra < 0 || wc->cbWndExtra < 0 ||
-        (!is_builtin && wc->hInstance == user32_module))  /* we can't register a class for user32 */
+        (!fnid && wc->hInstance == user32_module))  /* we can't register a class for user32 */
     {
          RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
          return 0;
@@ -647,8 +618,6 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
         WARN("Win extra bytes %d is > 40\n", wc->cbWndExtra );
 
     if (!(class = calloc( 1, sizeof(*class) ))) return 0;
-
-    class->local      = !is_builtin && !(wc->style & CS_GLOBALCLASS);
 
     /* Other non-null values must be set by caller */
     icon_internal = wc->hIconSm ? 0 : create_small_icon( wc->hIcon );
@@ -670,9 +639,10 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
             .menu_name  = wine_server_client_ptr( menu_name ),
         };
         wine_server_add_data( req, &info, sizeof(info) );
-        req->local      = class->local;
         req->client_ptr = wine_server_client_ptr( class );
         req->atom       = wine_server_add_atom( req, name );
+        req->fnid       = fnid;
+        req->ansi       = ansi;
         req->name_offset = version->Length / sizeof(WCHAR);
         ret = !wine_server_call_err( req );
         locator = reply->locator;
@@ -695,15 +665,16 @@ ATOM WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_STRING *nam
         goto failed;
     }
 
-    if (class->local) list_add_head( &class_list, &class->entry );
-    else list_add_tail( &class_list, &class->entry );
-
     TRACE( "name=%s->%s atom=%04x wndproc=%p hinst=%p bg=%p style=%08x clsExt=%d winExt=%d class=%p\n",
            debugstr_w(wc->lpszClassName), debugstr_us(name), atom, wc->lpfnWndProc, instance,
            wc->hbrBackground, wc->style, wc->cbClsExtra, wc->cbWndExtra, class );
 
     class->icon_internal = icon_internal;
     class->shared        = shared;
+
+    if (is_local_class( class )) list_add_head( &class_list, &class->entry );
+    else list_add_tail( &class_list, &class->entry );
+
     release_class_ptr( class );
     return atom;
 
@@ -889,6 +860,8 @@ INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
     WCHAR buffer[MAX_ATOM_LEN];
     NTSTATUS status;
     UINT len = 0;
+    ATOM atom;
+    WORD fnid;
     int ret;
 
     TRACE( "%p %x %p\n", hwnd, real, name );
@@ -897,6 +870,13 @@ INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
     {
         RtlSetLastWin32Error( ERROR_INSUFFICIENT_BUFFER );
         return 0;
+    }
+
+    if (real && (fnid = get_window_fnid( hwnd )) && (fnid & 0x7fff) < ARRAY_SIZE(builtin_classes))
+    {
+        get_desktop_window(); /* create the desktop window to trigger builtin class registration */
+        atom = builtin_classes[fnid & 0x7fff].atom;
+        return NtUserGetAtomName( atom, name );
     }
 
     while ((status = get_shared_window_class( hwnd, &lock, &class_shm )) == STATUS_PENDING)
@@ -912,7 +892,7 @@ INT WINAPI NtUserGetClassName( HWND hwnd, BOOL real, UNICODE_STRING *name )
 }
 
 /* Set class info with the wine server. */
-static BOOL set_server_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size, ULONG_PTR *oldval )
+static BOOL server_set_class_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size, ULONG_PTR *oldval, BOOL ansi )
 {
     BOOL ret;
 
@@ -922,6 +902,7 @@ static BOOL set_server_info( HWND hwnd, INT offset, LONG_PTR newval, UINT size, 
         req->offset = offset;
         req->size = size;
         req->new_info = newval;
+        req->ansi = ansi;
         ret = !wine_server_call_err( req );
         *oldval = reply->old_info;
     }
@@ -946,18 +927,18 @@ static ULONG_PTR set_class_long_size( HWND hwnd, INT offset, LONG_PTR newval, UI
     case GCLP_HICONSM:
     case GCLP_HMODULE:
     case GCLP_MENUNAME:
-        set_server_info( hwnd, offset, newval, size, &retval );
+        server_set_class_info( hwnd, offset, newval, size, &retval, ansi );
         break;
     case GCLP_WNDPROC:
         newval = (ULONG_PTR)alloc_winproc( (WNDPROC)newval, ansi );
-        if (!set_server_info( hwnd, offset, newval, size, &retval )) break;
+        if (!server_set_class_info( hwnd, offset, newval, size, &retval, ansi )) break;
         retval = (ULONG_PTR)get_winproc( (WNDPROC)retval, ansi );
         break;
     case GCL_CBCLSEXTRA:  /* cannot change this one */
         RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
         break;
     default:
-        if (offset >= 0) set_server_info( hwnd, offset, newval, size, &retval );
+        if (offset >= 0) server_set_class_info( hwnd, offset, newval, size, &retval, ansi );
         else RtlSetLastWin32Error( ERROR_INVALID_INDEX );
         break;
     }
@@ -1097,9 +1078,10 @@ static void register_builtin( enum ntuser_client_procs proc )
         .style = descr->style,
         .cbWndExtra = descr->extra,
         .hbrBackground = descr->brush,
-        .lpfnWndProc = BUILTIN_WINPROC( proc ),
+        .lpfnWndProc = MAKE_WNDPROC( proc ),
     };
 
+    if (descr->atom) return; /* already registered */
     if (descr->cursor)
         class.hCursor = LoadImageW( 0, (const WCHAR *)descr->cursor, IMAGE_CURSOR,
                                     0, 0, LR_SHARED | LR_DEFAULTSIZE );
@@ -1107,7 +1089,7 @@ static void register_builtin( enum ntuser_client_procs proc )
     asciiz_to_unicode( nameW, descr->name );
     RtlInitUnicodeString( &name, nameW );
 
-    if ((descr->atom = NtUserRegisterClassExWOW( &class, &name, &version, NULL, 1, 0, NULL ))) return;
+    if ((descr->atom = NtUserRegisterClassExWOW( &class, &name, &version, NULL, MAKE_FNID(proc), 0, NULL ))) return;
     if (class.hCursor) NtUserDestroyCursor( class.hCursor, 0 );
 }
 

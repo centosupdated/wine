@@ -174,8 +174,8 @@ static void wayland_win_data_get_config(struct wayland_win_data *data,
         window_state |= WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED;
     }
 
+    conf->resizeable = data->resizeable;
     conf->state = window_state;
-    conf->scale = NtUserGetSystemDpiForProcess(0) / 96.0;
     conf->visible = (style & WS_VISIBLE) == WS_VISIBLE;
     conf->managed = data->managed;
 }
@@ -465,6 +465,7 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
 
     data->rects = *new_rects;
     data->is_fullscreen = fullscreen;
+    data->resizeable = swp_flags & WINE_SWP_RESIZABLE;
     data->managed = managed;
 
     if (!surface)
@@ -620,7 +621,8 @@ static void wayland_configure_window(HWND hwnd)
     if (window_width == 0 || window_height == 0) flags |= SWP_NOSIZE;
 
     style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
-    if (!(state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) != !(style & WS_MAXIMIZE))
+    if (!(state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) != !(style & WS_MAXIMIZE)
+        && !(state & WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN))
         NtUserSetWindowLong(hwnd, GWL_STYLE, style ^ WS_MAXIMIZE, FALSE);
 
     /* The Wayland maximized and fullscreen states are very strict about
@@ -673,9 +675,14 @@ LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWORD flags)
 {
     struct wayland_win_data *data;
+    struct wayland_surface *surface;
 
     if (!(data = wayland_win_data_get(hwnd))) return;
+
+    if ((surface = data->wayland_surface))
+        wayland_surface_set_opacity(surface, alpha, flags);
     data->layered_attribs_set = TRUE;
+
     wayland_win_data_release(data);
 }
 
@@ -727,6 +734,7 @@ void WAYLAND_SetWindowIcons(HWND hwnd, HICON icon, const ICONINFO *ii, HICON ico
 void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
 {
     struct wayland_win_data *data;
+    struct wayland_surface *surface;
     DWORD changed = style->styleNew ^ style->styleOld;
 
     if (hwnd == NtUserGetDesktopWindow()) return;
@@ -734,7 +742,11 @@ void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
 
     /* Changing WS_EX_LAYERED resets attributes */
     if (offset == GWL_EXSTYLE && (changed & WS_EX_LAYERED))
+    {
+        if ((surface = data->wayland_surface))
+            wayland_surface_set_opacity(surface, 0, 0);
         data->layered_attribs_set = FALSE;
+    }
 
     wayland_win_data_release(data);
 }
@@ -806,6 +818,22 @@ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT 
 
     wl_display_flush(process_wayland.wl_display);
     return ret;
+}
+
+/***********************************************************************
+ *          WAYLAND_UpdateLayeredWindow
+ */
+void WAYLAND_UpdateLayeredWindow(HWND hwnd, BYTE alpha, UINT flags)
+{
+    struct wayland_win_data *data;
+    struct wayland_surface *surface;
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+
+    if ((surface = data->wayland_surface))
+        wayland_surface_set_opacity(surface, alpha, flags);
+
+    wayland_win_data_release(data);
 }
 
 void set_client_surface(HWND hwnd, struct wayland_client_surface *new_client)

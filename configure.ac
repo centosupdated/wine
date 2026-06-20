@@ -629,6 +629,7 @@ This is an error since --enable-archs=$wine_arch was requested.])])
       i386) WINE_TRY_PE_CFLAGS([-fno-omit-frame-pointer])
             WINE_TRY_PE_CFLAGS([-mpreferred-stack-boundary=2])
             WINE_TRY_PE_CFLAGS([-mlong-double-64])
+            WINE_TRY_PE_CFLAGS([-msse2])
             WINE_TRY_PE_CFLAGS([-Wl,--disable-stdcall-fixup],
                                [AS_VAR_APPEND([${wine_arch}_LDFLAGS],[" -Wl,--disable-stdcall-fixup"])]) ;;
       x86_64) WINE_TRY_PE_CFLAGS([-Wformat-overflow])
@@ -735,6 +736,7 @@ AC_CHECK_HEADERS(\
 	gettext-po.h \
 	link.h \
 	linux/cdrom.h \
+	linux/errqueue.h \
 	linux/filter.h \
 	linux/fs.h \
 	linux/hdreg.h \
@@ -1219,21 +1221,13 @@ then
     then
         WINE_NOTICE([libvkd3d ${notice_platform}MinGW development files not found (or too old); using bundled version.])
     fi
-
-    WINE_MINGW_PACKAGE_FLAGS(ZLIB,[zlib],[-lz],
-        [WINE_CHECK_MINGW_HEADER(zlib.h,
-            [WINE_CHECK_MINGW_LIB(z,inflate,[:],[ZLIB_PE_CFLAGS=""; ZLIB_PE_LIBS=""],[$ZLIB_PE_LIBS])],
-            [ZLIB_PE_CFLAGS=""; ZLIB_PE_LIBS=""])])
-    if test "x$ZLIB_PE_LIBS" = "x"
-    then
-        WINE_NOTICE([zlib ${notice_platform}MinGW development files not found; using bundled version.])
-    fi
 fi
 
 WINE_EXTLIB_FLAGS(CAPSTONE, capstone, capstone, "-I\$(top_srcdir)/libs/capstone/include")
 WINE_EXTLIB_FLAGS(CXX, c++, "c++ \$(CXXABI_PE_LIBS) msvcp140 vcruntime140")
 WINE_EXTLIB_FLAGS(CXXABI, c++abi, "c++abi \$(UNWIND_PE_LIBS) c++", "-I\$(top_srcdir)/libs/c++abi/include")
 WINE_EXTLIB_FLAGS(FAUDIO, faudio, "faudio mfplat mfreadwrite mfuuid propsys", "-I\$(top_srcdir)/libs/faudio/include")
+WINE_EXTLIB_FLAGS(FFMPEG, ffmpeg, "ffmpeg bcrypt", "-I\$(top_srcdir)/libs/ffmpeg")
 WINE_EXTLIB_FLAGS(FLUIDSYNTH, fluidsynth, "fluidsynth", "-I\$(top_srcdir)/libs/fluidsynth/include")
 WINE_EXTLIB_FLAGS(GSM, gsm, gsm, "-I\$(top_srcdir)/libs/gsm/inc")
 WINE_EXTLIB_FLAGS(ICUCOMMON, icucommon, icucommon, "-I\$(top_srcdir)/libs/icucommon")
@@ -1246,8 +1240,8 @@ WINE_EXTLIB_FLAGS(MPG123, mpg123, mpg123, "-I\$(top_srcdir)/libs/mpg123/src/incl
 WINE_EXTLIB_FLAGS(MUSL, musl, musl)
 WINE_EXTLIB_FLAGS(PNG, png, "png \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/png")
 WINE_EXTLIB_FLAGS(SQLITE3, sqlite3, sqlite3)
+WINE_EXTLIB_FLAGS(SYMCRYPT, symcrypt, symcrypt, "-I\$(top_srcdir)/libs/symcrypt/inc")
 WINE_EXTLIB_FLAGS(TIFF, tiff, "tiff \$(ZLIB_PE_LIBS)", "-I\$(top_srcdir)/libs/tiff/libtiff")
-WINE_EXTLIB_FLAGS(TOMCRYPT, tomcrypt, tomcrypt, "-I\$(top_srcdir)/libs/tomcrypt/src/headers -DLTC_NO_PROTOTYPES -DLTC_SOURCE")
 WINE_EXTLIB_FLAGS(UNWIND, unwind, unwind, "-I\$(top_srcdir)/libs/unwind/include")
 WINE_EXTLIB_FLAGS(VKD3D, vkd3d, vkd3d, "-I\$(top_srcdir)/libs/vkd3d/include")
 WINE_EXTLIB_FLAGS(XML2, xml2, xml2, "-I\$(top_srcdir)/libs/xml2/include -DLIBXML_STATIC")
@@ -1261,6 +1255,14 @@ AS_VAR_IF([with_pthread],[no],[],
 WINE_ERROR_WITH(pthread,[test "x$ac_cv_func_pthread_create" != xyes -a "x$PTHREAD_LIBS" = x],
 [pthread ${notice_platform}development files not found.
 Wine cannot support threads without libpthread.])
+
+dnl **** Check for nasm ****
+
+case " $PE_ARCHS " in
+  *\ i386\ *|*\ x86_64\ *)
+    AC_CHECK_PROGS(NASM,[nasm],[false])
+    test "$NASM" = false || FFMPEG_PE_CFLAGS="$FFMPEG_PE_CFLAGS -DHAVE_NASM" ;;
+esac
 
 dnl **** Check for EGL ****
 
@@ -2715,6 +2717,7 @@ WINE_CONFIG_MAKEFILE(dlls/dsdmo/tests)
 WINE_CONFIG_MAKEFILE(dlls/dsound)
 WINE_CONFIG_MAKEFILE(dlls/dsound/tests)
 WINE_CONFIG_MAKEFILE(dlls/dsquery)
+WINE_CONFIG_MAKEFILE(dlls/dsrole)
 WINE_CONFIG_MAKEFILE(dlls/dssenh)
 WINE_CONFIG_MAKEFILE(dlls/dssenh/tests)
 WINE_CONFIG_MAKEFILE(dlls/dsuiext)
@@ -3217,6 +3220,8 @@ WINE_CONFIG_MAKEFILE(dlls/tdh/tests)
 WINE_CONFIG_MAKEFILE(dlls/tdi.sys)
 WINE_CONFIG_MAKEFILE(dlls/threadpoolwinrt)
 WINE_CONFIG_MAKEFILE(dlls/threadpoolwinrt/tests)
+WINE_CONFIG_MAKEFILE(dlls/thumbcache)
+WINE_CONFIG_MAKEFILE(dlls/thumbcache/tests)
 WINE_CONFIG_MAKEFILE(dlls/toolhelp.dll16)
 WINE_CONFIG_MAKEFILE(dlls/traffic)
 WINE_CONFIG_MAKEFILE(dlls/twain.dll16)
@@ -3523,6 +3528,7 @@ WINE_CONFIG_MAKEFILE(libs/dxerr8)
 WINE_CONFIG_MAKEFILE(libs/dxerr9)
 WINE_CONFIG_MAKEFILE(libs/dxguid)
 WINE_CONFIG_MAKEFILE(libs/faudio)
+WINE_CONFIG_MAKEFILE(libs/ffmpeg)
 WINE_CONFIG_MAKEFILE(libs/fluidsynth)
 WINE_CONFIG_MAKEFILE(libs/gsm)
 WINE_CONFIG_MAKEFILE(libs/icucommon)
@@ -3539,8 +3545,8 @@ WINE_CONFIG_MAKEFILE(libs/sqlite3)
 WINE_CONFIG_MAKEFILE(libs/strmbase)
 WINE_CONFIG_MAKEFILE(libs/strmiids)
 WINE_CONFIG_MAKEFILE(libs/strsafe)
+WINE_CONFIG_MAKEFILE(libs/symcrypt)
 WINE_CONFIG_MAKEFILE(libs/tiff)
-WINE_CONFIG_MAKEFILE(libs/tomcrypt)
 WINE_CONFIG_MAKEFILE(libs/unwind)
 WINE_CONFIG_MAKEFILE(libs/uuid)
 WINE_CONFIG_MAKEFILE(libs/vkd3d)

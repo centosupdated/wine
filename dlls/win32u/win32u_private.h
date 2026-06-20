@@ -229,6 +229,7 @@ extern NTSTATUS d3dkmt_destroy_sync( D3DKMT_HANDLE local );
 /* opengl.c */
 
 extern BOOL get_opengl_gpus( struct list *gpus );
+extern void cleanup_opengl_thread(void);
 
 /* winstation.c */
 
@@ -292,6 +293,7 @@ extern BOOL is_zoomed( HWND hwnd );
 extern BOOL set_window_pixel_format( HWND hwnd, int format, BOOL internal );
 extern int get_window_pixel_format( HWND hwnd );
 extern DWORD get_window_long( HWND hwnd, INT offset );
+extern UINT get_window_fnid( HWND hwnd );
 extern ULONG_PTR get_window_long_ptr( HWND hwnd, INT offset, BOOL ansi );
 extern BOOL get_window_rect( HWND hwnd, RECT *rect, UINT dpi );
 enum coords_relative;
@@ -353,7 +355,6 @@ extern HKEY hkcu_key;
 
 /* driver.c */
 extern const struct user_driver_funcs *user_driver;
-extern struct client_surface *nulldrv_client_surface_create( HWND hwnd );
 
 extern ULONG_PTR zero_bits;
 

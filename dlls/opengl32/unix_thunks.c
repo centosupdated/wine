@@ -58,15 +58,6 @@ static NTSTATUS wgl_wglSetPixelFormat( void *args )
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS wgl_wglShareLists( void *args )
-{
-    struct wglShareLists_params *params = args;
-    const struct opengl_funcs *funcs = get_context_funcs( params->hrcSrvShare );
-    if (!funcs || !funcs->p_wglShareLists) return STATUS_NOT_IMPLEMENTED;
-    params->ret = wrap_wglShareLists( params->teb, params->hrcSrvShare, params->hrcSrvSource );
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS wgl_wglSwapBuffers( void *args )
 {
     struct wglSwapBuffers_params *params = args;
@@ -30376,15 +30367,6 @@ static NTSTATUS ext_wglBindTexImageARB( void *args )
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS ext_wglChoosePixelFormatARB( void *args )
-{
-    struct wglChoosePixelFormatARB_params *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( params->hdc );
-    if (!funcs || !funcs->p_wglChoosePixelFormatARB) return STATUS_NOT_IMPLEMENTED;
-    params->ret = funcs->p_wglChoosePixelFormatARB( params->hdc, params->piAttribIList, params->pfAttribFList, params->nMaxFormats, params->piFormats, params->nNumFormats );
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS ext_wglCreateContextAttribsARB( void *args )
 {
     struct wglCreateContextAttribsARB_params *params = args;
@@ -30427,24 +30409,6 @@ static NTSTATUS ext_wglGetPbufferDCARB( void *args )
     const struct opengl_funcs *funcs = get_pbuffer_funcs( params->hPbuffer );
     if (!funcs || !funcs->p_wglGetPbufferDCARB) return STATUS_NOT_IMPLEMENTED;
     params->ret = funcs->p_wglGetPbufferDCARB( params->hPbuffer );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS ext_wglGetPixelFormatAttribfvARB( void *args )
-{
-    struct wglGetPixelFormatAttribfvARB_params *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( params->hdc );
-    if (!funcs || !funcs->p_wglGetPixelFormatAttribfvARB) return STATUS_NOT_IMPLEMENTED;
-    params->ret = funcs->p_wglGetPixelFormatAttribfvARB( params->hdc, params->iPixelFormat, params->iLayerPlane, params->nAttributes, params->piAttributes, params->pfValues );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS ext_wglGetPixelFormatAttribivARB( void *args )
-{
-    struct wglGetPixelFormatAttribivARB_params *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( params->hdc );
-    if (!funcs || !funcs->p_wglGetPixelFormatAttribivARB) return STATUS_NOT_IMPLEMENTED;
-    params->ret = funcs->p_wglGetPixelFormatAttribivARB( params->hdc, params->iPixelFormat, params->iLayerPlane, params->nAttributes, params->piAttributes, params->piValues );
     return STATUS_SUCCESS;
 }
 
@@ -30564,7 +30528,6 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     wgl_wglDeleteContext,
     wgl_wglGetPixelFormat,
     wgl_wglSetPixelFormat,
-    wgl_wglShareLists,
     wgl_wglSwapBuffers,
     gl_glAccum,
     gl_glAlphaFunc,
@@ -33637,14 +33600,11 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     ext_glWriteMaskEXT,
     ext_wglAllocateMemoryNV,
     ext_wglBindTexImageARB,
-    ext_wglChoosePixelFormatARB,
     ext_wglCreateContextAttribsARB,
     ext_wglCreatePbufferARB,
     ext_wglDestroyPbufferARB,
     ext_wglFreeMemoryNV,
     ext_wglGetPbufferDCARB,
-    ext_wglGetPixelFormatAttribfvARB,
-    ext_wglGetPixelFormatAttribivARB,
     ext_wglGetSwapIntervalEXT,
     ext_wglMakeContextCurrentARB,
     ext_wglQueryCurrentRendererIntegerWINE,
@@ -33726,22 +33686,6 @@ static NTSTATUS wow64_wgl_wglSetPixelFormat( void *args )
     const struct opengl_funcs *funcs = get_dc_funcs( ULongToPtr(params->hdc) );
     if (!funcs || !funcs->p_wglSetPixelFormat) return STATUS_NOT_IMPLEMENTED;
     params->ret = funcs->p_wglSetPixelFormat( ULongToPtr(params->hdc), params->ipfd, ULongToPtr(params->ppfd) );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS wow64_wgl_wglShareLists( void *args )
-{
-    struct
-    {
-        PTR32 teb;
-        PTR32 hrcSrvShare;
-        PTR32 hrcSrvSource;
-        BOOL ret;
-    } *params = args;
-    TEB *teb = get_teb64( params->teb );
-    const struct opengl_funcs *funcs = get_context_funcs( ULongToPtr(params->hrcSrvShare) );
-    if (!funcs || !funcs->p_wglShareLists) return STATUS_NOT_IMPLEMENTED;
-    params->ret = wrap_wglShareLists( teb, ULongToPtr(params->hrcSrvShare), ULongToPtr(params->hrcSrvSource) );
     return STATUS_SUCCESS;
 }
 
@@ -86625,25 +86569,6 @@ static NTSTATUS wow64_ext_wglBindTexImageARB( void *args )
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS wow64_ext_wglChoosePixelFormatARB( void *args )
-{
-    struct
-    {
-        PTR32 teb;
-        PTR32 hdc;
-        PTR32 piAttribIList;
-        PTR32 pfAttribFList;
-        UINT nMaxFormats;
-        PTR32 piFormats;
-        PTR32 nNumFormats;
-        BOOL ret;
-    } *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( ULongToPtr(params->hdc) );
-    if (!funcs || !funcs->p_wglChoosePixelFormatARB) return STATUS_NOT_IMPLEMENTED;
-    params->ret = funcs->p_wglChoosePixelFormatARB( ULongToPtr(params->hdc), ULongToPtr(params->piAttribIList), ULongToPtr(params->pfAttribFList), params->nMaxFormats, ULongToPtr(params->piFormats), ULongToPtr(params->nNumFormats) );
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS wow64_ext_wglCreateContextAttribsARB( void *args )
 {
     struct
@@ -86719,44 +86644,6 @@ static NTSTATUS wow64_ext_wglGetPbufferDCARB( void *args )
     const struct opengl_funcs *funcs = get_pbuffer_funcs( ULongToPtr(params->hPbuffer) );
     if (!funcs || !funcs->p_wglGetPbufferDCARB) return STATUS_NOT_IMPLEMENTED;
     params->ret = (UINT_PTR)funcs->p_wglGetPbufferDCARB( ULongToPtr(params->hPbuffer) );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS wow64_ext_wglGetPixelFormatAttribfvARB( void *args )
-{
-    struct
-    {
-        PTR32 teb;
-        PTR32 hdc;
-        int iPixelFormat;
-        int iLayerPlane;
-        UINT nAttributes;
-        PTR32 piAttributes;
-        PTR32 pfValues;
-        BOOL ret;
-    } *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( ULongToPtr(params->hdc) );
-    if (!funcs || !funcs->p_wglGetPixelFormatAttribfvARB) return STATUS_NOT_IMPLEMENTED;
-    params->ret = funcs->p_wglGetPixelFormatAttribfvARB( ULongToPtr(params->hdc), params->iPixelFormat, params->iLayerPlane, params->nAttributes, ULongToPtr(params->piAttributes), ULongToPtr(params->pfValues) );
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS wow64_ext_wglGetPixelFormatAttribivARB( void *args )
-{
-    struct
-    {
-        PTR32 teb;
-        PTR32 hdc;
-        int iPixelFormat;
-        int iLayerPlane;
-        UINT nAttributes;
-        PTR32 piAttributes;
-        PTR32 piValues;
-        BOOL ret;
-    } *params = args;
-    const struct opengl_funcs *funcs = get_dc_funcs( ULongToPtr(params->hdc) );
-    if (!funcs || !funcs->p_wglGetPixelFormatAttribivARB) return STATUS_NOT_IMPLEMENTED;
-    params->ret = funcs->p_wglGetPixelFormatAttribivARB( ULongToPtr(params->hdc), params->iPixelFormat, params->iLayerPlane, params->nAttributes, ULongToPtr(params->piAttributes), ULongToPtr(params->piValues) );
     return STATUS_SUCCESS;
 }
 
@@ -86957,7 +86844,6 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_wgl_wglDeleteContext,
     wow64_wgl_wglGetPixelFormat,
     wow64_wgl_wglSetPixelFormat,
-    wow64_wgl_wglShareLists,
     wow64_wgl_wglSwapBuffers,
     wow64_gl_glAccum,
     wow64_gl_glAlphaFunc,
@@ -90030,14 +89916,11 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_ext_glWriteMaskEXT,
     wow64_ext_wglAllocateMemoryNV,
     wow64_ext_wglBindTexImageARB,
-    wow64_ext_wglChoosePixelFormatARB,
     wow64_ext_wglCreateContextAttribsARB,
     wow64_ext_wglCreatePbufferARB,
     wow64_ext_wglDestroyPbufferARB,
     wow64_ext_wglFreeMemoryNV,
     wow64_ext_wglGetPbufferDCARB,
-    wow64_ext_wglGetPixelFormatAttribfvARB,
-    wow64_ext_wglGetPixelFormatAttribivARB,
     wow64_ext_wglGetSwapIntervalEXT,
     wow64_ext_wglMakeContextCurrentARB,
     wow64_ext_wglQueryCurrentRendererIntegerWINE,
@@ -90073,11 +89956,6 @@ static int null_wglGetPixelFormat( HDC hdc )
     return 0;
 }
 static BOOL null_wglSetPixelFormat( HDC hdc, int ipfd, const PIXELFORMATDESCRIPTOR *ppfd )
-{
-    WARN( "unsupported\n" );
-    return 0;
-}
-static BOOL null_wglShareLists( HGLRC hrcSrvShare, HGLRC hrcSrvSource )
 {
     WARN( "unsupported\n" );
     return 0;
@@ -91446,7 +91324,6 @@ struct opengl_funcs null_opengl_funcs =
     .p_wglDeleteContext = null_wglDeleteContext,
     .p_wglGetPixelFormat = null_wglGetPixelFormat,
     .p_wglSetPixelFormat = null_wglSetPixelFormat,
-    .p_wglShareLists = null_wglShareLists,
     .p_wglSwapBuffers = null_wglSwapBuffers,
     .p_glAccum = null_glAccum,
     .p_glAlphaFunc = null_glAlphaFunc,
