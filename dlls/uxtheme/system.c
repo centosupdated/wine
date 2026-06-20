@@ -135,6 +135,78 @@ static DWORD query_reg_path (HKEY hKey, LPCWSTR lpszValue,
  *
  * Set the current active theme from the registry
  */
+
+static const WCHAR * const SysColorsNames[] =
+{
+    L"Scrollbar",               /* COLOR_SCROLLBAR */
+    L"Background",              /* COLOR_BACKGROUND */
+    L"ActiveTitle",             /* COLOR_ACTIVECAPTION */
+    L"InactiveTitle",           /* COLOR_INACTIVECAPTION */
+    L"Menu",                    /* COLOR_MENU */
+    L"Window",                  /* COLOR_WINDOW */
+    L"WindowFrame",             /* COLOR_WINDOWFRAME */
+    L"MenuText",                /* COLOR_MENUTEXT */
+    L"WindowText",              /* COLOR_WINDOWTEXT */
+    L"TitleText",               /* COLOR_CAPTIONTEXT */
+    L"ActiveBorder",            /* COLOR_ACTIVEBORDER */
+    L"InactiveBorder",          /* COLOR_INACTIVEBORDER */
+    L"AppWorkSpace",            /* COLOR_APPWORKSPACE */
+    L"Hilight",                 /* COLOR_HIGHLIGHT */
+    L"HilightText",             /* COLOR_HIGHLIGHTTEXT */
+    L"ButtonFace",              /* COLOR_BTNFACE */
+    L"ButtonShadow",            /* COLOR_BTNSHADOW */
+    L"GrayText",                /* COLOR_GRAYTEXT */
+    L"ButtonText",              /* COLOR_BTNTEXT */
+    L"InactiveTitleText",       /* COLOR_INACTIVECAPTIONTEXT */
+    L"ButtonHilight",           /* COLOR_BTNHIGHLIGHT */
+    L"ButtonDkShadow",          /* COLOR_3DDKSHADOW */
+    L"ButtonLight",             /* COLOR_3DLIGHT */
+    L"InfoText",                /* COLOR_INFOTEXT */
+    L"InfoWindow",              /* COLOR_INFOBK */
+    L"ButtonAlternateFace",     /* COLOR_ALTERNATEBTNFACE */
+    L"HotTrackingColor",        /* COLOR_HOTLIGHT */
+    L"GradientActiveTitle",     /* COLOR_GRADIENTACTIVECAPTION */
+    L"GradientInactiveTitle",   /* COLOR_GRADIENTINACTIVECAPTION */
+    L"MenuHilight",             /* COLOR_MENUHILIGHT */
+    L"MenuBar",                 /* COLOR_MENUBAR */
+};
+
+static const WCHAR strColorKey[] = L"Control Panel\\Colors";
+
+#define NUM_SYS_COLORS     (COLOR_MENUBAR+1)
+
+static void update_personalize_from_env(void)
+{
+    WCHAR gtk_theme[128];
+    DWORD dark_mode = 0;
+    HKEY hKey;
+
+    if (GetEnvironmentVariableW(L"GTK_THEME", gtk_theme, ARRAY_SIZE(gtk_theme)) &&
+        (wcsstr(gtk_theme, L"dark") || wcsstr(gtk_theme, L"Dark")))
+    {
+        TRACE("GTK_THEME=%s is dark\n", debugstr_w(gtk_theme));
+        dark_mode = 1;
+    }
+    else
+    {
+        TRACE("GTK_THEME not set or not dark\n");
+    }
+
+    if (!RegCreateKeyW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", &hKey))
+    {
+        DWORD val = dark_mode ? 0 : 1;
+        TRACE("Writing AppsUseLightTheme=%lu, SystemUsesLightTheme=%lu\n", val, val);
+        RegSetValueExW(hKey, L"AppsUseLightTheme", 0, REG_DWORD, (BYTE*)&val, sizeof(val));
+        RegSetValueExW(hKey, L"SystemUsesLightTheme", 0, REG_DWORD, (BYTE*)&val, sizeof(val));
+        RegCloseKey(hKey);
+    }
+    else
+    {
+        TRACE("Failed to create/open Personalize registry key\n");
+    }
+}
+
 static void UXTHEME_LoadTheme(void)
 {
     HKEY hKey;
@@ -142,6 +214,159 @@ static void UXTHEME_LoadTheme(void)
     HRESULT hr;
     WCHAR tmp[10];
     PTHEME_FILE pt;
+    BOOL path_resolved = FALSE;
+    BOOL theme_ignored = FALSE;
+    BOOL theme_file_override = FALSE;
+    BOOL prev_override = FALSE;
+    COLORREF tfc[NUM_SYS_COLORS];
+    int tfi[NUM_SYS_COLORS], tfn = 0;
+
+    update_personalize_from_env();
+
+    /* Read previous .theme file override state */
+    {
+        WCHAR buf[2];
+        DWORD size = sizeof(buf);
+        if (!RegOpenKeyExW(HKEY_CURRENT_USER, szThemeManager, 0, KEY_QUERY_VALUE, &hKey))
+        {
+            if (RegQueryValueExW(hKey, L"ThemeFileOverride", NULL, NULL, (BYTE*)buf, &size))
+                buf[0] = L'0';
+            RegCloseKey(hKey);
+        }
+        else
+        {
+            buf[0] = L'0';
+        }
+        prev_override = (buf[0] == L'1');
+    }
+
+    /* Check for .theme file first (unconditional, takes priority over registry) */
+    {
+        WCHAR buf[2];
+        if (!GetEnvironmentVariableW(L"WINE_IGNORE_GLOBAL_THEME", buf, 2) || buf[0] != L'1')
+        {
+            WCHAR path[MAX_PATH];
+            DWORD len = GetEnvironmentVariableW(L"XDG_CONFIG_HOME", path, MAX_PATH);
+            TRACE("XDG_CONFIG_HOME len=%lu\n", len);
+            if (!len || len >= MAX_PATH)
+            {
+                len = GetEnvironmentVariableW(L"WINE_HOST_HOME", path, MAX_PATH);
+                TRACE("WINE_HOST_HOME len=%lu path=%s\n", len, debugstr_w(path));
+                if (len && len < MAX_PATH) lstrcatW(path, L"/.config");
+            }
+            if (len && len < MAX_PATH)
+            {
+                path_resolved = TRUE;
+                lstrcatW(path, L"/wine/theme.theme");
+                TRACE("Checking for theme file: %s\n", debugstr_w(path));
+                if (GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES)
+                {
+                    int i, r, g, b;
+                    WCHAR keys[4096];
+                    TRACE("Theme file exists\n");
+                    if (GetPrivateProfileStringW(L"Control Panel\\Colors", NULL, NULL, keys, ARRAY_SIZE(keys), path))
+                    {
+                        WCHAR *key = keys;
+                        TRACE("Found keys in theme file\n");
+                        while (*key)
+                        {
+                            WCHAR value[256];
+                            GetPrivateProfileStringW(L"Control Panel\\Colors", key, L"", value, ARRAY_SIZE(value), path);
+                            TRACE("Reading color %s = %s\n", debugstr_w(key), debugstr_w(value));
+                            if (swscanf(value, L"%d %d %d", &r, &g, &b) == 3)
+                            {
+                                for (i = 0; i < NUM_SYS_COLORS; i++)
+                                {
+                                    if (!lstrcmpW(key, SysColorsNames[i]))
+                                    {
+                                        tfi[tfn] = i;
+                                        tfc[tfn++] = RGB(r, g, b);
+                                        break;
+                                    }
+                                }
+                            }
+                            key += lstrlenW(key) + 1;
+                        }
+                        theme_file_override = (tfn > 0);
+                        if (tfn)
+                            TRACE("Stored %d colors from .theme file for override\n", tfn);
+                        else
+                            TRACE("No known SysColors matched in .theme file\n");
+                    }
+                    else
+                    {
+                        TRACE("No keys found in theme file\n");
+                    }
+                    TRACE("XDG theme file processed: %s\n", debugstr_w(path));
+                }
+                else
+                {
+                    TRACE("Theme file not found at %s\n", debugstr_w(path));
+                }
+            }
+            else
+            {
+                TRACE("Could not determine config path\n");
+            }
+        }
+        else
+        {
+            TRACE("WINE_IGNORE_GLOBAL_THEME is set to 1, skipping\n");
+            theme_ignored = TRUE;
+        }
+    }
+
+    /* Persist current override state for next boot */
+    {
+        WCHAR val[2] = { theme_file_override ? L'1' : L'0', 0 };
+        if (!RegCreateKeyW(HKEY_CURRENT_USER, szThemeManager, &hKey))
+        {
+            RegSetValueExW(hKey, L"ThemeFileOverride", 0, REG_SZ, (BYTE*)val, sizeof(val));
+            RegCloseKey(hKey);
+        }
+    }
+
+    if (theme_file_override)
+    {
+        int i, length;
+        WCHAR string[13];
+        HKEY hkey;
+
+        bThemeActive = FALSE;
+        TRACE(".theme file override active, deactivating theme engine\n");
+
+        MSSTYLES_SetActiveTheme(NULL, FALSE);
+
+        if (!RegCreateKeyW(HKEY_CURRENT_USER, szThemeManager, &hKey))
+        {
+            tmp[0] = L'0';
+            tmp[1] = L'\0';
+            RegSetValueExW(hKey, L"ThemeActive", 0, REG_SZ, (const BYTE *)tmp, 2 * sizeof(WCHAR));
+            RegDeleteValueW(hKey, L"ColorName");
+            RegDeleteValueW(hKey, L"SizeName");
+            RegDeleteValueW(hKey, L"DllName");
+            RegDeleteValueW(hKey, L"LoadedBefore");
+            RegCloseKey(hKey);
+        }
+
+        TRACE("Applying %d colors from .theme file\n", tfn);
+        SetSysColors(tfn, tfi, tfc);
+
+        if (!RegCreateKeyExW(HKEY_CURRENT_USER, strColorKey, 0, 0, 0, KEY_ALL_ACCESS, 0, &hkey, 0))
+        {
+            for (i = 0; i < NUM_SYS_COLORS; i++)
+            {
+                COLORREF color = GetSysColor(i);
+                length = swprintf(string, ARRAY_SIZE(string), L"%d %d %d",
+                                  GetRValue(color), GetGValue(color), GetBValue(color));
+                RegSetValueExW(hkey, SysColorsNames[i], 0, REG_SZ, (BYTE *)string,
+                               (length + 1) * sizeof(WCHAR));
+            }
+            RegCloseKey(hkey);
+        }
+
+        return;
+    }
 
     /* Get current theme configuration */
     if(!RegOpenKeyW(HKEY_CURRENT_USER, szThemeManager, &hKey)) {
@@ -184,58 +409,47 @@ static void UXTHEME_LoadTheme(void)
             lstrcpynW(szCurrentColor, pt->pszSelectedColor, ARRAY_SIZE(szCurrentColor));
             lstrcpynW(szCurrentSize, pt->pszSelectedSize, ARRAY_SIZE(szCurrentSize));
 
-            UXTHEME_SetActiveTheme(pt);
+            UXTHEME_SetActiveTheme(pt, prev_override, theme_file_override);
             TRACE("Theme active: %s %s %s\n", debugstr_w(szCurrentTheme),
                 debugstr_w(szCurrentColor), debugstr_w(szCurrentSize));
             MSSTYLES_CloseThemeFile(pt);
         }
     }
     if(!bThemeActive) {
-        MSSTYLES_SetActiveTheme(NULL, FALSE);
-        TRACE("Theming not active\n");
+        if (theme_ignored || path_resolved)
+        {
+            WCHAR default_path[MAX_PATH];
+            DWORD len = GetWindowsDirectoryW(default_path, MAX_PATH);
+            if (len && len < MAX_PATH - 50)
+            {
+                lstrcatW(default_path, L"\\resources\\themes\\aero\\aero.msstyles");
+                if (GetFileAttributesW(default_path) != INVALID_FILE_ATTRIBUTES)
+                {
+                    PTHEME_FILE pt;
+                    HRESULT hr = MSSTYLES_OpenThemeFile(default_path, NULL, NULL, &pt);
+                    if (SUCCEEDED(hr))
+                    {
+                        lstrcpynW(szCurrentTheme, default_path, ARRAY_SIZE(szCurrentTheme));
+                        lstrcpynW(szCurrentColor, pt->pszSelectedColor, ARRAY_SIZE(szCurrentColor));
+                        lstrcpynW(szCurrentSize, pt->pszSelectedSize, ARRAY_SIZE(szCurrentSize));
+                        UXTHEME_SetActiveTheme(pt, prev_override, theme_file_override);
+                        TRACE("Default theme activated: %s\n", debugstr_w(szCurrentTheme));
+                        MSSTYLES_CloseThemeFile(pt);
+                    }
+                }
+            }
+        }
+        if (!bThemeActive)
+        {
+            MSSTYLES_SetActiveTheme(NULL, FALSE);
+            TRACE("Theming not active\n");
+        }
     }
+
+
 }
 
 /***********************************************************************/
-
-static const WCHAR * const SysColorsNames[] =
-{
-    L"Scrollbar",               /* COLOR_SCROLLBAR */
-    L"Background",              /* COLOR_BACKGROUND */
-    L"ActiveTitle",             /* COLOR_ACTIVECAPTION */
-    L"InactiveTitle",           /* COLOR_INACTIVECAPTION */
-    L"Menu",                    /* COLOR_MENU */
-    L"Window",                  /* COLOR_WINDOW */
-    L"WindowFrame",             /* COLOR_WINDOWFRAME */
-    L"MenuText",                /* COLOR_MENUTEXT */
-    L"WindowText",              /* COLOR_WINDOWTEXT */
-    L"TitleText",               /* COLOR_CAPTIONTEXT */
-    L"ActiveBorder",            /* COLOR_ACTIVEBORDER */
-    L"InactiveBorder",          /* COLOR_INACTIVEBORDER */
-    L"AppWorkSpace",            /* COLOR_APPWORKSPACE */
-    L"Hilight",                 /* COLOR_HIGHLIGHT */
-    L"HilightText",             /* COLOR_HIGHLIGHTTEXT */
-    L"ButtonFace",              /* COLOR_BTNFACE */
-    L"ButtonShadow",            /* COLOR_BTNSHADOW */
-    L"GrayText",                /* COLOR_GRAYTEXT */
-    L"ButtonText",              /* COLOR_BTNTEXT */
-    L"InactiveTitleText",       /* COLOR_INACTIVECAPTIONTEXT */
-    L"ButtonHilight",           /* COLOR_BTNHIGHLIGHT */
-    L"ButtonDkShadow",          /* COLOR_3DDKSHADOW */
-    L"ButtonLight",             /* COLOR_3DLIGHT */
-    L"InfoText",                /* COLOR_INFOTEXT */
-    L"InfoWindow",              /* COLOR_INFOBK */
-    L"ButtonAlternateFace",     /* COLOR_ALTERNATEBTNFACE */
-    L"HotTrackingColor",        /* COLOR_HOTLIGHT */
-    L"GradientActiveTitle",     /* COLOR_GRADIENTACTIVECAPTION */
-    L"GradientInactiveTitle",   /* COLOR_GRADIENTINACTIVECAPTION */
-    L"MenuHilight",             /* COLOR_MENUHILIGHT */
-    L"MenuBar",                 /* COLOR_MENUBAR */
-};
-
-static const WCHAR strColorKey[] = L"Control Panel\\Colors";
-
-#define NUM_SYS_COLORS     (COLOR_MENUBAR+1)
 
 struct system_metrics
 {
@@ -366,7 +580,7 @@ static void UXTHEME_SaveUnthemedSystemMetrics(struct system_metrics *metrics)
     }
 }
 
-/* Make system settings persistent, so they're in effect even w/o uxtheme 
+/* Make system settings persistent, so they're in effect even w/o uxtheme
  * loaded.
  * For efficiency reasons, only the last SystemParametersInfoW sets
  * SPIF_SENDWININICHANGE */
@@ -418,7 +632,7 @@ static void UXTHEME_SaveSystemMetrics(struct system_metrics *metrics, BOOL send_
  *
  * Change the current active theme
  */
-HRESULT UXTHEME_SetActiveTheme(PTHEME_FILE tf)
+HRESULT UXTHEME_SetActiveTheme(PTHEME_FILE tf, BOOL prev_override, BOOL override_pending)
 {
     BOOL ret, loaded_before = FALSE, same_theme = FALSE;
     struct system_metrics metrics;
@@ -448,7 +662,7 @@ HRESULT UXTHEME_SetActiveTheme(PTHEME_FILE tf)
                 WARN("Failed to get LoadedBefore: %ld\n", GetLastError());
             RegCloseKey(hKey);
         }
-        if (loaded_before && same_theme)
+        if (loaded_before && same_theme && (prev_override == override_pending))
             return MSSTYLES_SetActiveTheme(tf, FALSE);
 
         if (!loaded_before && ret)
@@ -960,7 +1174,7 @@ HRESULT WINAPI ApplyTheme(HTHEMEFILE hThemeFile, char *unknown, HWND hWnd)
 {
     HRESULT hr;
     TRACE("(%p,%s,%p)\n", hThemeFile, unknown, hWnd);
-    hr = UXTHEME_SetActiveTheme(hThemeFile);
+    hr = UXTHEME_SetActiveTheme(hThemeFile, FALSE, FALSE);
     UXTHEME_broadcast_msg (NULL, WM_THEMECHANGED);
     return hr;
 }
@@ -1268,15 +1482,34 @@ void WINAPI RefreshImmersiveColorPolicyState(void)
  * RETURNS
  *     Whether or not the system should use dark mode.
  */
-BOOLEAN WINAPI ShouldSystemUseDarkMode(void)
+static BOOL check_gtk_theme_dark(void)
+{
+    WCHAR gtk_theme[128];
+    BOOL found = GetEnvironmentVariableW(L"GTK_THEME", gtk_theme, ARRAY_SIZE(gtk_theme));
+    BOOL dark = found && (wcsstr(gtk_theme, L"dark") || wcsstr(gtk_theme, L"Dark"));
+    TRACE("GTK_THEME=%s found=%d dark=%d\n", debugstr_w(gtk_theme), found, dark);
+    return dark;
+}
+
+static BOOL check_light_theme_registry(LPCWSTR value)
 {
     DWORD light_theme = TRUE, light_theme_size = sizeof(light_theme);
-
     RegGetValueW(HKEY_CURRENT_USER,
                  L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                 L"SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &light_theme, &light_theme_size);
+                 value, RRF_RT_REG_DWORD, NULL, &light_theme, &light_theme_size);
+    TRACE("%s=%lu\n", debugstr_w(value), light_theme);
+    return light_theme;
+}
 
-    return !light_theme;
+BOOLEAN WINAPI ShouldSystemUseDarkMode(void)
+{
+    BOOL dark;
+    if (check_gtk_theme_dark())
+        dark = TRUE;
+    else
+        dark = !check_light_theme_registry(L"SystemUsesLightTheme");
+    TRACE("returning %d\n", dark);
+    return dark;
 }
 
 /**********************************************************************
@@ -1287,13 +1520,13 @@ BOOLEAN WINAPI ShouldSystemUseDarkMode(void)
  */
 BOOLEAN WINAPI ShouldAppsUseDarkMode(void)
 {
-    DWORD light_theme = TRUE, light_theme_size = sizeof(light_theme);
-
-    RegGetValueW(HKEY_CURRENT_USER,
-                 L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                 L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &light_theme, &light_theme_size);
-
-    return !light_theme;
+    BOOL dark;
+    if (check_gtk_theme_dark())
+        dark = TRUE;
+    else
+        dark = !check_light_theme_registry(L"AppsUseLightTheme");
+    TRACE("returning %d\n", dark);
+    return dark;
 }
 
 /**********************************************************************
