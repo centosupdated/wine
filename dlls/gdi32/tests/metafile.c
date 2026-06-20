@@ -9553,24 +9553,18 @@ static void test_SetWinMetaFileBits(void)
   diffy = rclBoundsAnisotropic.bottom - GetDeviceCaps(dc, VERTRES) / 2;
   if (diffx < 0) diffx = -diffx;
   if (diffy < 0) diffy = -diffy;
-  todo_wine
-  {
   ok(diffx <= 1 && diffy <= 1,
      "SetWinMetaFileBits (MM_ANISOTROPIC): Reference bounds: The whole device surface must be used (%dx%d), but got (%ldx%ld)\n",
      GetDeviceCaps(dc, HORZRES) / 2, GetDeviceCaps(dc, VERTRES) / 2, rclBoundsAnisotropic.right, rclBoundsAnisotropic.bottom);
-  }
 
   /* Allow 1 mm difference (rounding errors) */
   diffx = rclFrameAnisotropic.right / 100 - GetDeviceCaps(dc, HORZSIZE) / 2;
   diffy = rclFrameAnisotropic.bottom / 100 - GetDeviceCaps(dc, VERTSIZE) / 2;
   if (diffx < 0) diffx = -diffx;
   if (diffy < 0) diffy = -diffy;
-  todo_wine
-  {
   ok(diffx <= 1 && diffy <= 1,
      "SetWinMetaFileBits (MM_ANISOTROPIC): Reference frame: The whole device surface must be used (%dx%d), but got (%ldx%ld)\n",
      GetDeviceCaps(dc, HORZSIZE) / 2, GetDeviceCaps(dc, VERTSIZE) / 2, rclFrameAnisotropic.right / 100, rclFrameAnisotropic.bottom / 100);
-  }
   DeleteDC(dc);
 
   /* If the METAFILEPICT pointer is NULL, the MM_ANISOTROPIC mapping mode and the whole device surface are used */
