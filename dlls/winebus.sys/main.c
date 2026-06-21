@@ -362,6 +362,22 @@ static void make_unique_container_id(struct device_extension *device)
     struct device_extension *ext;
     LARGE_INTEGER ticks;
 
+    /* Interfaces of one composite device share a container id, which on Windows
+     * identifies the physical device. Reuse a sibling's id (same VID/PID and
+     * serial, different interface index) if one was already added. */
+    if (*device->desc.serialnumber)
+    {
+        LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
+            if (ext->desc.vid == device->desc.vid && ext->desc.pid == device->desc.pid &&
+                ext->desc.input != device->desc.input &&
+                !wcscmp(ext->desc.serialnumber, device->desc.serialnumber) &&
+                !IsEqualGUID(&ext->container_id, &GUID_NULL))
+            {
+                device->container_id = ext->container_id;
+                return;
+            }
+    }
+
     LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
         if (IsEqualGUID(&device->container_id, &ext->container_id)) break;
     if (&ext->entry == &device_list && !IsEqualGUID(&device->container_id, &GUID_NULL)) return;
