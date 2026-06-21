@@ -343,6 +343,16 @@ static void make_unique_serial(struct device_extension *device)
         if (!wcscmp(device->desc.serialnumber, ext->desc.serialnumber)) break;
     if (&ext->entry == &device_list && *device->desc.serialnumber) return;
 
+    /* Interfaces of one composite device keep a shared serial number, as on
+     * Windows: the &MI_xx suffix in the device id already disambiguates siblings
+     * (same VID/PID, different interface index), so only genuinely separate
+     * devices need a synthesized unique serial. */
+    if (&ext->entry != &device_list &&
+        ext->desc.vid == device->desc.vid &&
+        ext->desc.pid == device->desc.pid &&
+        ext->desc.input != device->desc.input)
+        return;
+
     swprintf(device->desc.serialnumber, ARRAY_SIZE(device->desc.serialnumber), L"%04x%08x%04x%04x",
              device->index, device->desc.input, device->desc.pid, device->desc.vid);
 }
