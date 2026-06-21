@@ -261,17 +261,36 @@ static WCHAR *get_compatible_ids(DEVICE_OBJECT *device)
 {
     static const WCHAR xinput_compat[] = L"WINEBUS\\WINE_COMP_XINPUT";
     static const WCHAR hid_compat[] = L"WINEBUS\\WINE_COMP_HID";
+    static const WCHAR usb_compat_format[] = L"USB\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD size = sizeof(hid_compat);
+    WCHAR usb_compat[24];
+    DWORD usb_len = 0, size, pos = 0;
     WCHAR *dst;
 
+    /* Advertise a USB compatible id for USB devices, so consumers that read the
+     * USB interface number off the parent's compatible ids (as on Windows) work. */
+    if (ext->desc.bus_type == BUS_TYPE_USB)
+        usb_len = (swprintf(usb_compat, ARRAY_SIZE(usb_compat), usb_compat_format,
+                            ext->desc.vid, ext->desc.pid) + 1) * sizeof(WCHAR);
+
+    size = sizeof(hid_compat) + usb_len;
     if (ext->desc.is_gamepad) size += sizeof(xinput_compat);
 
     if ((dst = ExAllocatePool(PagedPool, size + sizeof(WCHAR))))
     {
-        if (ext->desc.is_gamepad) memcpy(dst, xinput_compat, sizeof(xinput_compat));
-        memcpy((char *)dst + size - sizeof(hid_compat), hid_compat, sizeof(hid_compat));
-        dst[size / sizeof(WCHAR)] = 0;
+        if (ext->desc.is_gamepad)
+        {
+            memcpy(dst + pos, xinput_compat, sizeof(xinput_compat));
+            pos += ARRAY_SIZE(xinput_compat);
+        }
+        memcpy(dst + pos, hid_compat, sizeof(hid_compat));
+        pos += ARRAY_SIZE(hid_compat);
+        if (usb_len)
+        {
+            memcpy(dst + pos, usb_compat, usb_len);
+            pos += usb_len / sizeof(WCHAR);
+        }
+        dst[pos] = 0;
     }
 
     return dst;
