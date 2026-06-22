@@ -1677,6 +1677,91 @@ static HRESULT get_device_interfaces( GUID class, DEVINSTID_W instance, WCHAR **
     }
 }
 
+/*
+ * Native returns joysticks from EnumDevices() based on the time they were
+ * first installed.
+ */
+struct joystick_install_time
+{
+    FILETIME install_time;
+    WCHAR *path;
+};
+
+static int __cdecl joystick_install_time_sort(const void *a, const void *b)
+{
+    const struct joystick_install_time *inst_a = a;
+    const struct joystick_install_time *inst_b = b;
+
+    if (inst_a->install_time.dwHighDateTime != inst_b->install_time.dwHighDateTime)
+        return inst_a->install_time.dwHighDateTime - inst_b->install_time.dwHighDateTime;
+    return inst_a->install_time.dwLowDateTime - inst_b->install_time.dwLowDateTime;
+}
+
+static HRESULT device_interfaces_sort( WCHAR **paths )
+{
+    struct joystick_install_time *times = NULL;
+    WCHAR *path, *paths_sorted = NULL;
+    unsigned int iface_count, i;
+
+    for (iface_count = 0, path = *paths; *path; path = path + wcslen( path ) + 1)
+        iface_count++;
+
+    if (!(times = calloc( iface_count, sizeof(*times) ))) return E_OUTOFMEMORY;
+    for (i = 0, path = *paths; *path; path += wcslen( path ) + 1, i++)
+    {
+        struct joystick_install_time *tmp = &times[i];
+        WCHAR instance_id[MAX_PATH] = { 0 };
+        ULONG size, type;
+        CONFIGRET cr;
+        DEVINST node;
+
+        tmp->path = path;
+        size = sizeof(instance_id);
+        cr = CM_Get_Device_Interface_PropertyW( path, &DEVPKEY_Device_InstanceId, &type, (BYTE *)instance_id, &size, 0 );
+        if (cr)
+        {
+            ERR("Failed to get instance id for iface %s, cr %#lx.\n", debugstr_w(path), cr);
+            continue;
+        }
+
+        cr = CM_Locate_DevNodeW( &node, instance_id, 0 );
+        if (cr)
+        {
+            ERR("Failed to locate devnode for instance %s, cr %#lx.\n", debugstr_w(instance_id), cr);
+            continue;
+        }
+
+        size = sizeof(tmp->install_time);
+        cr = CM_Get_DevNode_PropertyW( node, &DEVPKEY_Device_FirstInstallDate, &type, (BYTE *)&tmp->install_time, &size, 0 );
+        if (cr)
+        {
+            ERR("Failed to get first install date for instance %s, cr %#lx.\n", debugstr_w(instance_id), cr);
+            continue;
+        }
+    }
+
+    qsort( times, iface_count, sizeof(*times), joystick_install_time_sort );
+    if (!(paths_sorted = calloc( (path + 1) - *paths, sizeof(*paths_sorted) )))
+    {
+        free( times );
+        return E_OUTOFMEMORY;
+    }
+
+    for (i = 0, path = paths_sorted; i < iface_count; i++)
+    {
+        struct joystick_install_time *tmp = &times[i];
+
+        wcscpy( path, tmp->path );
+        path += wcslen( tmp->path ) + 1;
+    }
+
+    free( times );
+    free( *paths );
+    *paths = paths_sorted;
+
+    return DI_OK;
+}
+
 static HRESULT get_winexinput_interfaces( const WCHAR *hid_path, WCHAR **paths )
 {
     WCHAR instance_id[MAX_DEVICE_ID_LEN];
@@ -1887,6 +1972,7 @@ HRESULT hid_joystick_refresh_devices(void)
     load_registry_instances( root );
 
     hr = get_device_interfaces( hid, NULL, &paths );
+    if (SUCCEEDED(hr)) hr = device_interfaces_sort( &paths );
     for (WCHAR *path = paths; SUCCEEDED(hr) && *path; path = path + wcslen( path ) + 1)
     {
         DIDEVICEINSTANCEW instance = {.dwSize = sizeof(instance)};
