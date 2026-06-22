@@ -18139,8 +18139,8 @@ static void test_sprite_batches(BOOL d3d11)
             source_rects[1].left, source_rects[1].top,
             source_rects[1].right, source_rects[1].bottom);
 
-    todo_wine ok(!memcmp(&transforms[0], &identity, sizeof(identity)), "Expected identity matrix.\n");
-    todo_wine ok(!memcmp(&transforms[1], &identity, sizeof(identity)), "Expected identity matrix.\n");
+    ok(!memcmp(&transforms[0], &identity, sizeof(identity)), "Expected identity matrix.\n");
+    ok(!memcmp(&transforms[1], &identity, sizeof(identity)), "Expected identity matrix.\n");
 
     hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, NULL, NULL, NULL, sizeof(*test_destination_rect), 0, 0, 0);
     ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
@@ -18339,7 +18339,7 @@ static void test_sprite_batches(BOOL d3d11)
     hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     check = compare_surface(&ctx, "30bf2de6f4f10ae8ebfc61261ad0d0a4abfed094");
-    todo_wine ok(check, "Surface does not match.\n");
+    ok(check, "Surface does not match.\n");
 
 
     ID2D1SpriteBatch_Clear(sprite_batch);
@@ -18371,7 +18371,7 @@ static void test_sprite_batches(BOOL d3d11)
     hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
     check = compare_surface(&ctx, "72d4c7723073eabc2d7d1939b6f41040546b21f7");
-    todo_wine ok(check, "Surface does not match.\n");
+    todo_wine ok(check, "Surface does not match.\n");  // FIXME: Anti Aliasing issue? If instead of skewing I just translate or scale the surface matches.
 
     ID2D1DeviceContext3_SetAntialiasMode(device, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 

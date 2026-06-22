@@ -21,6 +21,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(d2d);
 
+static const D2D1_MATRIX_3X2_F identity =
+{{{
+    1.0f, 0.0f,
+    0.0f, 1.0f,
+    0.0f, 0.0f,
+}}};
+
 static BOOL array_reserve(void **elements, size_t *capacity, size_t count, size_t size)
 {
     unsigned int max_capacity, new_capacity;
@@ -131,9 +138,6 @@ static HRESULT STDMETHODCALLTYPE d2d_sprite_batch_AddSprites(ID2D1SpriteBatch *i
     if (colors)
         FIXME("Color mask not implemented\n");
 
-    if (transforms)
-        FIXME("Transform matrixes not implemented.\n");
-
     array_reserve((void**)&batch->sprites, &batch->sprites_allocated, batch->sprite_count + sprite_count, sizeof(struct d2d_sprite));
 
     for (int i = 0; i < sprite_count; ++i)
@@ -146,6 +150,11 @@ static HRESULT STDMETHODCALLTYPE d2d_sprite_batch_AddSprites(ID2D1SpriteBatch *i
             sprite->source_rectangle = *(D2D1_RECT_U *)(((UCHAR*)source_rectangles) + i * source_rectangles_stride);
         else
             sprite->source_rectangle = (D2D1_RECT_U){0, 0, UINT_MAX, UINT_MAX};
+
+        if (transforms)
+            sprite->transform_matrix = *(D2D1_MATRIX_3X2_F *)(((UCHAR*)transforms) + i * transforms_stride);
+        else
+            sprite->transform_matrix = identity;
     }
 
     batch->sprite_count += sprite_count;
@@ -176,9 +185,6 @@ static HRESULT STDMETHODCALLTYPE d2d_sprite_batch_SetSprites(ID2D1SpriteBatch *i
     if (colors)
         FIXME("Color mask not implemented\n");
 
-    if (transforms)
-        FIXME("Transform matrixes not implemented\n");
-
     for (int i = start_index; i < start_index + sprite_count; ++i)
     {
         sprite = &batch->sprites[i];
@@ -187,6 +193,9 @@ static HRESULT STDMETHODCALLTYPE d2d_sprite_batch_SetSprites(ID2D1SpriteBatch *i
 
         if (source_rectangles)
             sprite->source_rectangle = *(D2D1_RECT_U *)(((UCHAR*)source_rectangles) + i * source_rectangles_stride);
+
+        if (transforms)
+            sprite->transform_matrix = *(D2D1_MATRIX_3X2_F *)(((UCHAR*)transforms) + i * transforms_stride);
     }
 
     return S_OK;
@@ -218,6 +227,8 @@ static HRESULT STDMETHODCALLTYPE d2d_sprite_batch_GetSprites(ID2D1SpriteBatch *i
 
         if (source_rectangles)
             source_rectangles[i] = sprite->source_rectangle;
+        if (transforms)
+            transforms[i] = sprite->transform_matrix;
     }
 
     return S_OK;

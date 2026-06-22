@@ -3066,6 +3066,7 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawSpriteBatch(ID2D1DeviceCont
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
     struct d2d_sprite_batch *sprite_batch_impl = unsafe_impl_from_ID2D1SpriteBatch(sprite_batch);
+    D2D1_MATRIX_3X2_F prev_transform;
     struct d2d_sprite *sprite;
     D2D1_RECT_F source_rect;
 
@@ -3086,16 +3087,23 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawSpriteBatch(ID2D1DeviceCont
     }
     else
     {
+        ID2D1DeviceContext6_GetTransform(iface, &prev_transform);
+
         for (int i = start_index; i < start_index + sprite_count; ++i)
         {
             sprite = &sprite_batch_impl->sprites[i];
 
             convert_rect_u_to_rect_f(&sprite->source_rectangle, &source_rect);
 
+            ID2D1DeviceContext6_SetTransform(iface, &sprite->transform_matrix);
+
             ID2D1DeviceContext6_DrawBitmap(iface, bitmap, &sprite->destination_rectangle, 1.0f, (D2D1_INTERPOLATION_MODE)interpolation_mode,
                                            &source_rect, 0);
         }
+
+        ID2D1DeviceContext6_SetTransform(iface, &prev_transform);
     }
+
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_device_context_CreateSvgGlyphStyle(ID2D1DeviceContext6 *iface,

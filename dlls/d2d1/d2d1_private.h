@@ -464,6 +464,7 @@ struct d2d_sprite
 {
     D2D1_RECT_F destination_rectangle;
     D2D1_RECT_U source_rectangle;
+    D2D1_MATRIX_3X2_F transform_matrix;
 };
 
 struct d2d_sprite_batch
