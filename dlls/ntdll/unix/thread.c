@@ -64,6 +64,7 @@
 
 #ifdef __APPLE__
 #include <mach/mach.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 #ifdef __FreeBSD__
 #include <sys/thr.h>
@@ -1315,6 +1316,24 @@ static NTSTATUS spawn_thread( struct thread_data *data )
     pthread_t pthread_id;
     pthread_attr_t attr;
     NTSTATUS status = STATUS_SUCCESS;
+
+#ifdef __APPLE__
+    if (data->start == CFRunLoopRun)
+    {
+        CFRunLoopSourceContext context = { .perform = (void *)server_init_thread, .info = data };
+        CFRunLoopSourceRef source;
+
+        if (!(source = CFRunLoopSourceCreate( NULL, 0, &context ))) return STATUS_NO_MEMORY;
+
+        InterlockedIncrement( &nb_threads );
+        CFRunLoopAddSource( CFRunLoopGetMain(), source, kCFRunLoopCommonModes );
+        CFRunLoopSourceSignal( source );
+        CFRunLoopWakeUp( CFRunLoopGetMain() );
+        CFRelease( source );
+
+        return STATUS_SUCCESS;
+    }
+#endif /* __APPLE__ */
 
     pthread_sigmask( SIG_BLOCK, &server_block_set, &sigset );
     pthread_attr_init( &attr );

@@ -100,6 +100,14 @@ static void run_cocoa_app(void* info)
     }
 }
 
+void macdrv_init_cocoa_threads(void)
+{
+    /* Make sure Cocoa is in multi-threading mode by detaching a
+       do-nothing thread. */
+    [NSThread detachNewThreadSelector:@selector(self)
+                             toTarget:[NSThread class]
+                           withObject:nil];
+}
 
 /***********************************************************************
  *              macdrv_start_cocoa_app
@@ -119,12 +127,6 @@ int macdrv_start_cocoa_app(unsigned long long tickcount)
     mach_timebase_info_data_t mach_timebase;
     NSDate* timeLimit;
     CFRunLoopSourceContext source_context = { 0 };
-
-    /* Make sure Cocoa is in multi-threading mode by detaching a
-       do-nothing thread. */
-    [NSThread detachNewThreadSelector:@selector(self)
-                             toTarget:[NSThread class]
-                           withObject:nil];
 
     if (!(timeLimit = [NSDate dateWithTimeIntervalSinceNow:5])) return -1;
     if (!(startup_info.lock = [[NSConditionLock alloc] initWithCondition:COCOA_APP_NOT_RUNNING])) return -1;

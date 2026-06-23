@@ -428,6 +428,7 @@ static NTSTATUS macdrv_init(void *arg)
     struct init_params *params = arg;
     SessionAttributeBits attributes;
     OSStatus status;
+    HANDLE thread;
 
     app_icon_callback = params->app_icon_callback;
     app_quit_request_callback = params->app_quit_request_callback;
@@ -441,6 +442,16 @@ static NTSTATUS macdrv_init(void *arg)
     init_win_context();
     setup_options();
     load_strings(params->strings);
+
+    macdrv_init_cocoa_threads();
+
+    /* convert the main thread to a Wine thread */
+    if ((status = PsCreateSystemThread(&thread, THREAD_ALL_ACCESS, NULL, 0, NULL, (void *)CFRunLoopRun, NULL)))
+    {
+        ERR("Failed to spawn main thread, status %#x\n", status);
+        return STATUS_UNSUCCESSFUL;
+    }
+    NtClose(thread);
 
     macdrv_err_on = ERR_ON(macdrv);
     if (macdrv_start_cocoa_app(NtGetTickCount()))
