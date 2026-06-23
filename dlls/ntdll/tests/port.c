@@ -112,7 +112,6 @@ static const WCHAR PORTNAME[] = {'\\','M','y','P','o','r','t',0};
 static UNICODE_STRING port;
 
 /* Function pointers for ntdll calls */
-static HMODULE hntdll = 0;
 static NTSTATUS (WINAPI *pNtCompleteConnectPort)(HANDLE);
 static NTSTATUS (WINAPI *pNtAcceptConnectPort)(PHANDLE,ULONG,PLPC_MESSAGE,ULONG,
                                                PLPC_SECTION_WRITE,PLPC_SECTION_READ);
@@ -131,39 +130,6 @@ static NTSTATUS (WINAPI *pRtlInitUnicodeString)(PUNICODE_STRING,LPCWSTR);
 static BOOL     (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
 static BOOL is_wow64;
-
-static BOOL init_function_ptrs(void)
-{
-    hntdll = LoadLibraryA("ntdll.dll");
-
-    if (!hntdll)
-        return FALSE;
-
-    pNtCompleteConnectPort = (void *)GetProcAddress(hntdll, "NtCompleteConnectPort");
-    pNtAcceptConnectPort = (void *)GetProcAddress(hntdll, "NtAcceptConnectPort");
-    pNtReplyPort = (void *)GetProcAddress(hntdll, "NtReplyPort");
-    pNtReplyWaitReceivePort = (void *)GetProcAddress(hntdll, "NtReplyWaitReceivePort");
-    pNtCreatePort = (void *)GetProcAddress(hntdll, "NtCreatePort");
-    pNtRequestWaitReplyPort = (void *)GetProcAddress(hntdll, "NtRequestWaitReplyPort");
-    pNtRequestPort = (void *)GetProcAddress(hntdll, "NtRequestPort");
-    pNtRegisterThreadTerminatePort = (void *)GetProcAddress(hntdll, "NtRegisterThreadTerminatePort");
-    pNtConnectPort = (void *)GetProcAddress(hntdll, "NtConnectPort");
-    pRtlInitUnicodeString = (void *)GetProcAddress(hntdll, "RtlInitUnicodeString");
-
-    if (!pNtCompleteConnectPort || !pNtAcceptConnectPort ||
-        !pNtReplyWaitReceivePort || !pNtCreatePort || !pNtRequestWaitReplyPort ||
-        !pNtRequestPort || !pNtRegisterThreadTerminatePort ||
-        !pNtConnectPort || !pRtlInitUnicodeString)
-    {
-        todo_wine win_skip("Needed port functions are not available\n");
-        FreeLibrary(hntdll);
-        return FALSE;
-    }
-
-    pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
-    if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
-    return TRUE;
-}
 
 static void ProcessConnectionRequest(union lpc_message *LpcMessage, PHANDLE pAcceptPortHandle)
 {
@@ -184,7 +150,7 @@ static void ProcessConnectionRequest(union lpc_message *LpcMessage, PHANDLE pAcc
 
     status = pNtAcceptConnectPort(pAcceptPortHandle, 0, &LpcMessage->msg, 1, NULL, NULL);
     ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %lx\n", status);
-    
+
     status = pNtCompleteConnectPort(*pAcceptPortHandle);
     ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %lx\n", status);
 }
@@ -372,9 +338,21 @@ START_TEST(port)
     OBJECT_ATTRIBUTES obj;
     HANDLE port_handle;
     NTSTATUS status;
+    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
 
-    if (!init_function_ptrs())
-        return;
+    pNtCompleteConnectPort = (void *)GetProcAddress(hntdll, "NtCompleteConnectPort");
+    pNtAcceptConnectPort = (void *)GetProcAddress(hntdll, "NtAcceptConnectPort");
+    pNtReplyPort = (void *)GetProcAddress(hntdll, "NtReplyPort");
+    pNtReplyWaitReceivePort = (void *)GetProcAddress(hntdll, "NtReplyWaitReceivePort");
+    pNtCreatePort = (void *)GetProcAddress(hntdll, "NtCreatePort");
+    pNtRequestWaitReplyPort = (void *)GetProcAddress(hntdll, "NtRequestWaitReplyPort");
+    pNtRequestPort = (void *)GetProcAddress(hntdll, "NtRequestPort");
+    pNtRegisterThreadTerminatePort = (void *)GetProcAddress(hntdll, "NtRegisterThreadTerminatePort");
+    pNtConnectPort = (void *)GetProcAddress(hntdll, "NtConnectPort");
+    pRtlInitUnicodeString = (void *)GetProcAddress(hntdll, "RtlInitUnicodeString");
+
+    pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
+    if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
 
     pRtlInitUnicodeString(&port, PORTNAME);
 
