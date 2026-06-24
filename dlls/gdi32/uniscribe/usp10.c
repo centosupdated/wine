@@ -3141,6 +3141,7 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
         {
             int idx = i;
             DWORD chInput;
+            WCHAR ch;
 
             if (rtl) idx = cChars - 1 - i;
             if (!cluster)
@@ -3167,10 +3168,20 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
 
                     if (sc->cmap)
                         glyph = OpenType_CMAP_GetGlyphIndex(sc->cmap, chInput);
-                    else if (!hdc)
+                    else
                     {
-                        free(rChars);
-                        return E_PENDING;
+                        if (!hdc)
+                        {
+                            free(rChars);
+                            return E_PENDING;
+                        }
+
+                        ch = chInput;
+                        if (chInput < 0x10000 && NtGdiGetGlyphIndicesW(hdc, &ch, 1, &glyph, 0) == GDI_ERROR)
+                        {
+                            free(rChars);
+                            return S_FALSE;
+                        }
                     }
                     pwOutGlyphs[g] = set_cache_glyph(psc, chInput, glyph);
                 }
