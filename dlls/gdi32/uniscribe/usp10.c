@@ -3167,7 +3167,7 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
 
                     if (sc->cmap)
                         glyph = OpenType_CMAP_GetGlyphIndex(sc->cmap, chInput);
-                    if (!hdc)
+                    else if (!hdc)
                     {
                         free(rChars);
                         return E_PENDING;
