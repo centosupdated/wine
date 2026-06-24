@@ -2294,6 +2294,17 @@ static BOOL wow64_unmap_buffer( TEB *teb, struct buffer *buffer )
         unmap_vk_buffer( buffer );
     }
 
+    if (buffer->pinned)
+    {
+        if (!buffer->map_ptr)
+        {
+            set_gl_error( teb, GL_INVALID_OPERATION );
+            return FALSE;
+        }
+        buffer->map_ptr = NULL;
+        return TRUE;
+    }
+
     if (buffer->copy_length)
     {
         TRACE( "Copying %#zx from wow64 buffer %p to buffer %p\n", buffer->copy_length,
