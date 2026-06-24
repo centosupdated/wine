@@ -638,19 +638,15 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
         }
         TRACE("Window is too large for Wayland state, using subregion\n");
     }
-    else
-    {
-        OffsetRect(&rect, -rect.left, -rect.top);
-    }
 
     TRACE("hwnd=%p geometry=%s\n", surface->hwnd, wine_dbgstr_rect(&rect));
 
     if (!IsRectEmpty(&rect))
     {
         int width = rect.right - rect.left, height = rect.bottom - rect.top;
-        xdg_surface_set_window_geometry(surface->xdg_surface,
-                                        rect.left, rect.top,
-                                        width, height);
+
+        xdg_surface_set_window_geometry(surface->xdg_surface, 0, 0, width, height);
+
         if (surface->window.resizeable)
         {
             xdg_toplevel_set_min_size(surface->xdg_toplevel, 0, 0);
