@@ -2374,10 +2374,12 @@ void wow64_glBufferAttachMemoryNV( TEB *teb, GLenum target, GLuint memory, GLuin
 void wow64_glBufferData( TEB *teb, GLenum target, GLsizeiptr size, const void *data, GLenum usage, PFN_glBufferData p_glBufferData )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    struct buffer *buffer;
+    struct buffer *buffer, *previous;
 
-    if ((buffer = set_target_buffer_storage( teb, target, NULL ))) free_buffer( funcs, buffer );
-    p_glBufferData( target, size, data, usage );
+    buffer = size >= 0x1000 ? create_buffer_storage( teb, target, 0, size, data, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT ) : NULL;
+    previous = set_target_buffer_storage( teb, target, buffer );
+    if (use_driver_buffer_map( buffer )) p_glBufferData( target, size, data, usage );
+    if (previous) free_buffer( funcs, previous );
 }
 
 void wow64_glBufferStorageMemEXT( TEB *teb, GLenum target, GLsizeiptr size, GLuint memory, GLuint64 offset, PFN_glBufferStorageMemEXT p_glBufferStorageMemEXT )
