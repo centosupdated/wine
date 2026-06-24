@@ -122,7 +122,6 @@ struct context
     UINT64 debug_user;             /* client pointer */
     GLubyte *extensions;           /* extension string */
     char *wow64_version;           /* wow64 GL version override */
-    BOOL use_pinned_memory;        /* use GL_AMD_pinned_memory to emulate persistent maps */
 
     /* semi-stub state tracker for wglCopyContext */
     GLbitfield used;                            /* context state used bits */
@@ -1047,8 +1046,7 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
         TRACE( "-- %s (disabled by config)\n", all_extensions[i].name );
     }
 
-    if (is_win64 && is_wow64() && !initialize_vk_device( teb, ctx )
-        && !(ctx->use_pinned_memory = client->extensions[GL_AMD_pinned_memory]))
+    if (is_win64 && is_wow64() && !initialize_vk_device( teb, ctx ) && !client->extensions[GL_AMD_pinned_memory])
     {
         if (client->major_version > 4 || (client->major_version == 4 && client->minor_version > 3))
         {
@@ -1951,6 +1949,7 @@ static BOOL init_buffer_storage_vulkan( struct buffer *buffer, TEB *teb, GLenum 
     int fd, memory_type;
     VkResult vr;
 
+    if (!(flags & GL_MAP_PERSISTENT_BIT)) return FALSE;
     if ((!(vk_device = buffers.vk_device) || !vk_device->vk_device)) return FALSE;
 
     if (flags & GL_CLIENT_STORAGE_BIT) desired_type &= ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
@@ -2004,9 +2003,10 @@ failed:
 static BOOL init_buffer_storage_pinned( struct buffer *buffer, TEB *teb, GLenum target, GLuint name, size_t size, const void *data, GLbitfield flags )
 {
     struct context *ctx = get_current_context( teb, NULL, NULL );
+    struct opengl_client_context *client = opengl_client_context_from_client( ctx->base.client_context );
     struct opengl_funcs *funcs = teb->glTable;
 
-    if (!ctx->use_pinned_memory) return FALSE;
+    if (!client->extensions[GL_AMD_pinned_memory]) return FALSE;
     if (!buffer_vm_alloc( teb, buffer, size )) return FALSE;
     if (data) memcpy( buffer->vm_ptr, data, size );
     buffer->pinned = TRUE;
@@ -2022,6 +2022,15 @@ static BOOL init_buffer_storage_pinned( struct buffer *buffer, TEB *teb, GLenum 
     return TRUE;
 }
 
+static BOOL init_buffer_storage( struct buffer *buffer, TEB *teb, GLenum target, GLuint name, size_t size, const void *data, GLbitfield flags )
+{
+    if (!buffer_vm_alloc( teb, buffer, size )) return FALSE;
+    if (data) memcpy( buffer->vm_ptr, data, size );
+
+    TRACE( "created buffer %p with virtual memory %p\n", buffer, buffer->vm_ptr );
+    return TRUE;
+}
+
 static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint name, GLint size, const void *data, GLbitfield flags )
 {
     GLuint buffer_name = name ? name : get_target_name( teb, target );
@@ -2034,6 +2043,7 @@ static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint nam
 
     if (init_buffer_storage_vulkan( buffer, teb, target, name, size, data, flags )) return buffer;
     if (init_buffer_storage_pinned( buffer, teb, target, name, size, data, flags )) return buffer;
+    if (init_buffer_storage( buffer, teb, target, name, size, data, flags )) return buffer;
 
     if (buffer->vm_ptr) NtFreeVirtualMemory( GetCurrentProcess(), &buffer->vm_ptr, &buffer->vm_size, MEM_RELEASE );
     free( buffer );
@@ -2180,9 +2190,9 @@ void wow64_glBufferStorage( TEB *teb, GLenum target, GLsizeiptr size, const void
                             GLbitfield flags, PFN_glBufferStorage p_glBufferStorage )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    struct buffer *buffer = NULL, *previous;
+    struct buffer *buffer, *previous;
 
-    if (flags & GL_MAP_PERSISTENT_BIT) buffer = create_buffer_storage( teb, target, 0, size, data, flags );
+    buffer = create_buffer_storage( teb, target, 0, size, data, flags );
     previous = set_target_buffer_storage( teb, target, buffer );
     if (!buffer) p_glBufferStorage( target, size, data, flags );
     if (previous) free_buffer( funcs, previous );
@@ -2192,9 +2202,9 @@ void wow64_glNamedBufferStorage( TEB *teb, GLuint name, GLsizeiptr size, const v
                                  GLbitfield flags, PFN_glNamedBufferStorage p_glNamedBufferStorage )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    struct buffer *buffer = NULL, *previous;
+    struct buffer *buffer, *previous;
 
-    if (flags & GL_MAP_PERSISTENT_BIT) buffer = create_buffer_storage( teb, 0, name, size, data, flags );
+    buffer = create_buffer_storage( teb, 0, name, size, data, flags );
     previous = set_named_buffer_storage( teb, name, buffer );
     if (!buffer) p_glNamedBufferStorage( name, size, data, flags );
     if (previous) free_buffer( funcs, previous );
