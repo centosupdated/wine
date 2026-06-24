@@ -1025,7 +1025,7 @@ HRESULT WINAPI ScriptFreeCache(SCRIPT_CACHE *psc)
         }
         free(sc->GSUB_Table);
         free(sc->GDEF_Table);
-        free(sc->CMAP_Table);
+        OpenType_CMAP_Free(sc->cmap);
         free(sc->GPOS_Table);
         for (n = 0; n < sc->script_count; n++)
         {
@@ -3160,16 +3160,15 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
                 }
                 if (!(pwOutGlyphs[g] = get_cache_glyph(psc, chInput)))
                 {
-                    WORD glyph;
+                    ScriptCache *sc = (ScriptCache *)*psc;
+                    WORD glyph = 0;
+
+                    if (sc->cmap)
+                        glyph = OpenType_CMAP_GetGlyphIndex(sc->cmap, chInput);
                     if (!hdc)
                     {
                         free(rChars);
                         return E_PENDING;
-                    }
-                    if (OpenType_CMAP_GetGlyphIndex(hdc, (ScriptCache *)*psc, chInput, &glyph, 0) == GDI_ERROR)
-                    {
-                        free(rChars);
-                        return S_FALSE;
                     }
                     pwOutGlyphs[g] = set_cache_glyph(psc, chInput, glyph);
                 }

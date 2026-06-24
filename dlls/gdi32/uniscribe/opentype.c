@@ -92,13 +92,37 @@ typedef struct {
 } CMAP_SegmentedCoverage_group;
 
 typedef struct {
-    WORD format;
-    WORD reserved;
-    DWORD length;
-    DWORD language;
-    DWORD nGroups;
-    CMAP_SegmentedCoverage_group groups[1];
-} CMAP_SegmentedCoverage;
+    const CMAP_Table *cmap;
+    DWORD ch;
+} CMAP_Format4CompareContext;
+
+typedef WORD (*p_CMAP_get_glyph_func)(const CMAP_Table *cmap, DWORD ch);
+
+struct CMAP_Table
+{
+    const void *data;
+    union
+    {
+        struct
+        {
+            unsigned int segCount;
+            unsigned int glyphIdArrayLen;
+
+            const WORD *endCode;
+            const WORD *startCode;
+            const WORD *idDelta;
+            const WORD *idRangeOffset;
+            const WORD *glyphIdArray;
+        } format4;
+        struct
+        {
+            DWORD nGroups;
+        } format12;
+    } u;
+    p_CMAP_get_glyph_func get_glyph;
+    unsigned short symbol : 1;
+    void *table_context;
+};
 
 /* These are all structures needed for the GDEF table */
 enum {BaseGlyph=1, LigatureGlyph, MarkGlyph, ComponentGlyph};
@@ -623,41 +647,57 @@ typedef struct {
  * CMAP
  **********/
 
-static VOID *load_CMAP_format12_table(HDC hdc, ScriptCache *psc)
+enum CMAP_WIN_ENCODING_ID
 {
-    CMAP_Header *CMAP_Table = NULL;
-    int length;
-    int i;
+    CMAP_WIN_ENCODING_SYMBOL = 0,
+    CMAP_WIN_ENCODING_UNICODE_BMP = 1,
+    CMAP_WIN_ENCODING_UNICODE_FULL = 10,
+};
 
-    if (!psc->CMAP_Table)
-    {
-        length = NtGdiGetFontData(hdc, CMAP_TAG , 0, NULL, 0);
-        if (length != GDI_ERROR)
-        {
-            psc->CMAP_Table = malloc(length);
-            NtGdiGetFontData(hdc, CMAP_TAG , 0, psc->CMAP_Table, length);
-            TRACE("Loaded cmap table of %i bytes\n",length);
-        }
-        else
-            return NULL;
-    }
+enum CMAP_UNI_ENCODING_ID
+{
+    CMAP_UNI_ENCODING_2_0_PLUS_BMP = 3,
+    CMAP_UNI_ENCODING_2_0_PLUS_FULL = 4,
+    CMAP_UNI_ENCODING_FULL = 6,
+};
 
-    CMAP_Table = psc->CMAP_Table;
+enum CMAP_PLATFORM_ID
+{
+    CMAP_PLATFORM_UNICODE = 0,
+    CMAP_PLATFORM_WIN = 3,
+};
 
-    for (i = 0; i < GET_BE_WORD(CMAP_Table->numTables); i++)
-    {
-        if ( (GET_BE_WORD(CMAP_Table->tables[i].platformID) == 3) &&
-             (GET_BE_WORD(CMAP_Table->tables[i].encodingID) == 10) )
-        {
-            CMAP_SegmentedCoverage *format = (CMAP_SegmentedCoverage*)(((BYTE*)CMAP_Table) + GET_BE_DWORD(CMAP_Table->tables[i].offset));
-            if (GET_BE_WORD(format->format) == 12)
-                return format;
-        }
-    }
-    return NULL;
+static int __cdecl CMAP_encoding_compare(const void *a, const void *b)
+{
+    const CMAP_EncodingRecord *key = a;
+    const CMAP_EncodingRecord *record = b;
+    WORD platformID = GET_BE_WORD(record->platformID);
+    WORD encodingID = GET_BE_WORD(record->encodingID);
+
+    if (key->platformID < platformID) return -1;
+    if (key->platformID > platformID) return 1;
+    if (key->encodingID < encodingID) return -1;
+    if (key->encodingID > encodingID) return 1;
+    return 0;
 }
 
-static int __cdecl compare_group(const void *a, const void* b)
+static int __cdecl CMAP_format4_compare_range(const void *a, const void *b)
+{
+    const CMAP_Format4CompareContext *key = a;
+    const WORD *end = b;
+    unsigned int idx;
+
+    if (key->ch > GET_BE_WORD(*end))
+        return 1;
+
+    idx = end - key->cmap->u.format4.endCode;
+    if (key->ch < GET_BE_WORD(key->cmap->u.format4.startCode[idx]))
+        return -1;
+
+    return 0;
+}
+
+static int __cdecl CMAP_format12_compare_group(const void *a, const void* b)
 {
     const DWORD *chr = a;
     const CMAP_SegmentedCoverage_group *group = b;
@@ -669,41 +709,176 @@ static int __cdecl compare_group(const void *a, const void* b)
     return 0;
 }
 
-DWORD OpenType_CMAP_GetGlyphIndex(HDC hdc, ScriptCache *psc, DWORD utf32c, WORD *glyph_index, DWORD flags)
+static WORD CMAP_format4_get_glyph_index(const CMAP_Table *cmap, DWORD ch)
 {
-    /* BMP: use gdi32 for ease */
-    if (utf32c < 0x10000)
-    {
-        WCHAR ch = utf32c;
-        return NtGdiGetGlyphIndicesW(hdc, &ch, 1, glyph_index, flags);
-    }
+    CMAP_Format4CompareContext key = { cmap, ch };
+    unsigned int glyph, idx, range_offset;
+    const WORD *end_found;
 
-    if (!psc->CMAP_format12_Table)
-        psc->CMAP_format12_Table = load_CMAP_format12_table(hdc, psc);
+    end_found = bsearch(&key, cmap->u.format4.endCode, cmap->u.format4.segCount, sizeof(*cmap->u.format4.endCode), CMAP_format4_compare_range);
+    if (!end_found)
+        return 0;
 
-    if (flags & GGI_MARK_NONEXISTING_GLYPHS)
-        *glyph_index = 0xffffu;
+    idx = end_found - cmap->u.format4.endCode;
+
+    range_offset = GET_BE_WORD(cmap->u.format4.idRangeOffset[idx]);
+
+    if (!range_offset)
+        glyph = ch + GET_BE_WORD(cmap->u.format4.idDelta[idx]);
     else
-        *glyph_index = 0u;
-
-    if (psc->CMAP_format12_Table)
     {
-        CMAP_SegmentedCoverage *format = NULL;
-        CMAP_SegmentedCoverage_group *group = NULL;
-
-        format = (CMAP_SegmentedCoverage *)psc->CMAP_format12_Table;
-
-        group = bsearch(&utf32c, format->groups, GET_BE_DWORD(format->nGroups),
-                        sizeof(CMAP_SegmentedCoverage_group), compare_group);
-
-        if (group)
-        {
-            DWORD offset = utf32c - GET_BE_DWORD(group->startCharCode);
-            *glyph_index = GET_BE_DWORD(group->startGlyphID) + offset;
+        unsigned int index = range_offset / 2 + (ch - GET_BE_WORD(cmap->u.format4.startCode[idx])) + idx - cmap->u.format4.segCount;
+        if (index >= cmap->u.format4.glyphIdArrayLen)
             return 0;
-        }
+        glyph = GET_BE_WORD(cmap->u.format4.glyphIdArray[index]);
+        if (!glyph)
+            return 0;
+        glyph += GET_BE_WORD(cmap->u.format4.idDelta[idx]);
     }
-    return 0;
+
+    return glyph & 0xffff;
+}
+
+static WORD CMAP_format12_get_glyph_index(const CMAP_Table *cmap, DWORD ch)
+{
+    const DWORD *groups = cmap->data;
+    const CMAP_SegmentedCoverage_group *group = NULL;
+
+    if (!(group = bsearch(&ch, groups, GET_BE_DWORD(cmap->u.format12.nGroups),
+                          sizeof(CMAP_SegmentedCoverage_group), CMAP_format12_compare_group)))
+        return 0;
+
+    return GET_BE_DWORD(group->startCharCode) <= GET_BE_DWORD(group->endCharCode) ?
+        GET_BE_DWORD(group->startGlyphID) + (ch - GET_BE_DWORD(group->startCharCode)) : 0;
+}
+
+CMAP_Table *OpenType_CMAP_Alloc(HDC hdc)
+{
+    static const CMAP_EncodingRecord encodings[] =
+        {
+            { CMAP_PLATFORM_WIN, CMAP_WIN_ENCODING_SYMBOL },
+            { CMAP_PLATFORM_WIN, CMAP_WIN_ENCODING_UNICODE_FULL },
+            { CMAP_PLATFORM_UNICODE, CMAP_UNI_ENCODING_FULL },
+            { CMAP_PLATFORM_UNICODE, CMAP_UNI_ENCODING_2_0_PLUS_FULL },
+            { CMAP_PLATFORM_WIN, CMAP_WIN_ENCODING_UNICODE_BMP },
+            { CMAP_PLATFORM_UNICODE, CMAP_UNI_ENCODING_2_0_PLUS_BMP },
+        };
+    CMAP_Table *cmap = calloc(1, sizeof(CMAP_Table));
+    unsigned int length;
+    const CMAP_Header *header;
+    const CMAP_EncodingRecord *record = NULL;
+    DWORD offset;
+    WORD numTables;
+    WORD format;
+    int i;
+
+    if (!cmap) return NULL;
+
+    length = NtGdiGetFontData(hdc, CMAP_TAG, 0, NULL, 0);
+    if (length == GDI_ERROR) goto failed;
+
+    cmap->table_context = malloc(length);
+    if (!cmap->table_context) goto failed;
+
+    if (NtGdiGetFontData(hdc, CMAP_TAG, 0, cmap->table_context, length) == GDI_ERROR) goto failed;
+
+    header = cmap->table_context;
+    if (length < 4) goto failed;
+
+    numTables = GET_BE_WORD(header->numTables);
+    if (length < 4 + numTables * sizeof(CMAP_EncodingRecord)) goto failed;
+
+    for (i = 0; i < ARRAY_SIZE(encodings); ++i)
+    {
+        if ((record = bsearch(&encodings[i], header->tables, numTables, sizeof(*header->tables), CMAP_encoding_compare)))
+            break;
+    }
+
+    if (!record) goto failed;
+
+    cmap->symbol = (GET_BE_WORD(record->platformID) == CMAP_PLATFORM_WIN && GET_BE_WORD(record->encodingID) == CMAP_WIN_ENCODING_SYMBOL);
+
+    offset = GET_BE_DWORD(record->offset);
+    if (offset + 2 > length) goto failed;
+
+    format = GET_BE_WORD(*(const WORD *)((const BYTE *)header + offset));
+
+    switch (format)
+    {
+        case 4:
+        {
+            const BYTE *subtable;
+            WORD subtable_len, segCount;
+
+            if (offset + 8 > length) goto failed;
+
+            subtable = (const BYTE *)header + offset;
+            subtable_len = GET_BE_WORD(*(const WORD *)(subtable + 2));
+            segCount = GET_BE_WORD(*(const WORD *)(subtable + 6)) / 2;
+
+            if (offset + subtable_len > length || 16 + 8 * segCount > subtable_len) goto failed;
+
+            cmap->u.format4.segCount = segCount;
+            cmap->u.format4.endCode = (const WORD *)(subtable + 14);
+            cmap->u.format4.startCode = cmap->u.format4.endCode + segCount + 1;
+            cmap->u.format4.idDelta = cmap->u.format4.startCode + segCount;
+            cmap->u.format4.idRangeOffset = cmap->u.format4.idDelta + segCount;
+            cmap->u.format4.glyphIdArray = cmap->u.format4.idRangeOffset + segCount;
+            cmap->u.format4.glyphIdArrayLen = (subtable_len - 16 - 8 * segCount) / 2;
+            cmap->get_glyph = CMAP_format4_get_glyph_index;
+            cmap->data = cmap->u.format4.glyphIdArray;
+            break;
+        }
+        case 12:
+        {
+            const BYTE *subtable;
+            DWORD subtable_len, nGroups;
+
+            if (offset + 16 > length) goto failed;
+
+            subtable = (const BYTE *)header + offset;
+            subtable_len = GET_BE_DWORD(*(const DWORD *)(subtable + 4));
+            nGroups = GET_BE_DWORD(*(const DWORD *)(subtable + 12));
+
+            if (offset + subtable_len > length || 16 + nGroups * 12 > subtable_len) goto failed;
+
+            cmap->u.format12.nGroups = nGroups;
+            cmap->data = subtable + 16;
+            cmap->get_glyph = CMAP_format12_get_glyph_index;
+            break;
+        }
+        default:
+            WARN("Unhandled subtable format %u.\n", format);
+    }
+    return cmap;
+
+failed:
+    if (cmap)
+    {
+        free(cmap->table_context);
+        free(cmap);
+    }
+    return NULL;
+}
+
+void OpenType_CMAP_Free(CMAP_Table *cmap)
+{
+    if (cmap)
+    {
+        free(cmap->table_context);
+        free(cmap);
+    }
+}
+
+WORD OpenType_CMAP_GetGlyphIndex(CMAP_Table *cmap, DWORD utf32c)
+{
+    WORD glyph;
+
+    if (!cmap || !cmap->get_glyph) return 0;
+    glyph = cmap->get_glyph(cmap, utf32c);
+    if (!glyph && cmap->symbol && utf32c <= 0xff)
+        glyph = cmap->get_glyph(cmap, utf32c + 0xf000);
+    return glyph;
 }
 
 /**********
