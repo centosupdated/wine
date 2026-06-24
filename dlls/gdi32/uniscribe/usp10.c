@@ -822,6 +822,8 @@ static HRESULT init_script_cache(const HDC hdc, SCRIPT_CACHE *psc)
         GetOutlineTextMetricsW(hdc, size, sc->otm);
     }
     sc->sfnt = (NtGdiGetFontData(hdc, MS_MAKE_TAG('h','e','a','d'), 0, NULL, 0) != GDI_ERROR);
+    if (sc->sfnt)
+        sc->cmap = OpenType_CMAP_Alloc(hdc);
     if (!set_cache_font_properties(hdc, sc))
     {
         free(sc);
