@@ -187,7 +187,7 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
                (!(exstyle & WS_EX_LAYERED) || data->layered_attribs_set);
 
     if (!visible) role = WAYLAND_SURFACE_ROLE_NONE;
-    else if (owner_surface) role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
+    else if (owner_surface) role = WAYLAND_SURFACE_ROLE_POPUP;
     else role = WAYLAND_SURFACE_ROLE_TOPLEVEL;
 
     /* we can temporarily clear the role of a surface but cannot assign a different one after it's set */
@@ -211,6 +211,8 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     wl_surface_set_input_region(surface->wl_surface, input_region);
     if (input_region) wl_region_destroy(input_region);
 
+    wayland_win_data_get_config(data, &surface->window);
+
     /* If the window is a visible toplevel make it a wayland
      * xdg_toplevel. Otherwise keep it role-less to avoid polluting the
      * compositor with empty xdg_toplevels. */
@@ -222,12 +224,10 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     case WAYLAND_SURFACE_ROLE_TOPLEVEL:
         wayland_surface_make_toplevel(surface);
         break;
-    case WAYLAND_SURFACE_ROLE_SUBSURFACE:
-        wayland_surface_make_subsurface(surface, owner_surface);
+    case WAYLAND_SURFACE_ROLE_POPUP:
+        wayland_surface_make_popup(surface, owner_surface);
         break;
     }
-
-    wayland_win_data_get_config(data, &surface->window);
 
     /* Size/position changes affect the effective pointer constraint, so update
      * it as needed. */
@@ -238,8 +238,9 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     return TRUE;
 }
 
-static void wayland_surface_update_state_toplevel(struct wayland_surface *surface)
+static void wayland_win_data_update_wayland_state(struct wayland_win_data *data)
 {
+    struct wayland_surface *surface = data->wayland_surface;
     BOOL processing_config = surface->processing.serial &&
                              !surface->processing.processed;
 
@@ -250,7 +251,11 @@ static void wayland_surface_update_state_toplevel(struct wayland_surface *surfac
 
     /* If we are not processing a compositor requested config, use the
      * window state to determine and update the Wayland state. */
-    if (!processing_config)
+    if (processing_config)
+    {
+        surface->processing.processed = TRUE;
+    }
+    else if (wayland_surface_is_toplevel(surface))
     {
          /* First do all state unsettings, before setting new state. Some
           * Wayland compositors misbehave if the order is reversed. */
@@ -281,32 +286,6 @@ static void wayland_surface_update_state_toplevel(struct wayland_surface *surfac
         {
             xdg_toplevel_set_minimized(surface->xdg_toplevel);
         }
-    }
-    else
-    {
-        surface->processing.processed = TRUE;
-    }
-}
-
-static void wayland_win_data_update_wayland_state(struct wayland_win_data *data)
-{
-    struct wayland_surface *surface = data->wayland_surface;
-
-    switch (surface->role)
-    {
-    case WAYLAND_SURFACE_ROLE_NONE:
-        break;
-    case WAYLAND_SURFACE_ROLE_TOPLEVEL:
-        if (!surface->xdg_surface) break; /* surface role has been cleared */
-        wayland_surface_update_state_toplevel(surface);
-        break;
-    case WAYLAND_SURFACE_ROLE_SUBSURFACE:
-        TRACE("hwnd=%p subsurface owner=%p\n", surface->hwnd, surface->owner_hwnd);
-        /* Although subsurfaces don't have a dedicated surface config mechanism,
-         * we use the config fields to mark them as updated. */
-        surface->processing.serial = 1;
-        surface->processing.processed = TRUE;
-        break;
     }
 
     wl_display_flush(process_wayland.wl_display);
@@ -447,6 +426,8 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     if (!(data = wayland_win_data_get(hwnd))) return;
     owner_data = owner && owner != hwnd ? wayland_win_data_get(owner) : NULL;
     owner_surface = owner_data ? owner_data->wayland_surface : NULL;
+    /* for it to be a popup, we need a valid xdg surface. */
+    if (owner_surface && !owner_surface->xdg_surface) owner_surface = NULL;
 
     data->rects = *new_rects;
     data->is_fullscreen = fullscreen;
@@ -485,13 +466,6 @@ static void wayland_configure_window(HWND hwnd)
     if (!(data = wayland_win_data_get(hwnd))) return;
     if (!(surface = data->wayland_surface))
     {
-        wayland_win_data_release(data);
-        return;
-    }
-
-    if (!wayland_surface_is_toplevel(surface))
-    {
-        TRACE("missing xdg_toplevel, returning\n");
         wayland_win_data_release(data);
         return;
     }
