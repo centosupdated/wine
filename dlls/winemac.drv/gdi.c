@@ -288,6 +288,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pCreateWindowSurface = macdrv_CreateWindowSurface,
     .pVulkanInit = macdrv_VulkanInit,
     .pOpenGLInit = macdrv_OpenGLInit,
+    .pMetalInit = macdrv_MetalInit,
 };
 
 

@@ -253,6 +253,7 @@ extern void macdrv_lost_pasteboard_ownership(HWND hwnd);
 
 extern UINT macdrv_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
 extern UINT macdrv_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
+extern UINT macdrv_MetalInit(UINT version, const struct metal_funcs *metal_funcs, const struct metal_driver_funcs **driver_funcs);
 
 extern CGImageRef create_cgimage_from_icon_bitmaps(HDC hdc, HANDLE icon, HBITMAP hbmColor,
                                                    unsigned char *color_bits, int color_size, HBITMAP hbmMask,

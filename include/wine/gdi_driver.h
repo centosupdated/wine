@@ -44,6 +44,7 @@
 struct gdi_dc_funcs;
 struct opengl_funcs;
 struct vulkan_funcs;
+struct metal_funcs;
 
 struct window_rects
 {
@@ -354,6 +355,7 @@ struct gdi_device_manager
 
 struct vulkan_driver_funcs;
 struct opengl_driver_funcs;
+struct metal_driver_funcs;
 
 struct user_driver_funcs
 {
@@ -432,6 +434,8 @@ struct user_driver_funcs
     UINT    (*pVulkanInit)(UINT,void *,const struct vulkan_driver_funcs **);
     /* opengl support */
     UINT    (*pOpenGLInit)(UINT,const struct opengl_funcs *,const struct opengl_driver_funcs **);
+    /* metal support */
+    UINT    (*pMetalInit)(UINT,const struct metal_funcs *,const struct metal_driver_funcs **);
     /* thread management */
     void    (*pThreadDetach)(void);
 };

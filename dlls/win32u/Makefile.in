@@ -36,6 +36,7 @@ SOURCES = \
 	input.c \
 	main.c \
 	mapping.c \
+	metal.c \
 	menu.c \
 	message.c \
 	opengl.c \
