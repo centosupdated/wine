@@ -543,6 +543,16 @@ void wayland_surface_attach_shm(struct wayland_surface *surface,
     surface->content_height = win_height;
 }
 
+static BOOL is_rect_bigger(RECT a, RECT b)
+{
+    return a.right - a.left > b.right - b.left || a.bottom - a.top > b.bottom - b.top;
+}
+
+static BOOL is_rect_smaller(RECT a, RECT b)
+{
+    return a.right - a.left < b.right - b.left || a.bottom - a.top < b.bottom - b.top;
+}
+
 /**********************************************************************
  *          wayland_surface_config_is_compatible
  *
@@ -569,12 +579,7 @@ BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf, R
     /* The maximized state requires the configured size. During surface
      * reconfiguration we can use surface geometry to provide smaller areas
      * from larger sizes, so only smaller sizes are incompatible. */
-    if ((conf->state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) &&
-        (rect.right - rect.left < conf->rect.right - conf->rect.left ||
-         rect.bottom - rect.top < conf->rect.bottom - conf->rect.top))
-    {
-        return FALSE;
-    }
+    if ((conf->state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) && is_rect_smaller(rect, conf->rect)) return FALSE;
 
     return TRUE;
 }
@@ -614,8 +619,7 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
      * largest visible (from Windows' perspective) subregion of the window. */
     if ((surface->current.state & (WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED |
                                    WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN)) &&
-        (rect.right - rect.left > surface->current.rect.right - surface->current.rect.left ||
-         rect.bottom - rect.top > surface->current.rect.bottom - surface->current.rect.top))
+        is_rect_bigger(rect, surface->current.rect))
     {
         wayland_surface_get_rect_in_monitor(surface, &rect);
 
@@ -625,8 +629,7 @@ static void wayland_surface_reconfigure_geometry(struct wayland_surface *surface
          * fall back to an appropriately sized rect at the top-left. */
         if ((surface->current.state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) &&
             !(surface->current.state & WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN) &&
-            (rect.right - rect.left < surface->current.rect.right - surface->current.rect.left ||
-             rect.bottom - rect.top < surface->current.rect.bottom - surface->current.rect.top))
+            is_rect_smaller(rect, surface->current.rect))
         {
             SetRect(&rect, 0, 0, surface->current.rect.right - surface->current.rect.left,
                     surface->current.rect.bottom - surface->current.rect.top);
