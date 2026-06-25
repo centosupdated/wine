@@ -919,6 +919,61 @@ static void test_IRestrictedErrorInfo_(int line, IRestrictedErrorInfo *r_info, H
     ok_(__FILE__, line)(count == 0, "Got unexpected count %lu.\n", count);
 }
 
+static void test_SetRestrictedErrorInfo(void)
+{
+    IRestrictedErrorInfo *r_info = NULL, *r_info2 = NULL;
+    HRESULT hr;
+    BOOL ret;
+
+    hr = SetErrorInfo(0, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = SetRestrictedErrorInfo(NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    r_info = (IRestrictedErrorInfo *)0xdeadbeef;
+    hr = GetRestrictedErrorInfo(&r_info);
+    ok(hr == S_FALSE, "Got unexpected hr %#lx.\n", hr);
+    ok(!r_info, "Got unexpected r_info %p.\n", r_info);
+
+    ret = RoOriginateError(E_INVALIDARG, NULL);
+    ok(ret, "RoOriginateError returned %d.\n", ret);
+
+    hr = GetRestrictedErrorInfo(&r_info);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(!!r_info, "Expected r_info != NULL.\n");
+
+    hr = SetRestrictedErrorInfo(r_info);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    IRestrictedErrorInfo_Release(r_info);
+
+    hr = GetRestrictedErrorInfo(&r_info2);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ok(r_info2 == r_info, "Got unexpected r_info2 %p != %p.\n", r_info2, r_info);
+    if (hr == S_OK)
+        test_IRestrictedErrorInfo(r_info2, E_INVALIDARG, NULL, NULL);
+
+    ret = RoOriginateError(E_FAIL, NULL);
+    ok(ret, "RoOriginateError returned %d.\n", ret);
+
+    hr = GetRestrictedErrorInfo(&r_info);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = SetRestrictedErrorInfo(r_info);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = SetRestrictedErrorInfo(NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    IRestrictedErrorInfo_Release(r_info);
+
+    r_info = (IRestrictedErrorInfo *)0xdeadbeef;
+    hr = GetRestrictedErrorInfo(&r_info);
+    ok(hr == S_FALSE, "Got unexpected hr %#lx.\n", hr);
+    ok(!r_info, "Got unexpected r_info %p.\n", r_info);
+}
+
 static BOOL exception_caught;
 static HRESULT exp_hresult;
 static ULONG exp_len;
@@ -1210,6 +1265,7 @@ START_TEST(roapi)
     test_RoGetErrorReportingFlags();
     test_RoSetErrorReportingFlags();
     test_GetRestrictedErrorInfo();
+    test_SetRestrictedErrorInfo();
     test_error_reporting();
 
     SetLastError(0xdeadbeef);
