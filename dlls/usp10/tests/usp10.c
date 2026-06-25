@@ -4187,6 +4187,54 @@ static void test_script_cache_reuse(void)
     DestroyWindow(hwnd2);
 }
 
+static void test_shape_null_hdc(HDC hdc)
+{
+    HRESULT hr;
+    SCRIPT_CACHE sc = NULL;
+    WORD glyphs[4], logclust[4];
+    SCRIPT_CHARPROP charProp[4];
+    SCRIPT_GLYPHPROP glyphProp[4];
+    SCRIPT_ITEM items[2];
+    ULONG tags[2];
+    SCRIPT_CONTROL control;
+    SCRIPT_STATE state;
+    HFONT hfont = NULL, hfont_orig = NULL;
+    int nb, outnItems;
+
+    static const WCHAR test1[] = {'O', 'n', 'e', 0};
+    static const WCHAR test2[] = {'T', 'w', 'o', 0};
+
+    memset(&control, 0, sizeof(control));
+    memset(&state, 0, sizeof(state));
+
+    if (!find_font_for_range(hdc, "Tahoma", 0, test1[0], &hfont, &hfont_orig, NULL))
+    {
+        skip("Font Tahoma is not available.\n");
+        return;
+    }
+
+    hr = ScriptItemizeOpenType(test1, 3, 2, &control, &state, items, tags, &outnItems);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* Shape test1 with a valid HDC to populate the cmap cache. */
+    hr = ScriptShapeOpenType(hdc, &sc, &items[0].a, tags[0], 0x00000000, NULL, NULL, 0, test1, 3, 3, logclust, charProp, glyphs, glyphProp, &nb);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    ok(sc != NULL, "Expected non-NULL script cache.\n");
+
+    /* Shape test2 with NULL HDC with characters not seen in test1, but ScriptShapeOpenType() now looks up glyph in the cached cmap
+       so E_PENDING should not be returned. */
+    hr = ScriptItemizeOpenType(test2, 3, 2, &control, &state, items, tags, &outnItems);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = ScriptShapeOpenType(NULL, &sc, &items[0].a, tags[0], 0x00000000, NULL, NULL, 0, test2, 3, 3, logclust, charProp, glyphs, glyphProp, &nb);
+    ok(hr == S_OK, "Expected S_OK with NULL HDC and cached cmap, got %#lx.\n", hr);
+    ok(nb == 3, "Expected 3 glyphs, got %d.\n", nb);
+
+    ScriptFreeCache(&sc);
+    SelectObject(hdc, hfont_orig);
+    DeleteObject(hfont);
+}
+
 START_TEST(usp10)
 {
     HWND            hwnd;
@@ -4246,6 +4294,7 @@ START_TEST(usp10)
 
     test_ScriptIsComplex();
     test_script_cache_reuse();
+    test_shape_null_hdc(hdc);
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);
