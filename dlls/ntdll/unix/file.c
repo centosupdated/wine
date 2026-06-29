@@ -2996,9 +2996,8 @@ NTSTATUS WINAPI NtQueryDirectoryFile( HANDLE handle, HANDLE event, PIO_APC_ROUTI
  * There must be at least MAX_DIR_ENTRY_LEN+2 chars available at pos.
  */
 static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const WCHAR *name, int length,
-                                  BOOLEAN check_case )
+                                  BOOLEAN check_case, WCHAR *orig_case_fn )
 {
-    WCHAR buffer[MAX_DIR_ENTRY_LEN];
     BOOLEAN is_name_8_dot_3;
     DIR *dir;
     struct dirent *de;
@@ -3012,7 +3011,11 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
     if (ret >= 0 && ret <= MAX_DIR_ENTRY_LEN)
     {
         unix_name[pos + ret] = 0;
-        if (!fstatat( root_fd, unix_name, &st, 0 )) return STATUS_SUCCESS;
+        if (!fstatat( root_fd, unix_name, &st, 0 ))
+        {
+            memcpy( orig_case_fn, name, length * sizeof(WCHAR) );
+            return STATUS_SUCCESS;
+        }
     }
     if (check_case) goto not_found;  /* we want an exact match */
 
@@ -3046,8 +3049,8 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
                     if (kde[1].d_name[0])
                     {
                         ret = ntdll_umbstowcs( kde[1].d_name, strlen(kde[1].d_name),
-                                               buffer, MAX_DIR_ENTRY_LEN );
-                        if (ret == length && !wcsnicmp( buffer, name, ret ))
+                                               orig_case_fn, MAX_DIR_ENTRY_LEN );
+                        if (ret == length && !wcsnicmp( orig_case_fn, name, ret ))
                         {
                             strcpy( unix_name + pos, kde[1].d_name );
                             close( fd );
@@ -3055,8 +3058,8 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
                         }
                     }
                     ret = ntdll_umbstowcs( kde[0].d_name, strlen(kde[0].d_name),
-                                           buffer, MAX_DIR_ENTRY_LEN );
-                    if (ret == length && !wcsnicmp( buffer, name, ret ))
+                                           orig_case_fn, MAX_DIR_ENTRY_LEN );
+                    if (ret == length && !wcsnicmp( orig_case_fn, name, ret ))
                     {
                         strcpy( unix_name + pos,
                                 kde[1].d_name[0] ? kde[1].d_name : kde[0].d_name );
@@ -3088,8 +3091,8 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
     unix_name[pos - 1] = '/';
     while ((de = readdir( dir )))
     {
-        ret = ntdll_umbstowcs( de->d_name, strlen(de->d_name), buffer, MAX_DIR_ENTRY_LEN );
-        if (ret == length && !wcsnicmp( buffer, name, ret ))
+        ret = ntdll_umbstowcs( de->d_name, strlen(de->d_name), orig_case_fn, MAX_DIR_ENTRY_LEN );
+        if (ret == length && !wcsnicmp( orig_case_fn, name, ret ))
         {
             strcpy( unix_name + pos, de->d_name );
             closedir( dir );
@@ -3098,14 +3101,15 @@ static NTSTATUS find_file_in_dir( int root_fd, char *unix_name, int pos, const W
 
         if (!is_name_8_dot_3) continue;
 
-        if (!is_legal_8dot3_name( buffer, ret ))
+        if (!is_legal_8dot3_name( orig_case_fn, ret ))
         {
             WCHAR short_nameW[12];
-            ret = hash_short_file_name( buffer, ret, short_nameW );
+            ret = hash_short_file_name( orig_case_fn, ret, short_nameW );
             if (ret == length && !wcsnicmp( short_nameW, name, length ))
             {
                 strcpy( unix_name + pos, de->d_name );
                 closedir( dir );
+                memcpy( orig_case_fn, short_nameW, length * sizeof(WCHAR) );
                 return STATUS_SUCCESS;
             }
         }
@@ -3559,6 +3563,32 @@ done:
 }
 
 
+/******************************************************************************
+ *           fixup_nt_name_case
+ *
+ * Update current part of NT name if it differs in case from existing file.
+ */
+static void fixup_nt_name_case( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *nt_name, const WCHAR *orig_case_fn,
+                                const WCHAR **name, const WCHAR **end, const WCHAR **next )
+{
+    if (!memcmp( *name, orig_case_fn, (*end - *name) * sizeof(WCHAR))) return;
+    if (attr->ObjectName != nt_name)
+    {
+        const WCHAR *old_name;
+
+        if (!(nt_name->Buffer = malloc( attr->ObjectName->Length ))) return;
+        nt_name->Length = nt_name->MaximumLength = attr->ObjectName->Length;
+        memcpy( nt_name->Buffer, attr->ObjectName->Buffer, nt_name->Length );
+        old_name = attr->ObjectName->Buffer;
+        *name = nt_name->Buffer + (*name - old_name);
+        *next = nt_name->Buffer + (*next - old_name);
+        *end = nt_name->Buffer + (*end - old_name);
+        attr->ObjectName = nt_name;
+    }
+    memcpy( nt_name->Buffer + (*name - nt_name->Buffer), orig_case_fn, (*end - *name) * sizeof(WCHAR) );
+}
+
+
 static NTSTATUS resolve_reparse_point( int fd, int root_fd, OBJECT_ATTRIBUTES *attr,
         UNICODE_STRING *nt_name, unsigned int nt_pos, unsigned int reparse_len, char **unix_name,
         int unix_len, int pos, UINT disposition, BOOL open_reparse, BOOL is_unix, unsigned int reparse_count );
@@ -3631,6 +3661,7 @@ static NTSTATUS lookup_unix_name( int root_fd, OBJECT_ATTRIBUTES *attr, UNICODE_
 
     while (name_len)
     {
+        WCHAR orig_case_fn[MAX_DIR_ENTRY_LEN];
         const WCHAR *end, *next;
         WCHAR *reparse_name;
 
@@ -3650,7 +3681,8 @@ static NTSTATUS lookup_unix_name( int root_fd, OBJECT_ATTRIBUTES *attr, UNICODE_
             unix_name = *buffer = new_name;
         }
 
-        status = find_file_in_dir( root_fd, unix_name, pos, name, end - name, is_unix );
+        status = find_file_in_dir( root_fd, unix_name, pos, name, end - name, is_unix, orig_case_fn );
+        if (!status && !is_unix) fixup_nt_name_case( attr, nt_name, orig_case_fn, &name, &end, &next );
 
         /* try to resolve it as a reparse point */
         if (status == STATUS_OBJECT_NAME_NOT_FOUND && (reparse_name = malloc( (end - name + 1) * sizeof(WCHAR) )))
@@ -3662,11 +3694,12 @@ static NTSTATUS lookup_unix_name( int root_fd, OBJECT_ATTRIBUTES *attr, UNICODE_
 
             if (!name_len && open_reparse)
             {
-                status = find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix );
+                status = find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix, orig_case_fn );
+                if (!status && !is_unix) fixup_nt_name_case( attr, nt_name, orig_case_fn, &name, &end, &next );
             }
             else
             {
-                if (!find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix )
+                if (!find_file_in_dir( root_fd, unix_name, pos, reparse_name, end - name + 1, is_unix, orig_case_fn )
                     && (reparse_fd = openat( root_fd, unix_name, O_RDONLY )) >= 0)
                 {
                     status = resolve_reparse_point( reparse_fd, root_fd, attr, nt_name, nt_pos, next - name, buffer,
