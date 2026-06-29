@@ -2567,6 +2567,20 @@ HANDLE WINAPI PsGetProcessId(PEPROCESS process)
 }
 
 /*********************************************************************
+ *           PsGetProcessImageFileName    (NTOSKRNL.@)
+ */
+CHAR * WINAPI PsGetProcessImageFileName(PEPROCESS Process)
+{
+    UNICODE_STRING *image_path_name = &Process->info.PebBaseAddress->ProcessParameters->ImagePathName;
+    
+    STRING str;
+    if (!NT_SUCCESS(RtlUnicodeStringToAnsiString(&str, image_path_name, TRUE)))
+        return NULL;
+
+    return str.Buffer;
+}
+
+/*********************************************************************
  *           PsGetProcessInheritedFromUniqueProcessId  (NTOSKRNL.@)
  */
 HANDLE WINAPI PsGetProcessInheritedFromUniqueProcessId( PEPROCESS process )
