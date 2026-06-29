@@ -1688,7 +1688,7 @@ static void test_file_rename_information(FILE_INFORMATION_CLASS class)
     res = pNtQueryInformationFile( handle2, &io, fni, sizeof(FILE_NAME_INFORMATION) + MAX_PATH * sizeof(WCHAR), FileNameInformation );
     ok( res == STATUS_SUCCESS, "res expected STATUS_SUCCESS, got %lx\n", res );
     fni->FileName[ fni->FileNameLength / sizeof(WCHAR) ] = 0;
-    todo_wine ok( !lstrcmpiW(fni->FileName, newpath + 2), "FileName expected %s, got %s\n",
+    ok( !lstrcmpiW(fni->FileName, newpath + 2), "FileName expected %s, got %s\n",
         wine_dbgstr_w(newpath + 2), wine_dbgstr_w(fni->FileName) );
     HeapFree( GetProcessHeap(), 0, fni );
 
