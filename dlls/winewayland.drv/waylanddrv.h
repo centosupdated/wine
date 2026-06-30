@@ -332,8 +332,7 @@ void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 struct wayland_shm_buffer *shm_buffer,
                                 HRGN surface_damage_region);
 BOOL wayland_surface_reconfigure(struct wayland_surface *surface);
-BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf, RECT rect,
-                                          enum wayland_surface_config_state state);
+BOOL wayland_surface_config_is_compatible(struct wayland_surface *surface, struct wayland_surface_config *conf);
 RECT map_rect_to_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_to_surface(struct wayland_surface *surface, POINT point);
 RECT map_rect_from_surface(struct wayland_surface *surface, RECT rect);
