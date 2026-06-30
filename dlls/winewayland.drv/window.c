@@ -473,8 +473,7 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
 static void wayland_configure_window(HWND hwnd)
 {
     struct wayland_surface *surface;
-    INT width, height;
-    UINT flags = 0;
+    UINT flags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOMOVE;
     uint32_t state;
     DWORD style;
     BOOL needs_enter_size_move = FALSE;
@@ -507,18 +506,12 @@ static void wayland_configure_window(HWND hwnd)
     surface->processing = surface->requested;
     memset(&surface->requested, 0, sizeof(surface->requested));
 
+    rect = map_rect_from_surface(surface, surface->processing.rect);
     state = surface->processing.state;
+
     /* Ignore size hints if we don't have a state that requires strict
      * size adherence, in order to avoid spurious resizes. */
-    if (state)
-    {
-        width = surface->processing.rect.right - surface->processing.rect.left;
-        height = surface->processing.rect.bottom - surface->processing.rect.top;
-    }
-    else
-    {
-        width = height = 0;
-    }
+    if (!state) flags |= SWP_NOSIZE;
 
     if ((state & WAYLAND_SURFACE_CONFIG_STATE_RESIZING) && !surface->resizing)
     {
@@ -572,19 +565,12 @@ static void wayland_configure_window(HWND hwnd)
         return;
     }
 
-    SetRect(&rect, 0, 0, width, height);
-    rect = map_rect_from_surface(surface, rect);
-    OffsetRect(&rect, data->rects.window.left, data->rects.window.top);
-
     wayland_win_data_release(data);
 
-    TRACE("processing=%dx%d,%#x\n", width, height, state);
+    TRACE("processing rect=%s state=%#x flags=%#x\n", wine_dbgstr_rect(&rect), state, flags);
 
     if (needs_enter_size_move) send_message(hwnd, WM_ENTERSIZEMOVE, 0, 0);
     if (needs_exit_size_move) send_message(hwnd, WM_EXITSIZEMOVE, 0, 0);
-
-    flags |= SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOMOVE;
-    if (rect.left == rect.right || rect.bottom == rect.top) flags |= SWP_NOSIZE;
 
     style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     if (!(state & WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED) != !(style & WS_MAXIMIZE)
