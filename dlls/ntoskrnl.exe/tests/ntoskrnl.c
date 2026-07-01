@@ -2969,8 +2969,7 @@ static void test_pnp_device_ids(void)
         wcscat(tmp_buf, desc.instance_id_str);
         swprintf(dev_instance_id_expected, ARRAY_SIZE(dev_instance_id_expected), L"%s\\%s", desc.device_id_str,
                 tmp_buf);
-        /* FIXME: Wine doesn't have correct casing. */
-        ok(!lstrcmpiW(child_dev.instance_id, dev_instance_id_expected), "Got unexpected device instance ID %s.\n",
+        ok(!wcscmp(child_dev.instance_id, dev_instance_id_expected), "Got unexpected device instance ID %s.\n",
                 debugstr_w(child_dev.instance_id));
 
         size = sizeof(first_install[0]);
@@ -2985,8 +2984,7 @@ static void test_pnp_device_ids(void)
         pnp_bus_test_device_add_child(parent_dev.handle, &desc, test_devices[i].dev_level);
         get_pnp_bus_device_data(test_devices[i].dev_level, desc.dev_name, &child_dev);
 
-        /* FIXME: Wine doesn't have correct casing. */
-        ok(!lstrcmpiW(child_dev.instance_id, dev_instance_id_expected), "Got unexpected device instance ID %s.\n",
+        ok(!wcscmp(child_dev.instance_id, dev_instance_id_expected), "Got unexpected device instance ID %s.\n",
                 debugstr_w(child_dev.instance_id));
 
         size = sizeof(first_install[1]);
@@ -3023,8 +3021,7 @@ static void test_pnp_device_ids(void)
         wcscat(tmp_buf, desc.instance_id_str);
         swprintf(dev_instance_id_expected, ARRAY_SIZE(dev_instance_id_expected), L"%s\\%s", desc.device_id_str,
                 tmp_buf);
-        /* FIXME: Wine doesn't have correct casing. */
-        ok(!lstrcmpiW(child_dev.instance_id, dev_instance_id_expected), "Got unexpected device instance ID %s.\n",
+        ok(!wcscmp(child_dev.instance_id, dev_instance_id_expected), "Got unexpected device instance ID %s.\n",
                 debugstr_w(child_dev.instance_id));
 
         size = sizeof(first_install[1]);
