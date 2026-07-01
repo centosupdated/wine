@@ -2071,7 +2071,6 @@ static void test_simple_joystick( DWORD version )
     ok( hr == DI_OK, "GetProperty DIPROP_GUIDANDPATH returned %#lx\n", hr );
     ok( IsEqualGUID( &prop_guid_path.guidClass, &GUID_DEVCLASS_HIDCLASS ), "got guid %s\n",
         debugstr_guid( &prop_guid_path.guidClass ) );
-    todo_wine
     ok( !wcsncmp( prop_guid_path.wszPath, expect_path, wcslen( expect_path ) ), "got path %s\n",
         debugstr_w(prop_guid_path.wszPath) );
     todo_wine
