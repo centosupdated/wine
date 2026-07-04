@@ -254,8 +254,8 @@ static const USAGE_AND_PAGE g920_absolute_usages[] =
 {
     {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_X},  /* wheel */
     {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_Y},  /* accelerator */
-    {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_Z},  /* brake */
-    {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_RZ}, /* clutch */
+    {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_Z},  /* brake (clutch on g29) */
+    {.UsagePage = HID_USAGE_PAGE_GENERIC, .Usage = HID_USAGE_GENERIC_RZ}, /* clutch (brake on g29) */
 };
 static const USAGE_AND_PAGE absolute_axis_usages[] =
 {
@@ -283,7 +283,8 @@ static const USAGE_AND_PAGE relative_axis_usages[] =
 
 static int get_absolute_usages(const struct device_desc *desc, const USAGE_AND_PAGE **absolute_usages)
 {
-    if (desc->vid == 0x046d && desc->pid == 0xc262)
+    // This also works for the g29 (PID 0xc24f)
+    if (desc->vid == 0x046d && (desc->pid == 0xc262 || desc->pid == 0xc24f))
     {
         *absolute_usages = g920_absolute_usages;
         return ARRAY_SIZE(g920_absolute_usages);
