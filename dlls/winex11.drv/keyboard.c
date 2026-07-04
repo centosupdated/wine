@@ -2986,7 +2986,10 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
         {
             if (((keysym>=33) && (keysym < '@')) ||
                 (keysym == '`') ||
-                (keysym == XK_Tab))
+                (keysym == XK_Tab)) ||
+                (keysym == XK_KP_Add) ||
+                (keysym == XK_KP_Subtract) ||
+                (keysym == XK_KP_Multiply)
             {
                 lpChar[0] = 0;
                 ret = 0;
