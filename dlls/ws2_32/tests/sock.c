@@ -14710,6 +14710,88 @@ static void test_send_buffering(void)
     closesocket(client);
 }
 
+static void test_send_many_buffers(void)
+{
+    char *send_data, *recv_data;
+    unsigned int i, count, recv_size;
+    struct sockaddr_in addr;
+    SOCKET client, server;
+    int addrlen, ret;
+    WSABUF *bufs;
+    DWORD sent;
+
+    /* Native WSASend() imposes no practical limit on the number of WSABUF
+     * elements for a stream socket. Wine used to forward the whole array to
+     * a single sendmsg() call, which Linux rejects with EMSGSIZE once
+     * msg_iovlen exceeds IOV_MAX (1024 on Linux). */
+    count = 2000;
+    send_data = malloc(count);
+    bufs = malloc(count * sizeof(*bufs));
+    for (i = 0; i < count; ++i)
+    {
+        send_data[i] = i;
+        bufs[i].buf = &send_data[i];
+        bufs[i].len = 1;
+    }
+
+    tcp_socketpair(&client, &server);
+
+    sent = 0xdeadbeef;
+    ret = WSASend(client, bufs, count, &sent, 0, NULL, NULL);
+    todo_wine
+    ok(!ret, "got %d, error %u.\n", ret, WSAGetLastError());
+    if (!ret)
+    {
+        ok(sent == count, "got %lu.\n", sent);
+
+        recv_data = calloc(1, count);
+        recv_size = 0;
+        while (recv_size < count
+               && (ret = recv(server, recv_data + recv_size, count - recv_size, 0)) > 0)
+            recv_size += ret;
+        ok(recv_size == count, "got %u, expected %u.\n", recv_size, count);
+        ok(!memcmp(recv_data, send_data, count), "data mismatch.\n");
+        free(recv_data);
+    }
+
+    closesocket(client);
+    closesocket(server);
+
+    /* Native WSASendTo() has no such limit for datagram sockets either; the
+     * buffers are coalesced into a single datagram. */
+    client = socket(AF_INET, SOCK_DGRAM, 0);
+    server = socket(AF_INET, SOCK_DGRAM, 0);
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ret = bind(server, (struct sockaddr *)&addr, sizeof(addr));
+    ok(!ret, "got error %u.\n", WSAGetLastError());
+    addrlen = sizeof(addr);
+    ret = getsockname(server, (struct sockaddr *)&addr, &addrlen);
+    ok(!ret, "got error %u.\n", WSAGetLastError());
+
+    sent = 0xdeadbeef;
+    ret = WSASendTo(client, bufs, count, &sent, 0, (struct sockaddr *)&addr, sizeof(addr), NULL, NULL);
+    todo_wine
+    ok(!ret, "got %d, error %u.\n", ret, WSAGetLastError());
+    if (!ret)
+    {
+        ok(sent == count, "got %lu.\n", sent);
+
+        recv_data = calloc(1, count);
+        ret = recv(server, recv_data, count, 0);
+        ok(ret == (int)count, "got %d, error %u.\n", ret, WSAGetLastError());
+        ok(!memcmp(recv_data, send_data, count), "data mismatch.\n");
+        free(recv_data);
+    }
+
+    closesocket(client);
+    closesocket(server);
+    free(bufs);
+    free(send_data);
+}
+
 static void test_valid_handle(void)
 {
     HANDLE duplicated, invalid;
@@ -15129,6 +15211,7 @@ START_TEST( sock )
     test_tcp_sendto_recvfrom();
     test_broadcast();
     test_send_buffering();
+    test_send_many_buffers();
     test_valid_handle();
     test_afunix();
 
