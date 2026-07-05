@@ -25,6 +25,7 @@
 #include "config.h"
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -1087,6 +1088,18 @@ static NTSTATUS try_send( int fd, struct async_send_ioctl *async )
 
     hdr.msg_iov = async->iov + async->iov_cursor;
     hdr.msg_iovlen = async->count - async->iov_cursor;
+    /* Linux sendmsg() rejects msg_iovlen > IOV_MAX with EMSGSIZE, unlike native
+     * WSASend(), which imposes no such limit. Clamp for stream sockets and let
+     * the short write handling below resend the remaining buffers. Datagram
+     * sockets would need the payload coalesced into a single buffer instead. */
+    if (hdr.msg_iovlen > IOV_MAX)
+    {
+        if (sock_type == SOCK_STREAM)
+            hdr.msg_iovlen = IOV_MAX;
+        else
+            FIXME( "msg_iovlen %u exceeds IOV_MAX for a datagram socket.\n",
+                   (unsigned int)hdr.msg_iovlen );
+    }
 
     while ((ret = sendmsg( fd, &hdr, async->unix_flags )) == -1)
     {

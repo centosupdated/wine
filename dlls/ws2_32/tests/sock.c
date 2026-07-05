@@ -14738,7 +14738,6 @@ static void test_send_many_buffers(void)
 
     sent = 0xdeadbeef;
     ret = WSASend(client, bufs, count, &sent, 0, NULL, NULL);
-    todo_wine
     ok(!ret, "got %d, error %u.\n", ret, WSAGetLastError());
     if (!ret)
     {
