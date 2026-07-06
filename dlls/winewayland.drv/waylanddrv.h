@@ -216,6 +216,7 @@ struct wayland_output_state
     int logical_w, logical_h;
     int width_mm, height_mm;
     enum wl_output_transform transform;
+    double scale;
 };
 
 struct wayland_output
@@ -225,8 +226,7 @@ struct wayland_output
     struct zxdg_output_v1 *zxdg_output_v1;
     uint32_t global_id;
     unsigned int pending_flags;
-    struct wayland_output_state pending;
-    struct wayland_output_state current;
+    struct wayland_output_state pending, current;
 };
 
 struct wayland_surface_config

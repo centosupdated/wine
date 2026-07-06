@@ -198,9 +198,8 @@ static void wayland_add_device_gpu(const struct gdi_device_manager *device_manag
 static void wayland_add_device_source(const struct gdi_device_manager *device_manager,
                                        void *param, UINT state_flags, struct output_info *output_info)
 {
-    UINT dpi = NtUserGetSystemDpiForProcess( NULL );
-    TRACE("name=%s state_flags=0x%x\n",
-          output_info->output->name, state_flags);
+    UINT dpi = round(output_info->output->scale * 96.0);
+    TRACE("name=%s state_flags=0x%x dpi=%u\n", output_info->output->name, state_flags, dpi);
     device_manager->add_source(output_info->output->name, state_flags, dpi, param);
 }
 
