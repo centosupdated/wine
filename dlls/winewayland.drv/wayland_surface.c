@@ -116,17 +116,17 @@ static void xdg_toplevel_handle_configure(void *private,
         }
     }
 
-    TRACE("hwnd=%p rect=%s state=%#x\n", hwnd, wine_dbgstr_rect(&rect), config_state);
-
     if (!(data = wayland_win_data_get(hwnd))) return;
 
     if ((surface = data->wayland_surface) && wayland_surface_is_toplevel(surface))
     {
-        surface->pending.rect = rect;
+        surface->pending.rect = rect = map_rect_from_surface(surface, rect);
         surface->pending.state = config_state;
     }
 
     wayland_win_data_release(data);
+
+    TRACE("hwnd=%p rect=%s state=%#x\n", hwnd, wine_dbgstr_rect(&rect), config_state);
 }
 
 static void xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_toplevel)
@@ -564,15 +564,12 @@ static BOOL is_rect_smaller(RECT a, RECT b)
  */
 BOOL wayland_surface_config_is_compatible(struct wayland_surface *surface, struct surface_config *conf)
 {
-    RECT rect = map_rect_to_surface(surface, surface->window.rect);
-
     /* The fullscreen state requires a size smaller or equal to the configured
      * size. If we have a larger size, we can use surface geometry during
      * surface reconfiguration to provide the smaller size, so we are always
      * compatible with a fullscreen state.
      * NOTE: Fullscreen combined with maximized is the same as fullscreen. */
-    if (conf->state & SURFACE_STATE_FULLSCREEN)
-        return TRUE;
+    if (conf->state & SURFACE_STATE_FULLSCREEN) return TRUE;
 
     /* We require the same state. */
     if ((surface->window.state ^ conf->state) & SURFACE_STATE_MAXIMIZED) return FALSE;
@@ -580,7 +577,8 @@ BOOL wayland_surface_config_is_compatible(struct wayland_surface *surface, struc
     /* The maximized state requires the configured size. During surface
      * reconfiguration we can use surface geometry to provide smaller areas
      * from larger sizes, so only smaller sizes are incompatible. */
-    if ((conf->state & SURFACE_STATE_MAXIMIZED) && is_rect_smaller(rect, conf->rect)) return FALSE;
+    if ((conf->state & SURFACE_STATE_MAXIMIZED) && is_rect_smaller(surface->window.rect, conf->rect))
+        return FALSE;
 
     return TRUE;
 }

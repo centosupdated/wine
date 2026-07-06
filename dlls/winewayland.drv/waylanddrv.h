@@ -226,7 +226,7 @@ struct wayland_output
 
 struct surface_config
 {
-    RECT                rect;       /* rect of the compositor surface (in surface coordinates) */
+    RECT                rect;       /* rect of the compositor surface (in win32u coordinates) */
     enum surface_state  state;      /* state of the compositor surface */
     uint32_t            serial;     /* serial of the corresponding xdg_surface_configure event */
     BOOL                processed;  /* config has been fully applied to the surface win32 window */

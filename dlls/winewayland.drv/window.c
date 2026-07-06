@@ -506,7 +506,7 @@ static void wayland_configure_window(HWND hwnd)
     surface->processing = surface->requested;
     memset(&surface->requested, 0, sizeof(surface->requested));
 
-    rect = map_rect_from_surface(surface, surface->processing.rect);
+    rect = surface->processing.rect;
     state = surface->processing.state;
 
     /* Ignore size hints if we don't have a state that requires strict
