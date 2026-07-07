@@ -130,6 +130,7 @@ extern MONITORINFOEXW default_monitor;
 enum android_window_messages
 {
     WM_ANDROID_REFRESH = WM_WINE_FIRST_DRIVER_MSG,
+    WM_ANDROID_FORCE_RESOLUTION,
 };
 
 extern void init_monitors( int width, int height );
