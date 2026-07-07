@@ -4581,7 +4581,7 @@ BOOL WINAPI GetPrinterDriverW(HANDLE hPrinter, LPWSTR pEnvironment,
         ptr = pDriverInfo + size;
 
     if(!WINSPOOL_GetDriverInfoFromReg(hkeyDrivers, DriverName,
-                         env, Level, pDriverInfo, ptr,
+                         env, Level, (cbBuf < size) ? NULL : pDriverInfo, ptr,
                          (cbBuf < size) ? 0 : cbBuf - size,
                          &needed)) {
             RegCloseKey(hkeyDrivers);
