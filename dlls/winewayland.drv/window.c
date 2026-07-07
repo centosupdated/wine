@@ -169,7 +169,7 @@ static void reapply_cursor_clipping(void)
 {
     RECT rect;
     UINT context = NtUserSetThreadDpiAwarenessContext(NTUSER_DPI_PER_MONITOR_AWARE);
-    if (NtUserGetClipCursor(&rect )) NtUserClipCursor(&rect);
+    if (NtUserGetClipCursor(&rect)) NtUserClipCursor(&rect);
     NtUserSetThreadDpiAwarenessContext(context);
 }
 
