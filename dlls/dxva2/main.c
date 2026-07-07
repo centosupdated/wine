@@ -22,6 +22,7 @@
 #include <limits.h>
 #include "windef.h"
 #include "winbase.h"
+#include "objbase.h"
 #include "d3d9.h"
 #include "physicalmonitorenumerationapi.h"
 #include "lowlevelmonitorconfigurationapi.h"
@@ -32,9 +33,50 @@
 
 #include "wine/debug.h"
 
+#include "unixlib.h"
+
 WINE_DEFAULT_DEBUG_CHANNEL(dxva2);
 
 #define D3DFMT_NV12 MAKEFOURCC('N','V','1','2')
+#define D3DFMT_P010 MAKEFOURCC('P','0','1','0')
+
+static struct dxva2_decoder_profile supported_profiles[DXVA2_MAX_DECODER_PROFILES];
+static UINT supported_profiles_count;
+static RTL_RUN_ONCE supported_profiles_once = RTL_RUN_ONCE_INIT;
+
+static DWORD WINAPI query_supported_profiles( RTL_RUN_ONCE *once, void *param, void **context )
+{
+    struct query_decoder_profiles_params params;
+
+    params.profiles = supported_profiles;
+    params.capacity = ARRAY_SIZE(supported_profiles);
+    params.count = 0;
+
+    DXVA2_CALL( query_decoder_profiles, &params );
+    supported_profiles_count = params.count;
+
+    TRACE( "Found %u usable hardware decoder profile(s).\n", supported_profiles_count );
+
+    return TRUE;
+}
+
+static void ensure_supported_profiles( void )
+{
+    RtlRunOnceExecuteOnce( &supported_profiles_once, query_supported_profiles, NULL, NULL );
+}
+
+BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
+{
+    switch (reason)
+    {
+    case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls( instance );
+        if (__wine_init_unix_call())
+            WARN( "Failed to load dxva2 unix library, hardware decode won't be available.\n" );
+        break;
+    }
+    return TRUE;
+}
 
 enum device_handle_flags
 {
@@ -688,25 +730,104 @@ static HRESULT WINAPI device_manager_decoder_service_CreateSurface(IDirectXVideo
 static HRESULT WINAPI device_manager_decoder_service_GetDecoderDeviceGuids(IDirectXVideoDecoderService *iface,
         UINT *count, GUID **guids)
 {
-    FIXME("%p, %p, %p.\n", iface, count, guids);
+    GUID *ret;
+    UINT i;
 
-    return E_NOTIMPL;
+    TRACE("%p, %p, %p.\n", iface, count, guids);
+
+    if (!count || !guids) return E_INVALIDARG;
+
+    ensure_supported_profiles();
+
+    if (!supported_profiles_count)
+    {
+        *count = 0;
+        *guids = NULL;
+        return E_FAIL;
+    }
+
+    if (!(ret = CoTaskMemAlloc(supported_profiles_count * sizeof(*ret))))
+        return E_OUTOFMEMORY;
+
+    for (i = 0; i < supported_profiles_count; ++i)
+        ret[i] = supported_profiles[i].guid;
+
+    *count = supported_profiles_count;
+    *guids = ret;
+    return S_OK;
 }
 
 static HRESULT WINAPI device_manager_decoder_service_GetDecoderRenderTargets(IDirectXVideoDecoderService *iface,
         REFGUID guid, UINT *count, D3DFORMAT **formats)
 {
-    FIXME("%p, %s, %p, %p.\n", iface, debugstr_guid(guid), count, formats);
+    D3DFORMAT *ret;
+    UINT i;
 
-    return E_NOTIMPL;
+    TRACE("%p, %s, %p, %p.\n", iface, debugstr_guid(guid), count, formats);
+
+    if (!count || !formats) return E_INVALIDARG;
+
+    ensure_supported_profiles();
+
+    for (i = 0; i < supported_profiles_count; ++i)
+    {
+        if (!IsEqualGUID(&supported_profiles[i].guid, guid)) continue;
+
+        if (!(ret = CoTaskMemAlloc(sizeof(*ret))))
+            return E_OUTOFMEMORY;
+
+        *ret = supported_profiles[i].bitdepth > 8 ? D3DFMT_P010 : D3DFMT_NV12;
+        *count = 1;
+        *formats = ret;
+        return S_OK;
+    }
+
+    *count = 0;
+    *formats = NULL;
+    return E_FAIL;
 }
 
 static HRESULT WINAPI device_manager_decoder_service_GetDecoderConfigurations(IDirectXVideoDecoderService *iface,
         REFGUID guid, const DXVA2_VideoDesc *video_desc, void *reserved, UINT *count, DXVA2_ConfigPictureDecode **configs)
 {
-    FIXME("%p, %s, %p, %p, %p, %p.\n", iface, debugstr_guid(guid), video_desc, reserved, count, configs);
+    DXVA2_ConfigPictureDecode *ret;
+    BOOL found = FALSE;
+    UINT i;
 
-    return E_NOTIMPL;
+    TRACE("%p, %s, %p, %p, %p, %p.\n", iface, debugstr_guid(guid), video_desc, reserved, count, configs);
+
+    if (!count || !configs) return E_INVALIDARG;
+
+    ensure_supported_profiles();
+
+    for (i = 0; i < supported_profiles_count; ++i)
+    {
+        if (IsEqualGUID(&supported_profiles[i].guid, guid))
+        {
+            found = TRUE;
+            break;
+        }
+    }
+    if (!found)
+    {
+        *count = 0;
+        *configs = NULL;
+        return E_FAIL;
+    }
+
+    if (!(ret = CoTaskMemAlloc(sizeof(*ret))))
+        return E_OUTOFMEMORY;
+
+    memset(ret, 0, sizeof(*ret));
+    /* Slice-level (long-format) bitstream submission - what real VLD drivers
+     * report, and what FFmpeg-based DXVA2 hwaccel consumers (which is what
+     * the Xiaomi app's codec plugin looks like internally) require. */
+    ret->ConfigBitstreamRaw = 2;
+    ret->ConfigMinRenderTargetBuffCount = 4;
+
+    *count = 1;
+    *configs = ret;
+    return S_OK;
 }
 
 static HRESULT WINAPI device_manager_decoder_service_CreateVideoDecoder(IDirectXVideoDecoderService *iface,

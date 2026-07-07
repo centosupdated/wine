@@ -1,6 +1,10 @@
 MODULE    = dxva2.dll
 IMPORTS   = uuid ole32
 IMPORTLIB = dxva2
+UNIXLIB   = dxva2.so
+UNIX_CFLAGS = $(LIBVA_CFLAGS)
+UNIX_LIBS   = $(LIBVA_LIBS)
 
 SOURCES = \
-	main.c
+	main.c \
+	unixlib.c

@@ -654,6 +654,8 @@ OSS4_LIBS
 OSS4_CFLAGS
 ALSA_CFLAGS
 ALSA_LIBS
+LIBVA_LIBS
+LIBVA_CFLAGS
 GSTREAMER_LIBS
 GSTREAMER_CFLAGS
 FFMPEG_LIBS
@@ -970,6 +972,7 @@ with_sdl
 with_udev
 with_usb
 with_v4l2
+with_va
 with_vulkan
 with_wayland
 with_xcomposite
@@ -1943,6 +1946,8 @@ FFMPEG_CFLAGS
 FFMPEG_LIBS
 GSTREAMER_CFLAGS
 GSTREAMER_LIBS
+LIBVA_CFLAGS
+LIBVA_LIBS
 ALSA_CFLAGS
 ALSA_LIBS
 UDEV_CFLAGS
@@ -2638,6 +2643,8 @@ Optional Packages:
   --without-udev          do not use udev (plug and play support)
   --without-usb           do not use the libusb library
   --without-v4l2          do not use v4l2 (video capture)
+  --without-va            do not use libva (DXVA2 hardware video decode
+                          support)
   --without-vulkan        do not use Vulkan
   --without-wayland       do not build the Wayland driver
   --without-xcomposite    do not use the Xcomposite extension
@@ -2848,6 +2855,9 @@ Some influential environment variables:
   GSTREAMER_LIBS
               Linker flags for gstreamer-1.0 gstreamer-video-1.0
               gstreamer-audio-1.0 gstreamer-tag-1.0, overriding pkg-config
+  LIBVA_CFLAGS
+              C compiler flags for libva libva-drm, overriding pkg-config
+  LIBVA_LIBS  Linker flags for libva libva-drm, overriding pkg-config
   ALSA_CFLAGS C compiler flags for alsa, overriding pkg-config
   ALSA_LIBS   Linker flags for alsa, overriding pkg-config
   UDEV_CFLAGS C compiler flags for libudev, overriding pkg-config
@@ -4531,6 +4541,13 @@ fi
 if test ${with_v4l2+y}
 then :
   withval=$with_v4l2;
+fi
+
+
+# Check whether --with-va was given.
+if test ${with_va+y}
+then :
+  withval=$with_va;
 fi
 
 
@@ -18604,6 +18621,76 @@ esac
 enable_winegstreamer=${enable_winegstreamer:-no}
 fi
 
+if test "x$with_va" != "xno"
+then
+    rm -f conftest.err
+if ${LIBVA_CFLAGS:+false} :
+then :
+  if test ${PKG_CONFIG+y}
+then :
+  LIBVA_CFLAGS=`$PKG_CONFIG --cflags libva libva-drm 2>conftest.err`
+fi
+fi
+
+if ${LIBVA_LIBS:+false} :
+then :
+  if test ${PKG_CONFIG+y}
+then :
+  LIBVA_LIBS=`$PKG_CONFIG --libs libva libva-drm 2>/dev/null`
+fi
+fi
+
+
+printf '%s\n' "$as_me:${as_lineno-$LINENO}: libva libva-drm cflags: $LIBVA_CFLAGS" >&5
+printf '%s\n' "$as_me:${as_lineno-$LINENO}: libva libva-drm libs: $LIBVA_LIBS" >&5
+if test -s conftest.err; then
+     printf %s "$as_me:${as_lineno-$LINENO}: libva libva-drm errors: " >&5
+     cat conftest.err >&5
+fi
+rm -f conftest.err
+if test -n "$LIBVA_CFLAGS$LIBVA_LIBS"
+then :
+  ac_save_pkg_CPPFLAGS=$CPPFLAGS
+ac_save_pkg_LIBS=$LIBS
+CPPFLAGS="$CPPFLAGS $LIBVA_CFLAGS"
+LIBS="$LIBVA_LIBS $LIBS"
+ac_fn_c_check_header_compile "$LINENO" "va/va.h" "ac_cv_header_va_va_h" "$ac_includes_default"
+if test "x$ac_cv_header_va_va_h" = xyes
+then :
+  printf '%s\n' "#define HAVE_VA_VA_H 1" >>confdefs.h
+
+fi
+ac_fn_c_check_header_compile "$LINENO" "va/va_drm.h" "ac_cv_header_va_va_drm_h" "$ac_includes_default"
+if test "x$ac_cv_header_va_va_drm_h" = xyes
+then :
+  printf '%s\n' "#define HAVE_VA_VA_DRM_H 1" >>confdefs.h
+
+fi
+
+         if test "$ac_cv_header_va_va_h" = "yes" -a "$ac_cv_header_va_va_drm_h" = "yes"
+         then
+
+printf '%s\n' "#define HAVE_LIBVA 1" >>confdefs.h
+
+         else
+            LIBVA_LIBS=""
+         fi
+CPPFLAGS=$ac_save_pkg_CPPFLAGS
+LIBS=$ac_save_pkg_LIBS
+fi
+
+fi
+if test "x$LIBVA_LIBS" = x
+then :
+  case "x$with_va" in
+  x)   as_fn_append wine_notices "|libva ${notice_platform}development files not found, DXVA2 hardware video decode won't be supported." ;;
+  xno) ;;
+  *)   as_fn_error $? "libva ${notice_platform}development files not found, DXVA2 hardware video decode won't be supported.
+This is an error since --with-va was requested." "$LINENO" 5 ;;
+esac
+
+fi
+
 ALSA_LIBS=""
 
 if test "x$with_alsa" != "xno"
@@ -24432,6 +24519,8 @@ FFMPEG_CFLAGS = $FFMPEG_CFLAGS
 FFMPEG_LIBS = $FFMPEG_LIBS
 GSTREAMER_CFLAGS = $GSTREAMER_CFLAGS
 GSTREAMER_LIBS = $GSTREAMER_LIBS
+LIBVA_CFLAGS = $LIBVA_CFLAGS
+LIBVA_LIBS = $LIBVA_LIBS
 ALSA_LIBS = $ALSA_LIBS
 ALSA_CFLAGS = $ALSA_CFLAGS
 OSS4_CFLAGS = $OSS4_CFLAGS
