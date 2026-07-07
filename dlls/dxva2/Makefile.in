@@ -6,5 +6,6 @@ UNIX_CFLAGS = $(LIBVA_CFLAGS)
 UNIX_LIBS   = $(LIBVA_LIBS)
 
 SOURCES = \
+	hevc.c \
 	main.c \
 	unixlib.c

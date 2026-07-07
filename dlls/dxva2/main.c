@@ -30,6 +30,7 @@
 #include "initguid.h"
 #include "dxva2api.h"
 #include "dxvahd.h"
+#include "dxva.h"
 
 #include "wine/debug.h"
 
@@ -759,7 +760,7 @@ static HRESULT WINAPI device_manager_decoder_service_GetDecoderDeviceGuids(IDire
         UINT *count, GUID **guids)
 {
     GUID *ret;
-    UINT i;
+    UINT i, j, unique = 0;
 
     TRACE("%p, %p, %p.\n", iface, count, guids);
 
@@ -777,10 +778,19 @@ static HRESULT WINAPI device_manager_decoder_service_GetDecoderDeviceGuids(IDire
     if (!(ret = CoTaskMemAlloc(supported_profiles_count * sizeof(*ret))))
         return E_OUTOFMEMORY;
 
+    /* Multiple VA profiles can map to the same DXVA GUID (e.g. the H.264
+     * baseline/main/high variants); report each GUID once. */
     for (i = 0; i < supported_profiles_count; ++i)
-        ret[i] = supported_profiles[i].guid;
+    {
+        for (j = 0; j < unique; ++j)
+        {
+            if (IsEqualGUID(&ret[j], &supported_profiles[i].guid)) break;
+        }
+        if (j == unique)
+            ret[unique++] = supported_profiles[i].guid;
+    }
 
-    *count = supported_profiles_count;
+    *count = unique;
     *guids = ret;
     return S_OK;
 }
@@ -843,29 +853,382 @@ static HRESULT WINAPI device_manager_decoder_service_GetDecoderConfigurations(ID
         return E_FAIL;
     }
 
-    if (!(ret = CoTaskMemAlloc(sizeof(*ret))))
+    if (!(ret = CoTaskMemAlloc(2 * sizeof(*ret))))
         return E_OUTOFMEMORY;
 
-    memset(ret, 0, sizeof(*ret));
-    /* Slice-level (long-format) bitstream submission - what real VLD drivers
-     * report, and what FFmpeg-based DXVA2 hwaccel consumers (which is what
-     * the Xiaomi app's codec plugin looks like internally) require. */
-    ret->ConfigBitstreamRaw = 2;
-    ret->ConfigMinRenderTargetBuffCount = 4;
+    memset(ret, 0, 2 * sizeof(*ret));
+    /* Report both raw-bitstream slice-control modes and let the client pick.
+     * FFmpeg-based DXVA2 consumers (which is what the Xiaomi app's codec
+     * plugin embeds) require ConfigBitstreamRaw == 1 for every codec except
+     * H.264, where they prefer 2; their HEVC implementation submits
+     * short-format slice control either way, which is what our decode path
+     * implements. */
+    ret[0].guidConfigBitstreamEncryption = DXVA2_NoEncrypt;
+    ret[0].guidConfigMBcontrolEncryption = DXVA2_NoEncrypt;
+    ret[0].guidConfigResidDiffEncryption = DXVA2_NoEncrypt;
+    ret[0].ConfigBitstreamRaw = 1;
+    ret[0].ConfigMinRenderTargetBuffCount = 4;
+    ret[1] = ret[0];
+    ret[1].ConfigBitstreamRaw = 2;
 
-    *count = 1;
+    *count = 2;
     *configs = ret;
     return S_OK;
 }
+
+#define DXVA2_BUFFER_TYPE_COUNT (DXVA2_FilmGrainBuffer + 1)
+
+struct decoder_buffer
+{
+    void *data;
+    UINT size;
+};
+
+struct video_decoder
+{
+    IDirectXVideoDecoder IDirectXVideoDecoder_iface;
+    LONG refcount;
+
+    IDirectXVideoDecoderService *service;
+    GUID guid;
+    DXVA2_VideoDesc video_desc;
+    DXVA2_ConfigPictureDecode config;
+
+    IDirect3DSurface9 **surfaces;
+    UINT surface_count;
+    IDirect3DSurface9 *target;
+
+    struct decoder_buffer buffers[DXVA2_BUFFER_TYPE_COUNT];
+
+    UINT64 unix_context;
+};
+
+static struct video_decoder *impl_from_IDirectXVideoDecoder(IDirectXVideoDecoder *iface)
+{
+    return CONTAINING_RECORD(iface, struct video_decoder, IDirectXVideoDecoder_iface);
+}
+
+static HRESULT WINAPI video_decoder_QueryInterface(IDirectXVideoDecoder *iface, REFIID riid, void **obj)
+{
+    if (IsEqualIID(riid, &IID_IDirectXVideoDecoder) || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = iface;
+        IDirectXVideoDecoder_AddRef(iface);
+        return S_OK;
+    }
+
+    WARN("Unsupported interface %s.\n", debugstr_guid(riid));
+    *obj = NULL;
+    return E_NOINTERFACE;
+}
+
+static ULONG WINAPI video_decoder_AddRef(IDirectXVideoDecoder *iface)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+    ULONG refcount = InterlockedIncrement(&decoder->refcount);
+
+    TRACE("%p, refcount %lu.\n", iface, refcount);
+
+    return refcount;
+}
+
+static ULONG WINAPI video_decoder_Release(IDirectXVideoDecoder *iface)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+    ULONG refcount = InterlockedDecrement(&decoder->refcount);
+    unsigned int i;
+
+    TRACE("%p, refcount %lu.\n", iface, refcount);
+
+    if (!refcount)
+    {
+        struct decoder_destroy_params params = { decoder->unix_context };
+
+        DXVA2_CALL(decoder_destroy, &params);
+
+        for (i = 0; i < DXVA2_BUFFER_TYPE_COUNT; ++i)
+            free(decoder->buffers[i].data);
+        for (i = 0; i < decoder->surface_count; ++i)
+            IDirect3DSurface9_Release(decoder->surfaces[i]);
+        free(decoder->surfaces);
+
+        IDirectXVideoDecoderService_Release(decoder->service);
+        free(decoder);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI video_decoder_GetVideoDecoderService(IDirectXVideoDecoder *iface,
+        IDirectXVideoDecoderService **service)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+
+    TRACE("%p, %p.\n", iface, service);
+
+    *service = decoder->service;
+    IDirectXVideoDecoderService_AddRef(*service);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_decoder_GetCreationParameters(IDirectXVideoDecoder *iface, GUID *guid,
+        DXVA2_VideoDesc *video_desc, DXVA2_ConfigPictureDecode *config, IDirect3DSurface9 ***surfaces,
+        UINT *surface_count)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+    IDirect3DSurface9 **ret;
+    unsigned int i;
+
+    TRACE("%p, %p, %p, %p, %p, %p.\n", iface, guid, video_desc, config, surfaces, surface_count);
+
+    if (!(ret = CoTaskMemAlloc(decoder->surface_count * sizeof(*ret))))
+        return E_OUTOFMEMORY;
+
+    for (i = 0; i < decoder->surface_count; ++i)
+    {
+        ret[i] = decoder->surfaces[i];
+        IDirect3DSurface9_AddRef(ret[i]);
+    }
+
+    *guid = decoder->guid;
+    *video_desc = decoder->video_desc;
+    *config = decoder->config;
+    *surfaces = ret;
+    *surface_count = decoder->surface_count;
+
+    return S_OK;
+}
+
+static const UINT decoder_buffer_sizes[DXVA2_BUFFER_TYPE_COUNT] =
+{
+    [DXVA2_PictureParametersBufferType] = sizeof(DXVA_PicParams_HEVC),
+    [DXVA2_MacroBlockControlBufferType] = 4096,
+    [DXVA2_ResidualDifferenceBufferType] = 4096,
+    [DXVA2_DeblockingControlBufferType] = 4096,
+    [DXVA2_InverseQuantizationMatrixBufferType] = sizeof(DXVA_Qmatrix_HEVC),
+    [DXVA2_SliceControlBufferType] = 256 * sizeof(DXVA_Slice_HEVC_Short),
+    [DXVA2_BitStreamDateBufferType] = 4 * 1024 * 1024,
+    [DXVA2_MotionVectorBuffer] = 4096,
+    [DXVA2_FilmGrainBuffer] = 4096,
+};
+
+static HRESULT WINAPI video_decoder_GetBuffer(IDirectXVideoDecoder *iface, UINT type, void **buffer, UINT *size)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+
+    TRACE("%p, %u, %p, %p.\n", iface, type, buffer, size);
+
+    if (type >= DXVA2_BUFFER_TYPE_COUNT)
+        return E_INVALIDARG;
+
+    if (!decoder->buffers[type].data && !(decoder->buffers[type].data = malloc(decoder_buffer_sizes[type])))
+        return E_OUTOFMEMORY;
+
+    decoder->buffers[type].size = decoder_buffer_sizes[type];
+    *buffer = decoder->buffers[type].data;
+    *size = decoder->buffers[type].size;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_decoder_ReleaseBuffer(IDirectXVideoDecoder *iface, UINT type)
+{
+    TRACE("%p, %u.\n", iface, type);
+
+    if (type >= DXVA2_BUFFER_TYPE_COUNT)
+        return E_INVALIDARG;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_decoder_BeginFrame(IDirectXVideoDecoder *iface, IDirect3DSurface9 *target, void *pvpp_data)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+
+    TRACE("%p, %p, %p.\n", iface, target, pvpp_data);
+
+    decoder->target = target;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI video_decoder_EndFrame(IDirectXVideoDecoder *iface, HANDLE *handle_complete)
+{
+    TRACE("%p, %p.\n", iface, handle_complete);
+
+    if (handle_complete)
+        *handle_complete = (HANDLE)1;
+
+    return S_OK;
+}
+
+static const DXVA2_DecodeBufferDesc *find_buffer_desc(const DXVA2_DecodeExecuteParams *params, DWORD type)
+{
+    UINT i;
+
+    for (i = 0; i < params->NumCompBuffers; ++i)
+        if (params->pCompressedBuffers[i].CompressedBufferType == type)
+            return &params->pCompressedBuffers[i];
+
+    return NULL;
+}
+
+static HRESULT WINAPI video_decoder_Execute(IDirectXVideoDecoder *iface, const DXVA2_DecodeExecuteParams *params)
+{
+    struct video_decoder *decoder = impl_from_IDirectXVideoDecoder(iface);
+    const DXVA2_DecodeBufferDesc *pic_desc, *iq_desc, *slice_desc, *bitstream_desc;
+    struct decoder_decode_params decode_params = { 0 };
+    D3DLOCKED_RECT locked;
+    D3DSURFACE_DESC surface_desc;
+    UINT target_index = UINT_MAX;
+    unsigned int i;
+    HRESULT hr;
+
+    TRACE("%p, %p.\n", iface, params);
+
+    if (!decoder->target)
+        return E_FAIL;
+
+    if (!(pic_desc = find_buffer_desc(params, DXVA2_PictureParametersBufferType)))
+    {
+        WARN("Missing picture parameters buffer.\n");
+        return E_FAIL;
+    }
+    if (!(slice_desc = find_buffer_desc(params, DXVA2_SliceControlBufferType)))
+    {
+        WARN("Missing slice control buffer.\n");
+        return E_FAIL;
+    }
+    if (!(bitstream_desc = find_buffer_desc(params, DXVA2_BitStreamDateBufferType)))
+    {
+        WARN("Missing bitstream buffer.\n");
+        return E_FAIL;
+    }
+    iq_desc = find_buffer_desc(params, DXVA2_InverseQuantizationMatrixBufferType);
+
+    for (i = 0; i < decoder->surface_count; ++i)
+    {
+        if (decoder->surfaces[i] == decoder->target)
+        {
+            target_index = i;
+            break;
+        }
+    }
+    if (target_index == UINT_MAX)
+    {
+        WARN("Target surface %p is not one of the decoder's surfaces.\n", decoder->target);
+        return E_FAIL;
+    }
+
+    /* Apps often allocate decode surfaces taller than the display height
+     * (e.g. padded to a macroblock/alignment boundary of their own choosing,
+     * independent of what the SPS's coded dimensions - in video_desc - say).
+     * Fill however many rows the real surface has, not what video_desc claims,
+     * or anything below the decoded picture is left as stale/uninitialized
+     * surface memory. */
+    if (FAILED(hr = IDirect3DSurface9_GetDesc(decoder->target, &surface_desc)))
+    {
+        WARN("Failed to get target surface description, hr %#lx.\n", hr);
+        return hr;
+    }
+
+    if (FAILED(hr = IDirect3DSurface9_LockRect(decoder->target, &locked, NULL, D3DLOCK_DISCARD)))
+    {
+        WARN("Failed to lock target surface, hr %#lx.\n", hr);
+        return hr;
+    }
+
+    decode_params.context = decoder->unix_context;
+    decode_params.target_surface_index = target_index;
+    decode_params.pic_params = (BYTE *)decoder->buffers[DXVA2_PictureParametersBufferType].data + pic_desc->DataOffset;
+    decode_params.pic_params_size = pic_desc->DataSize;
+    if (iq_desc)
+    {
+        decode_params.qmatrix = (BYTE *)decoder->buffers[DXVA2_InverseQuantizationMatrixBufferType].data + iq_desc->DataOffset;
+        decode_params.qmatrix_size = iq_desc->DataSize;
+    }
+    decode_params.slice_control = (BYTE *)decoder->buffers[DXVA2_SliceControlBufferType].data + slice_desc->DataOffset;
+    decode_params.slice_count = slice_desc->DataSize / sizeof(DXVA_Slice_HEVC_Short);
+    decode_params.bitstream = (BYTE *)decoder->buffers[DXVA2_BitStreamDateBufferType].data + bitstream_desc->DataOffset;
+    decode_params.bitstream_size = bitstream_desc->DataSize;
+    decode_params.output = locked.pBits;
+    decode_params.output_stride = locked.Pitch;
+    decode_params.output_height = surface_desc.Height;
+
+    hr = SUCCEEDED(DXVA2_CALL(decoder_decode_frame, &decode_params)) ? S_OK : E_FAIL;
+
+    IDirect3DSurface9_UnlockRect(decoder->target);
+
+    return hr;
+}
+
+static const IDirectXVideoDecoderVtbl video_decoder_vtbl =
+{
+    video_decoder_QueryInterface,
+    video_decoder_AddRef,
+    video_decoder_Release,
+    video_decoder_GetVideoDecoderService,
+    video_decoder_GetCreationParameters,
+    video_decoder_GetBuffer,
+    video_decoder_ReleaseBuffer,
+    video_decoder_BeginFrame,
+    video_decoder_EndFrame,
+    video_decoder_Execute,
+};
 
 static HRESULT WINAPI device_manager_decoder_service_CreateVideoDecoder(IDirectXVideoDecoderService *iface,
         REFGUID guid, const DXVA2_VideoDesc *video_desc, const DXVA2_ConfigPictureDecode *config, IDirect3DSurface9 **rts,
         UINT num_surfaces, IDirectXVideoDecoder **decoder)
 {
-    FIXME("%p, %s, %p, %p, %p, %u, %p.\n", iface, debugstr_guid(guid), video_desc, config, rts, num_surfaces,
+    struct decoder_create_params create_params = { 0 };
+    struct video_decoder *object;
+    unsigned int i;
+
+    TRACE("%p, %s, %p, %p, %p, %u, %p.\n", iface, debugstr_guid(guid), video_desc, config, rts, num_surfaces,
             decoder);
 
-    return E_NOTIMPL;
+    if (!(object = calloc(1, sizeof(*object))))
+        return E_OUTOFMEMORY;
+
+    if (!(object->surfaces = calloc(num_surfaces, sizeof(*object->surfaces))))
+    {
+        free(object);
+        return E_OUTOFMEMORY;
+    }
+
+    create_params.guid = *guid;
+    create_params.width = video_desc->SampleWidth;
+    create_params.height = video_desc->SampleHeight;
+    create_params.surface_count = num_surfaces;
+
+    if (FAILED(DXVA2_CALL(decoder_create, &create_params)) || !create_params.context)
+    {
+        WARN("Failed to create hardware decode context for %s.\n", debugstr_guid(guid));
+        free(object->surfaces);
+        free(object);
+        return E_FAIL;
+    }
+
+    object->IDirectXVideoDecoder_iface.lpVtbl = &video_decoder_vtbl;
+    object->refcount = 1;
+    object->service = iface;
+    IDirectXVideoDecoderService_AddRef(object->service);
+    object->guid = *guid;
+    object->video_desc = *video_desc;
+    object->config = *config;
+    object->surface_count = num_surfaces;
+    object->unix_context = create_params.context;
+
+    for (i = 0; i < num_surfaces; ++i)
+    {
+        object->surfaces[i] = rts[i];
+        IDirect3DSurface9_AddRef(object->surfaces[i]);
+    }
+
+    *decoder = &object->IDirectXVideoDecoder_iface;
+
+    return S_OK;
 }
 
 static const IDirectXVideoDecoderServiceVtbl device_manager_decoder_service_vtbl =
