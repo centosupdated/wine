@@ -112,7 +112,6 @@ static const WCHAR PORTNAME[] = {'\\','M','y','P','o','r','t',0};
 static UNICODE_STRING port;
 
 /* Function pointers for ntdll calls */
-static HMODULE hntdll = 0;
 static NTSTATUS (WINAPI *pNtCompleteConnectPort)(HANDLE);
 static NTSTATUS (WINAPI *pNtAcceptConnectPort)(PHANDLE,ULONG,PLPC_MESSAGE,ULONG,
                                                PLPC_SECTION_WRITE,PLPC_SECTION_READ);
@@ -131,39 +130,6 @@ static NTSTATUS (WINAPI *pRtlInitUnicodeString)(PUNICODE_STRING,LPCWSTR);
 static BOOL     (WINAPI *pIsWow64Process)(HANDLE, PBOOL);
 
 static BOOL is_wow64;
-
-static BOOL init_function_ptrs(void)
-{
-    hntdll = LoadLibraryA("ntdll.dll");
-
-    if (!hntdll)
-        return FALSE;
-
-    pNtCompleteConnectPort = (void *)GetProcAddress(hntdll, "NtCompleteConnectPort");
-    pNtAcceptConnectPort = (void *)GetProcAddress(hntdll, "NtAcceptConnectPort");
-    pNtReplyPort = (void *)GetProcAddress(hntdll, "NtReplyPort");
-    pNtReplyWaitReceivePort = (void *)GetProcAddress(hntdll, "NtReplyWaitReceivePort");
-    pNtCreatePort = (void *)GetProcAddress(hntdll, "NtCreatePort");
-    pNtRequestWaitReplyPort = (void *)GetProcAddress(hntdll, "NtRequestWaitReplyPort");
-    pNtRequestPort = (void *)GetProcAddress(hntdll, "NtRequestPort");
-    pNtRegisterThreadTerminatePort = (void *)GetProcAddress(hntdll, "NtRegisterThreadTerminatePort");
-    pNtConnectPort = (void *)GetProcAddress(hntdll, "NtConnectPort");
-    pRtlInitUnicodeString = (void *)GetProcAddress(hntdll, "RtlInitUnicodeString");
-
-    if (!pNtCompleteConnectPort || !pNtAcceptConnectPort ||
-        !pNtReplyWaitReceivePort || !pNtCreatePort || !pNtRequestWaitReplyPort ||
-        !pNtRequestPort || !pNtRegisterThreadTerminatePort ||
-        !pNtConnectPort || !pRtlInitUnicodeString)
-    {
-        todo_wine win_skip("Needed port functions are not available\n");
-        FreeLibrary(hntdll);
-        return FALSE;
-    }
-
-    pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
-    if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
-    return TRUE;
-}
 
 static void ProcessConnectionRequest(union lpc_message *LpcMessage, PHANDLE pAcceptPortHandle)
 {
@@ -184,7 +150,7 @@ static void ProcessConnectionRequest(union lpc_message *LpcMessage, PHANDLE pAcc
 
     status = pNtAcceptConnectPort(pAcceptPortHandle, 0, &LpcMessage->msg, 1, NULL, NULL);
     ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %lx\n", status);
-    
+
     status = pNtCompleteConnectPort(*pAcceptPortHandle);
     ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %lx\n", status);
 }
@@ -367,14 +333,108 @@ static void test_ports_server( HANDLE PortHandle )
     HeapFree(GetProcessHeap(), 0, LpcMessage);
 }
 
+static void test_create_port_errors(void)
+{
+    OBJECT_ATTRIBUTES obj;
+    HANDLE port_handle;
+    NTSTATUS status;
+    UNICODE_STRING name;
+    static const WCHAR ERR_PORT1[] = {'\\','E','r','r','P','o','r','t','1',0};
+    static const WCHAR ERR_PORT2[] = {'\\','E','r','r','P','o','r','t','2',0};
+    static const WCHAR ERR_PORT3[] = {'\\','E','r','r','P','o','r','t','3',0};
+
+    /* NULL object attributes */
+    status = pNtCreatePort(&port_handle, NULL, 0, 0, 0);
+    ok(status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER || status == STATUS_ACCESS_VIOLATION,
+       "Expected STATUS_SUCCESS, STATUS_INVALID_PARAMETER or STATUS_ACCESS_VIOLATION, got %08lx\n", status);
+    if (status == STATUS_SUCCESS) NtClose(port_handle);
+
+    /* Zero-length object attributes */
+    memset(&obj, 0, sizeof(OBJECT_ATTRIBUTES));
+    obj.Length = 0;
+    status = pNtCreatePort(&port_handle, &obj, 0, 0, 0);
+    ok(status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER || status == STATUS_INVALID_HANDLE,
+       "Expected STATUS_SUCCESS, STATUS_INVALID_PARAMETER or STATUS_INVALID_HANDLE, got %08lx\n", status);
+    if (status == STATUS_SUCCESS) NtClose(port_handle);
+
+    /* Valid object attributes but NULL name */
+    memset(&obj, 0, sizeof(OBJECT_ATTRIBUTES));
+    obj.Length = sizeof(OBJECT_ATTRIBUTES);
+    obj.ObjectName = NULL;
+    status = pNtCreatePort(&port_handle, &obj, 0, 0, 0);
+    ok(status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER || status == STATUS_OBJECT_NAME_INVALID,
+       "Expected STATUS_SUCCESS, STATUS_INVALID_PARAMETER or STATUS_OBJECT_NAME_INVALID, got %08lx\n", status);
+    if (status == STATUS_SUCCESS) NtClose(port_handle);
+
+    /* Empty name */
+    pRtlInitUnicodeString(&name, L"");
+    memset(&obj, 0, sizeof(OBJECT_ATTRIBUTES));
+    obj.Length = sizeof(OBJECT_ATTRIBUTES);
+    obj.ObjectName = &name;
+    status = pNtCreatePort(&port_handle, &obj, 0, 0, 0);
+    ok(status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER || status == STATUS_OBJECT_NAME_INVALID,
+       "Expected STATUS_SUCCESS, STATUS_INVALID_PARAMETER or STATUS_OBJECT_NAME_INVALID, got %08lx\n", status);
+    if (status == STATUS_SUCCESS) NtClose(port_handle);
+
+    /* Max message size too large */
+    pRtlInitUnicodeString(&name, ERR_PORT1);
+    memset(&obj, 0, sizeof(OBJECT_ATTRIBUTES));
+    obj.Length = sizeof(OBJECT_ATTRIBUTES);
+    obj.ObjectName = &name;
+    status = pNtCreatePort(&port_handle, &obj, 0x100001, 0, 0);
+    ok(status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER || status == STATUS_SECTION_TOO_BIG || status == STATUS_OBJECT_NAME_COLLISION,
+       "Expected STATUS_SUCCESS, STATUS_INVALID_PARAMETER, STATUS_SECTION_TOO_BIG or STATUS_OBJECT_NAME_COLLISION, got %08lx\n", status);
+    if (status == STATUS_SUCCESS) NtClose(port_handle);
+
+    /* Max connect info too large */
+    pRtlInitUnicodeString(&name, ERR_PORT2);
+    memset(&obj, 0, sizeof(OBJECT_ATTRIBUTES));
+    obj.Length = sizeof(OBJECT_ATTRIBUTES);
+    obj.ObjectName = &name;
+    status = pNtCreatePort(&port_handle, &obj, 0, 0x100001, 0);
+    ok(status == STATUS_SUCCESS || status == STATUS_INVALID_PARAMETER || status == STATUS_SECTION_TOO_BIG || status == STATUS_OBJECT_NAME_COLLISION,
+       "Expected STATUS_SUCCESS, STATUS_INVALID_PARAMETER, STATUS_SECTION_TOO_BIG or STATUS_OBJECT_NAME_COLLISION, got %08lx\n", status);
+    if (status == STATUS_SUCCESS) NtClose(port_handle);
+
+    /* Creating port with name that already exists */
+    pRtlInitUnicodeString(&name, ERR_PORT3);
+    memset(&obj, 0, sizeof(OBJECT_ATTRIBUTES));
+    obj.Length = sizeof(OBJECT_ATTRIBUTES);
+    obj.ObjectName = &name;
+    status = pNtCreatePort(&port_handle, &obj, 100, 100, 0);
+    ok(status == STATUS_SUCCESS, "Expected STATUS_SUCCESS, got %08lx\n", status);
+    if (status == STATUS_SUCCESS)
+    {
+        NTSTATUS status2;
+        HANDLE port_handle2;
+        status2 = pNtCreatePort(&port_handle2, &obj, 100, 100, 0);
+        ok(status2 == STATUS_OBJECT_NAME_COLLISION,
+           "Expected STATUS_OBJECT_NAME_COLLISION, got %08lx\n", status2);
+        NtClose(port_handle);
+    }
+}
+
+
 START_TEST(port)
 {
     OBJECT_ATTRIBUTES obj;
     HANDLE port_handle;
     NTSTATUS status;
+    HMODULE hntdll = GetModuleHandleA("ntdll.dll");
 
-    if (!init_function_ptrs())
-        return;
+    pNtCompleteConnectPort = (void *)GetProcAddress(hntdll, "NtCompleteConnectPort");
+    pNtAcceptConnectPort = (void *)GetProcAddress(hntdll, "NtAcceptConnectPort");
+    pNtReplyPort = (void *)GetProcAddress(hntdll, "NtReplyPort");
+    pNtReplyWaitReceivePort = (void *)GetProcAddress(hntdll, "NtReplyWaitReceivePort");
+    pNtCreatePort = (void *)GetProcAddress(hntdll, "NtCreatePort");
+    pNtRequestWaitReplyPort = (void *)GetProcAddress(hntdll, "NtRequestWaitReplyPort");
+    pNtRequestPort = (void *)GetProcAddress(hntdll, "NtRequestPort");
+    pNtRegisterThreadTerminatePort = (void *)GetProcAddress(hntdll, "NtRegisterThreadTerminatePort");
+    pNtConnectPort = (void *)GetProcAddress(hntdll, "NtConnectPort");
+    pRtlInitUnicodeString = (void *)GetProcAddress(hntdll, "RtlInitUnicodeString");
+
+    pIsWow64Process = (void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process");
+    if (!pIsWow64Process || !pIsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
 
     pRtlInitUnicodeString(&port, PORTNAME);
 
@@ -396,5 +456,7 @@ START_TEST(port)
         ok( WaitForSingleObject( thread, 10000 ) == 0, "thread didn't exit\n" );
         CloseHandle(thread);
     }
+    test_create_port_errors();
+
     FreeLibrary(hntdll);
 }
