@@ -721,10 +721,38 @@ static HRESULT WINAPI device_manager_decoder_service_CreateSurface(IDirectXVideo
         UINT width, UINT height, UINT backbuffers, D3DFORMAT format, D3DPOOL pool, DWORD usage, DWORD dxvaType,
         IDirect3DSurface9 **surfaces, HANDLE *shared_handle)
 {
-    FIXME("%p, %u, %u, %u, %#x, %d, %ld, %ld, %p, %p.\n", iface, width, height, backbuffers, format, pool, usage,
+    struct device_manager *manager = impl_from_IDirectXVideoDecoderService(iface);
+    unsigned int i, j;
+    HRESULT hr;
+
+    TRACE("%p, %u, %u, %u, %#x, %d, %ld, %ld, %p, %p.\n", iface, width, height, backbuffers, format, pool, usage,
             dxvaType, surfaces, shared_handle);
 
-    return E_NOTIMPL;
+    if (backbuffers >= UINT_MAX)
+        return E_INVALIDARG;
+
+    memset(surfaces, 0, (backbuffers + 1) * sizeof(*surfaces));
+
+    for (i = 0; i < backbuffers + 1; ++i)
+    {
+        if (FAILED(hr = IDirect3DDevice9_CreateOffscreenPlainSurface(manager->device, width, height, format,
+                pool, &surfaces[i], NULL)))
+            break;
+    }
+
+    if (FAILED(hr))
+    {
+        for (j = 0; j < i; ++j)
+        {
+            if (surfaces[j])
+            {
+                IDirect3DSurface9_Release(surfaces[j]);
+                surfaces[j] = NULL;
+            }
+        }
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI device_manager_decoder_service_GetDecoderDeviceGuids(IDirectXVideoDecoderService *iface,
