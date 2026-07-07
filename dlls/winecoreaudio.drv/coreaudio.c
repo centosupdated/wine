@@ -202,9 +202,14 @@ static BOOL device_has_channels(AudioDeviceID device, EDataFlow flow)
 
 static NTSTATUS unix_get_endpoint_ids(void *args)
 {
+    /* short enough for winmm's MAXPNAMELEN after mmdevapi's "FormFactor (name)" wrapping */
+    static const WCHAR default_render_name[] = {'D','e','f','a','u','l','t',' ','O','u','t','p','u','t',0};
+    static const WCHAR default_capture_name[] = {'D','e','f','a','u','l','t',' ','I','n','p','u','t',0};
     struct get_endpoint_ids_params *params = args;
     unsigned int num_devices, i, needed, offset;
-    AudioDeviceID *devices, default_id;
+    const WCHAR *default_name;
+    SIZE_T default_name_len;
+    AudioDeviceID *devices;
     AudioObjectPropertyAddress addr;
     struct endpoint *endpoint;
     UInt32 devsize, size;
@@ -212,7 +217,6 @@ static NTSTATUS unix_get_endpoint_ids(void *args)
     {
         CFStringRef name;
         CFStringRef uid;
-        AudioDeviceID id;
     } *info;
     OSStatus sc;
     UniChar *ptr;
@@ -220,22 +224,19 @@ static NTSTATUS unix_get_endpoint_ids(void *args)
     params->num = 0;
     params->default_idx = 0;
 
-    addr.mScope = kAudioObjectPropertyScopeGlobal;
-    addr.mElement = kAudioObjectPropertyElementMain;
-    if(params->flow == eRender) addr.mSelector = kAudioHardwarePropertyDefaultOutputDevice;
-    else if(params->flow == eCapture) addr.mSelector = kAudioHardwarePropertyDefaultInputDevice;
-    else{
+    if(params->flow == eRender){
+        default_name = default_render_name;
+        default_name_len = ARRAY_SIZE(default_render_name);
+    }else if(params->flow == eCapture){
+        default_name = default_capture_name;
+        default_name_len = ARRAY_SIZE(default_capture_name);
+    }else{
         params->result = E_INVALIDARG;
         return STATUS_SUCCESS;
     }
 
-    size = sizeof(default_id);
-    sc = AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, NULL, &size, &default_id);
-    if(sc != noErr){
-        WARN("Getting _DefaultInputDevice property failed: %x\n", (int)sc);
-        default_id = -1;
-    }
-
+    addr.mScope = kAudioObjectPropertyScopeGlobal;
+    addr.mElement = kAudioObjectPropertyElementMain;
     addr.mSelector = kAudioHardwarePropertyDevices;
     sc = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &addr, 0, NULL, &devsize);
     if(sc != noErr){
@@ -287,12 +288,32 @@ static NTSTATUS unix_get_endpoint_ids(void *args)
             continue;
         }
 
-        info[params->num++].id = devices[i];
+        params->num++;
     }
     free(devices);
 
-    offset = needed = sizeof(*endpoint) * params->num;
+    /* the extra endpoint is the virtual default device, which is always
+     * first and identified by an empty device string; it is only exposed
+     * when at least one real device is present */
+    offset = needed = sizeof(*endpoint) * (params->num ? params->num + 1 : 0);
     endpoint = params->endpoints;
+
+    if(params->num){
+        /* name, then an empty device string padded to WCHAR alignment */
+        needed += default_name_len * sizeof(WCHAR) + 2;
+        if(needed <= params->size){
+            endpoint->name = offset;
+            memcpy((char *)params->endpoints + offset, default_name, default_name_len * sizeof(WCHAR));
+            offset += default_name_len * sizeof(WCHAR);
+
+            endpoint->device = offset;
+            ((char *)params->endpoints)[offset] = '\0';
+            ((char *)params->endpoints)[offset + 1] = '\0';
+            offset += 2;
+
+            endpoint++;
+        }
+    }
 
     for(i = 0; i < params->num; i++){
         const SIZE_T name_len = CFStringGetLength(info[i].name) + 1;
@@ -321,9 +342,9 @@ static NTSTATUS unix_get_endpoint_ids(void *args)
         }
         CFRelease(info[i].name);
         CFRelease(info[i].uid);
-        if(info[i].id == default_id) params->default_idx = i;
     }
     free(info);
+    if(params->num) params->num++; /* count the virtual default endpoint */
 
     if(needed > params->size){
         params->size = needed;
@@ -669,7 +690,25 @@ static HRESULT ca_setup_audiounit(EDataFlow dataflow, AudioComponentInstance uni
     return S_OK;
 }
 
-static AudioDeviceID dev_id_from_device(const char *device)
+static AudioDeviceID get_default_device(EDataFlow flow)
+{
+    AudioDeviceID id = kAudioObjectUnknown;
+    UInt32 size = sizeof(id);
+    AudioObjectPropertyAddress addr =
+    {
+        .mScope = kAudioObjectPropertyScopeGlobal,
+        .mElement = kAudioObjectPropertyElementMain,
+    };
+
+    addr.mSelector = (flow == eRender) ? kAudioHardwarePropertyDefaultOutputDevice
+                                       : kAudioHardwarePropertyDefaultInputDevice;
+    if(AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, NULL,
+                                   &size, &id) != noErr)
+        return kAudioObjectUnknown;
+    return id;
+}
+
+static AudioDeviceID dev_id_from_device(const char *device, EDataFlow flow)
 {
     AudioDeviceID id;
     CFStringRef uid;
@@ -681,6 +720,10 @@ static AudioDeviceID dev_id_from_device(const char *device)
         .mElement = kAudioObjectPropertyElementMain,
         .mSelector = kAudioHardwarePropertyTranslateUIDToDevice,
     };
+
+    /* the virtual default endpoint has an empty device string */
+    if(!device || !device[0])
+        return get_default_device(flow);
 
     uid = CFStringCreateWithCStringNoCopy(NULL, device, kCFStringEncodingUTF8, kCFAllocatorNull);
 
@@ -728,7 +771,7 @@ static NTSTATUS unix_create_stream(void *args)
         goto end;
     }
 
-    stream->dev_id = dev_id_from_device(params->device);
+    stream->dev_id = dev_id_from_device(params->device, params->flow);
     stream->flow = params->flow;
     stream->flags = params->flags;
     stream->share = params->share;
@@ -996,7 +1039,7 @@ static NTSTATUS unix_get_mix_format(void *args)
     UInt32 size;
     OSStatus sc;
     int i;
-    const AudioDeviceID dev_id = dev_id_from_device(params->device);
+    const AudioDeviceID dev_id = dev_id_from_device(params->device, params->flow);
 
     params->fmt->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
 
@@ -1095,7 +1138,7 @@ static NTSTATUS unix_is_format_supported(void *args)
     AudioStreamBasicDescription dev_desc;
     AudioConverterRef converter;
     AudioComponentInstance unit;
-    const AudioDeviceID dev_id = dev_id_from_device(params->device);
+    const AudioDeviceID dev_id = dev_id_from_device(params->device, params->flow);
 
     unit = get_audiounit(params->flow, dev_id);
 
