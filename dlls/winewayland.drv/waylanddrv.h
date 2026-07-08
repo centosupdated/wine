@@ -223,6 +223,7 @@ struct wayland_output
     struct wl_output *wl_output;
     struct zxdg_output_v1 *zxdg_output_v1;
     uint32_t global_id;
+    BOOL removed;
     unsigned int pending_flags;
     LONG ref;
     struct wayland_output_state pending, current;
@@ -274,6 +275,12 @@ struct wayland_shm_buffer
     HRGN damage_region;
 };
 
+struct surface_output_entry
+{
+    struct wl_list link;
+    struct wayland_output *output;
+};
+
 struct wayland_surface
 {
     HWND hwnd;
@@ -299,7 +306,7 @@ struct wayland_surface
         };
     };
     struct wp_alpha_modifier_surface_v1 *wp_alpha_modifier_surface_v1;
-
+    struct wl_list output_list;
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;
     struct wayland_window_config window;

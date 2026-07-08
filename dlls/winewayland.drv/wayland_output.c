@@ -419,6 +419,7 @@ void wayland_output_remove(struct wayland_output *output)
     wl_list_remove(&output->link);
     pthread_mutex_unlock(&process_wayland.output_mutex);
 
+    output->removed = TRUE;
     wayland_output_release(output);
 
     maybe_init_display_devices();
