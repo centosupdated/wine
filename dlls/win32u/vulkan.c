@@ -1533,7 +1533,7 @@ static VkResult win32u_vkCreateWin32SurfaceKHR( VkInstance client_instance, cons
         surface->hwnd = dummy;
     }
 
-    if (!(surface->client = user_driver->pCreateClientSurface( surface->hwnd, 0 ))) res = VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (!(surface->client = user_driver->pCreateClientSurface( surface->hwnd, 0, FALSE ))) res = VK_ERROR_OUT_OF_HOST_MEMORY;
     else res = driver_funcs->p_vulkan_surface_create( surface->client, instance, &host_surface );
     if (res)
     {
@@ -1835,7 +1835,12 @@ static VkResult win32u_vkCreateSwapchainKHR( VkDevice client_device, const VkSwa
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
-    if (surface) create_info_host.surface = surface->obj.host.surface;
+    if (surface)
+    {
+        create_info_host.surface = surface->obj.host.surface;
+        if (surface->client && client_surface_grab( surface->client ))
+            return VK_ERROR_NATIVE_WINDOW_IN_USE_KHR;
+    }
     if (old_swapchain) create_info_host.oldSwapchain = old_swapchain->obj.host.swapchain;
 
     /* Windows allows client rect to be empty, but host Vulkan often doesn't, adjust extents back to the host capabilities */
@@ -1882,12 +1887,15 @@ void win32u_vkDestroySwapchainKHR( VkDevice client_device, VkSwapchainKHR client
     struct vulkan_device *device = vulkan_device_from_handle( client_device );
     struct vulkan_instance *instance = device->physical_device->instance;
     struct swapchain *swapchain = swapchain_from_handle( client_swapchain );
+    struct surface *surface = swapchain->surface;
 
     if (allocator) FIXME( "Support for allocation callbacks not implemented yet\n" );
     if (!swapchain) return;
 
     device->p_vkDestroySwapchainKHR( device->host.device, swapchain->obj.host.swapchain, NULL );
     instance->p_remove_object( instance, &swapchain->obj.obj );
+
+    if (surface && surface->client) client_surface_drop( surface->client );
 
     free( swapchain );
 }

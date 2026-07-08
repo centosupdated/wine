@@ -1145,7 +1145,7 @@ struct macdrv_client_surface *impl_from_client_surface(struct client_surface *cl
     return CONTAINING_RECORD(client, struct macdrv_client_surface, client);
 }
 
-struct client_surface *macdrv_CreateClientSurface(HWND hwnd, int pixel_format)
+struct client_surface *macdrv_CreateClientSurface(HWND hwnd, int pixel_format, BOOL gl)
 {
     struct macdrv_client_surface *surface;
 

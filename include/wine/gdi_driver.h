@@ -263,6 +263,7 @@ struct client_surface
     const struct client_surface_funcs *funcs;
     struct list                        entry;          /* entry in win32u managed list */
     LONG                               ref;            /* reference count */
+    LONG                               grab_ref;       /* underlying WSI is using the surface */
     HWND                               hwnd;           /* window the surface was created for */
     LONG                               updated;        /* has been moved / resized / reparented */
     HWND                               toplevel;       /* toplevel window of the surface */
@@ -278,6 +279,16 @@ W32KAPI void client_surface_present( struct client_surface *surface );
 W32KAPI void client_surface_update( struct client_surface *surface );
 W32KAPI void update_client_surfaces( HWND hwnd );
 W32KAPI void detach_client_surfaces( HWND hwnd );
+
+static inline LONG client_surface_grab( struct client_surface *surface )
+{
+    return InterlockedCompareExchange( &surface->grab_ref, 1, 0 );
+}
+
+static inline LONG client_surface_drop( struct client_surface *surface )
+{
+    return InterlockedCompareExchange( &surface->grab_ref, 0, 1 );
+}
 
 static inline const char *debugstr_client_surface( struct client_surface *surface )
 {
@@ -424,7 +435,7 @@ struct user_driver_funcs
     BOOL    (*pWindowPosChanging)(HWND,UINT,BOOL,const struct window_rects *);
     BOOL    (*pGetWindowStyleMasks)(HWND,UINT,UINT,UINT*,UINT*);
     BOOL    (*pGetWindowStateUpdates)(HWND,UINT*,UINT*,RECT*,HWND*);
-    struct client_surface *(*pCreateClientSurface)(HWND,int);
+    struct client_surface *(*pCreateClientSurface)(HWND,int,BOOL);
     BOOL    (*pCreateWindowSurface)(HWND,BOOL,const RECT *,struct window_surface**);
     void    (*pMoveWindowBits)(HWND,const struct window_rects *,const struct window_rects *,const RECT *);
     void    (*pWindowPosChanged)(HWND,HWND,HWND,UINT,const struct window_rects*,struct window_surface*);

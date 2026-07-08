@@ -442,6 +442,7 @@ void add_window_client_surface( HWND hwnd, struct client_surface *surface )
     pthread_mutex_lock( &surfaces_lock );
 
     surface->hwnd = hwnd;
+    list_init( &surface->entry );
     list_add_tail( &client_surfaces, &surface->entry );
     client_surface_update_locked( surface );
 

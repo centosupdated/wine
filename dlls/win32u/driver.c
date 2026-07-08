@@ -904,7 +904,7 @@ static const struct client_surface_funcs nulldrv_surface_funcs =
     .present = nulldrv_surface_present,
 };
 
-static struct client_surface *nulldrv_CreateClientSurface( HWND hwnd, int pixel_format )
+static struct client_surface *nulldrv_CreateClientSurface( HWND hwnd, int pixel_format, BOOL gl )
 {
     return client_surface_create( sizeof(struct client_surface), &nulldrv_surface_funcs, hwnd );
 }
