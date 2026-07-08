@@ -1463,7 +1463,7 @@ static struct opengl_drawable *get_window_unused_drawable( HWND hwnd, int format
     {
         struct client_surface *client;
 
-        if (!(client = user_driver->pCreateClientSurface( hwnd, format )))
+        if (!(client = user_driver->pCreateClientSurface( hwnd, format, TRUE )))
             WARN( "Failed to create a surface for window %p, format %d\n", hwnd, format );
         else
         {

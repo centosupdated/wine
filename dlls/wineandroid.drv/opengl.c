@@ -189,7 +189,7 @@ static const struct client_surface_funcs android_client_surface_funcs =
     .present = android_client_surface_present,
 };
 
-struct client_surface *ANDROID_CreateClientSurface( HWND hwnd, int pixel_format )
+struct client_surface *ANDROID_CreateClientSurface( HWND hwnd, int pixel_format, BOOL gl )
 {
     return client_surface_create( sizeof(struct client_surface), &android_client_surface_funcs, hwnd );
 }

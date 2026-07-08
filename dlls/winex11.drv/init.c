@@ -433,7 +433,7 @@ struct x11drv_client_surface *impl_from_client_surface( struct client_surface *c
     return CONTAINING_RECORD( client, struct x11drv_client_surface, client );
 }
 
-struct client_surface *X11DRV_CreateClientSurface( HWND hwnd, int format )
+struct client_surface *X11DRV_CreateClientSurface( HWND hwnd, int format, BOOL gl )
 {
     struct x11drv_client_surface *surface;
     XVisualInfo visual = default_visual;

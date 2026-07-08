@@ -1238,7 +1238,7 @@ struct wayland_client_surface *impl_from_client_surface(struct client_surface *c
     return CONTAINING_RECORD(client, struct wayland_client_surface, client);
 }
 
-struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format)
+struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format, BOOL gl)
 {
     struct wayland_client_surface *client;
     struct wl_region *empty_region;
