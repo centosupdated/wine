@@ -39,6 +39,7 @@ static uint32_t next_output_id = 0;
 #define WAYLAND_OUTPUT_CHANGED_NAME       0x02
 #define WAYLAND_OUTPUT_CHANGED_LOGICAL_XY 0x04
 #define WAYLAND_OUTPUT_CHANGED_LOGICAL_WH 0x08
+#define WAYLAND_OUTPUT_CHANGED_GEOMETRY   0x10
 
 /**********************************************************************
  *          Output handling
@@ -135,10 +136,28 @@ static void wayland_output_done(struct wayland_output *output)
     /* Update current state from pending state. */
     pthread_mutex_lock(&process_wayland.output_mutex);
 
+    if (output->pending_flags & WAYLAND_OUTPUT_CHANGED_GEOMETRY)
+    {
+        free(output->current.make);
+        free(output->current.model);
+        output->current.transform = output->pending.transform;
+        output->current.width_mm = output->pending.width_mm;
+        output->current.height_mm = output->pending.height_mm;
+        output->current.make = output->pending.make;
+        output->current.model = output->pending.model;
+    }
+
     if (output->pending_flags & WAYLAND_OUTPUT_CHANGED_MODES)
     {
         RB_FOR_EACH_ENTRY(mode, &output->pending.modes, struct wayland_output_mode, entry)
         {
+            /* switch the width and height of a mode if the output is rotated by 90/270 degrees */
+            if (output->current.transform & WL_OUTPUT_TRANSFORM_90)
+            {
+                uint32_t temp = mode->width;
+                mode->width = mode->height;
+                mode->height = temp;
+            }
             wayland_output_state_add_mode(&output->current,
                                           mode->width, mode->height, mode->refresh,
                                           mode == output->pending.current_mode);
@@ -170,11 +189,16 @@ static void wayland_output_done(struct wayland_output *output)
     output->pending_flags = 0;
 
     /* Ensure the logical dimensions have sane values. */
-    if ((!output->current.logical_w || !output->current.logical_h) &&
-        output->current.current_mode)
+    if ((mode = output->current.current_mode))
     {
-        output->current.logical_w = output->current.current_mode->width;
-        output->current.logical_h = output->current.current_mode->height;
+        if (!output->current.logical_w || !output->current.logical_h)
+        {
+            output->current.logical_w = mode->width;
+            output->current.logical_h = mode->height;
+        }
+
+        /* update the output scale using logical and physical coordinates */
+        output->current.scale = mode->width / (double)output->current.logical_w;
     }
 
     pthread_mutex_unlock(&process_wayland.output_mutex);
@@ -200,6 +224,15 @@ static void output_handle_geometry(void *data, struct wl_output *wl_output,
                                    const char *make, const char *model,
                                    int32_t output_transform)
 {
+    struct wayland_output *output = data;
+
+    output->pending.transform = output_transform;
+    output->pending.width_mm = physical_width;
+    output->pending.height_mm = physical_height;
+    output->pending.model = strdup(model);
+    output->pending.make = strdup(make);
+
+    output->pending_flags |= WAYLAND_OUTPUT_CHANGED_GEOMETRY;
 }
 
 static void output_handle_mode(void *data, struct wl_output *wl_output,
@@ -340,8 +373,23 @@ BOOL wayland_output_create(uint32_t id, uint32_t version)
         goto err;
     }
 
+    if (!(output->current.model = strdup("Monitor")))
+    {
+        ERR("Couldn't allocate space for output model\n");
+        goto err;
+    }
+
+    if (!(output->current.make = strdup("Wine")))
+    {
+        ERR("Couldn't allocate space for output make\n");
+        goto err;
+    }
+
     if (process_wayland.zxdg_output_manager_v1)
         wayland_output_use_xdg_extension(output);
+
+    output->current.scale = 1.0;
+    output->ref = 1;
 
     pthread_mutex_lock(&process_wayland.output_mutex);
     wl_list_insert(process_wayland.output_list.prev, &output->link);
@@ -350,7 +398,7 @@ BOOL wayland_output_create(uint32_t id, uint32_t version)
     return TRUE;
 
 err:
-    if (output) wayland_output_destroy(output);
+    if (output) wayland_output_release(output);
     return FALSE;
 }
 
@@ -361,15 +409,35 @@ static void wayland_output_state_deinit(struct wayland_output_state *state)
 }
 
 /**********************************************************************
- *          wayland_output_destroy
+ *          wayland_output_remove
  *
- *  Destroys a wayland_output.
+ *  Drops ref of wayland output from the output list, and updates display devices.
  */
-void wayland_output_destroy(struct wayland_output *output)
+void wayland_output_remove(struct wayland_output *output)
 {
     pthread_mutex_lock(&process_wayland.output_mutex);
     wl_list_remove(&output->link);
     pthread_mutex_unlock(&process_wayland.output_mutex);
+
+    output->removed = TRUE;
+    wayland_output_release(output);
+
+    maybe_init_display_devices();
+}
+
+void wayland_output_add_ref(struct wayland_output *output)
+{
+    InterlockedIncrement(&output->ref);
+}
+
+/**********************************************************************
+ *          wayland_output_destroy
+ *
+ *  Destroys a wayland_output.
+ */
+void wayland_output_release(struct wayland_output *output)
+{
+    if (InterlockedDecrement(&output->ref)) return;
 
     wayland_output_state_deinit(&output->pending);
     wayland_output_state_deinit(&output->current);
@@ -377,8 +445,6 @@ void wayland_output_destroy(struct wayland_output *output)
         zxdg_output_v1_destroy(output->zxdg_output_v1);
     wl_output_destroy(output->wl_output);
     free(output);
-
-    maybe_init_display_devices();
 }
 
 /**********************************************************************

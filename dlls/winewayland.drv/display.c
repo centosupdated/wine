@@ -198,9 +198,8 @@ static void wayland_add_device_gpu(const struct gdi_device_manager *device_manag
 static void wayland_add_device_source(const struct gdi_device_manager *device_manager,
                                        void *param, UINT state_flags, struct output_info *output_info)
 {
-    UINT dpi = NtUserGetSystemDpiForProcess( NULL );
-    TRACE("name=%s state_flags=0x%x\n",
-          output_info->output->name, state_flags);
+    UINT dpi = round(output_info->output->scale * 96.0);
+    TRACE("name=%s state_flags=0x%x dpi=%u\n", output_info->output->name, state_flags, dpi);
     device_manager->add_source(output_info->output->name, state_flags, dpi, param);
 }
 
@@ -224,11 +223,31 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
     device_manager->add_monitor(&monitor, param);
 }
 
-static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *mode)
+static void populate_devmode(struct output_info *output_info,
+                             struct wayland_output_mode *output_mode, DEVMODEW *mode)
 {
     mode->dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT |
                      DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY;
-    mode->dmDisplayOrientation = DMDO_DEFAULT;
+
+    switch (output_info->output->transform)
+    {
+    case WL_OUTPUT_TRANSFORM_90:
+    case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+        mode->dmDisplayOrientation = DMDO_90;
+        break;
+    case WL_OUTPUT_TRANSFORM_180:
+    case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+        mode->dmDisplayOrientation = DMDO_180;
+        break;
+    case WL_OUTPUT_TRANSFORM_270:
+    case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+        mode->dmDisplayOrientation = DMDO_270;
+        break;
+    default:
+        mode->dmDisplayOrientation = DMDO_DEFAULT;
+        break;
+    }
+
     mode->dmDisplayFlags = 0;
     mode->dmBitsPerPel = 32;
     mode->dmPelsWidth = output_mode->width;
@@ -248,7 +267,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
     if (!(modes = malloc(output_info->output->modes_count * sizeof(*modes))))
         return;
 
-    populate_devmode(output_info->output->current_mode, &current);
+    populate_devmode(output_info, output_info->output->current_mode, &current);
     current.dmFields |= DM_POSITION;
     current.dmPosition.x = output_info->x - primary->x;
     current.dmPosition.y = output_info->y - primary->y;
@@ -257,7 +276,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
                       struct wayland_output_mode, entry)
     {
         DEVMODEW mode = {.dmSize = sizeof(mode)};
-        populate_devmode(output_mode, &mode);
+        populate_devmode(output_info, output_mode, &mode);
         modes[modes_count++] = mode;
     }
 

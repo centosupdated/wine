@@ -105,6 +105,8 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
     {
         struct wayland_output *output;
 
+        if (version < 2) return;
+
         process_wayland.zxdg_output_manager_v1 =
             wl_registry_bind(registry, id, &zxdg_output_manager_v1_interface,
                              version < 3 ? version : 3);
@@ -210,11 +212,6 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         process_wayland.wp_alpha_modifier_v1 =
             wl_registry_bind(registry, id, &wp_alpha_modifier_v1_interface, 1);
     }
-    else if (strcmp(interface, "wp_fractional_scale_manager_v1") == 0)
-    {
-        process_wayland.wp_fractional_scale_manager_v1 =
-            wl_registry_bind(registry, id, &wp_fractional_scale_manager_v1_interface, 1);
-    }
 }
 
 static void registry_handle_global_remove(void *data, struct wl_registry *registry,
@@ -230,7 +227,7 @@ static void registry_handle_global_remove(void *data, struct wl_registry *regist
         if (output->global_id == id)
         {
             TRACE("removing output->name=%s\n", output->current.name);
-            wayland_output_destroy(output);
+            wayland_output_remove(output);
             return;
         }
     }
@@ -333,6 +330,11 @@ BOOL wayland_process_init(void)
         ERR("Wayland compositor doesn't support wp_viewporter\n");
         return FALSE;
     }
+    if (!process_wayland.zxdg_output_manager_v1)
+    {
+        ERR("Wayland compositor doesn't support zxdg_output_manager_v1!\n");
+        return FALSE;
+    }
 
     /* Check for optional globals. */
     if (!process_wayland.zwp_pointer_constraints_v1)
@@ -354,9 +356,6 @@ BOOL wayland_process_init(void)
 
     if (!process_wayland.xdg_toplevel_icon_manager_v1)
         ERR("Wayland compositor doesn't support xdg_toplevel_icon_manager_v1 (window icons will not be supported)\n");
-
-    if (!process_wayland.wp_fractional_scale_manager_v1)
-        ERR("Wayland compositor doesn't support wp_fractional_scale_manager_v1 (fractional scaling will be broken)\n");
 
     process_wayland.initialized = TRUE;
 

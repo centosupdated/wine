@@ -40,7 +40,6 @@
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "pointer-warp-v1-client-protocol.h"
 #include "alpha-modifier-v1-client-protocol.h"
-#include "fractional-scale-v1-client-protocol.h"
 
 #include "windef.h"
 #include "winbase.h"
@@ -175,7 +174,6 @@ struct wayland
     struct wl_shm *wl_shm;
     struct wp_viewporter *wp_viewporter;
     struct wl_subcompositor *wl_subcompositor;
-    struct wp_fractional_scale_manager_v1 *wp_fractional_scale_manager_v1;
     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
     struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3;
@@ -210,8 +208,13 @@ struct wayland_output_state
     struct rb_tree modes;
     struct wayland_output_mode *current_mode;
     char *name;
+    char *make;
+    char *model;
     int logical_x, logical_y;
     int logical_w, logical_h;
+    int width_mm, height_mm;
+    enum wl_output_transform transform;
+    double scale;
 };
 
 struct wayland_output
@@ -220,9 +223,10 @@ struct wayland_output
     struct wl_output *wl_output;
     struct zxdg_output_v1 *zxdg_output_v1;
     uint32_t global_id;
+    BOOL removed;
     unsigned int pending_flags;
-    struct wayland_output_state pending;
-    struct wayland_output_state current;
+    LONG ref;
+    struct wayland_output_state pending, current;
 };
 
 struct wayland_surface_config
@@ -271,13 +275,18 @@ struct wayland_shm_buffer
     HRGN damage_region;
 };
 
+struct surface_output_entry
+{
+    struct wl_list link;
+    struct wayland_output *output;
+};
+
 struct wayland_surface
 {
     HWND hwnd;
 
     struct wl_surface *wl_surface;
     struct wp_viewport *wp_viewport;
-    struct wp_fractional_scale_v1 *wp_fractional_scale_v1;
     struct wayland_shm_buffer *small_icon_buffer;
     struct wayland_shm_buffer *big_icon_buffer;
 
@@ -297,7 +306,7 @@ struct wayland_surface
         };
     };
     struct wp_alpha_modifier_surface_v1 *wp_alpha_modifier_surface_v1;
-
+    struct wl_list output_list;
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;
     struct wayland_window_config window;
@@ -315,8 +324,10 @@ BOOL wayland_process_init(void);
  *          Wayland output
  */
 
+void wayland_output_add_ref(struct wayland_output *output);
 BOOL wayland_output_create(uint32_t id, uint32_t version);
-void wayland_output_destroy(struct wayland_output *output);
+void wayland_output_release(struct wayland_output *output);
+void wayland_output_remove(struct wayland_output *output);
 void wayland_output_use_xdg_extension(struct wayland_output *output);
 
 /**********************************************************************

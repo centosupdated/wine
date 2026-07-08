@@ -34,6 +34,120 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
+static BOOL wayland_surface_get_position(struct wayland_surface *surface, RECT *rect)
+{
+    /* the tail element is the output that was entered the least recently */
+    struct surface_output_entry *tail =
+        CONTAINING_RECORD(surface->output_list.prev, struct surface_output_entry, link);
+    struct wayland_output *output = tail->output;
+
+    if (!output) return FALSE;
+
+    /* FIXME: create a way to retrieve x,y from wayland output */
+    rect->right = rect->left = output->current.logical_x * 1.25;
+    rect->bottom = rect->top = output->current.logical_y * 1.25;
+
+    FIXME("hwnd=%p pos=%d,%d\n", surface->hwnd, rect->left, rect->top);
+
+    return TRUE;
+}
+
+static void wayland_surface_handle_enter(void *private, struct wl_surface *wl_surface, struct wl_output *wl_output)
+{
+    BOOL move;
+    RECT rect;
+    UINT context;
+    HWND hwnd = private;
+    struct wayland_win_data *data;
+    struct wayland_surface *surface;
+    struct surface_output_entry *entry, *next;
+    struct wayland_output *output = wl_output_get_user_data(wl_output);
+
+    TRACE("hwnd=%p entered wl_output %p\n", hwnd, wl_output);
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+    if (!(surface = data->wayland_surface) || surface->wl_surface != wl_surface) goto err;
+
+    wl_list_for_each_safe(entry, next, &surface->output_list, link)
+    {
+        if (entry->output->removed)
+        {
+            wl_list_remove(&entry->link);
+            wayland_output_release(entry->output);
+            free(entry);
+        }
+    }
+
+    if (!(entry = calloc(1, sizeof(*entry)))) goto err;
+
+    wayland_output_add_ref(output);
+    entry->output = output;
+    wl_list_init(&entry->link);
+    wl_list_insert(&surface->output_list, &entry->link);
+
+    move = wayland_surface_get_position(surface, &rect);
+
+    wayland_win_data_release(data);
+    if (move)
+    {
+        context = NtUserSetThreadDpiAwarenessContext(NtUserGetWindowDpiAwarenessContext(hwnd));
+        NtUserSetWindowPos(hwnd, NULL, rect.left, rect.top, 0, 0,
+                           SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+        NtUserSetThreadDpiAwarenessContext(context);
+    }
+    return;
+err:
+    wayland_win_data_release(data);
+}
+
+static void wayland_surface_handle_leave(void *private, struct wl_surface *wl_surface, struct wl_output *wl_output)
+{
+    BOOL move;
+    RECT rect;
+    UINT context;
+    HWND hwnd = private;
+    struct wayland_win_data *data;
+    struct wayland_surface *surface;
+    struct surface_output_entry *entry, *next;
+    struct wayland_output *output = wl_output_get_user_data(wl_output);
+
+    TRACE("hwnd=%p left wl_output %p\n", hwnd, wl_output);
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+    if (!(surface = data->wayland_surface) || surface->wl_surface != wl_surface)
+    {
+        wayland_win_data_release(data);
+        return;
+    }
+
+    wl_list_for_each_safe(entry, next, &surface->output_list, link)
+    {
+        if (entry->output->removed || entry->output == output)
+        {
+            wl_list_remove(&entry->link);
+            wayland_output_release(entry->output);
+            free(entry);
+        }
+    }
+
+    move = wayland_surface_get_position(surface, &rect);
+    wayland_win_data_release(data);
+
+    if (move)
+    {
+        context = NtUserSetThreadDpiAwarenessContext(NtUserGetWindowDpiAwarenessContext(hwnd));
+        NtUserSetWindowPos(hwnd, NULL, rect.left, rect.top, 0, 0,
+                           SWP_NOACTIVATE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+        NtUserSetThreadDpiAwarenessContext(context);
+    }
+}
+
+static const struct wl_surface_listener wayland_surface_listener =
+{
+    wayland_surface_handle_enter,
+    wayland_surface_handle_leave,
+};
+
 static void xdg_surface_handle_configure(void *private, struct xdg_surface *xdg_surface,
                                          uint32_t serial)
 {
@@ -137,46 +251,6 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener =
     xdg_toplevel_handle_close
 };
 
-void wp_fractional_scale_handle_scale(void* user_data,
-                                      struct wp_fractional_scale_v1 *fractional_scale_v1,
-                                      uint32_t scale_fixed)
-{
-    struct wayland_win_data *data;
-    struct wayland_surface *surface;
-    double scale = scale_fixed / 120.0;
-    HWND hwnd = user_data;
-
-    TRACE("hwnd=%p scale=%lf\n", hwnd, scale);
-
-    if (!(data = wayland_win_data_get(hwnd))) return;
-    if (!(surface = data->wayland_surface) || scale == surface->window.scale)
-    {
-        wayland_win_data_release(data);
-        return;
-    }
-
-    surface->window.scale = scale;
-
-    /* reattach client surfaces as their rects have changed */
-    update_client_surfaces(hwnd);
-
-    /* the subsurface rect has changed */
-    if (surface->role == WAYLAND_SURFACE_ROLE_SUBSURFACE)
-    {
-        surface->processing.serial = 1;
-        surface->processing.processed = TRUE;
-    }
-
-    wayland_win_data_release(data);
-
-    NtUserExposeWindowSurface(hwnd, 0, NULL);
-}
-
-static const struct wp_fractional_scale_v1_listener wp_fractional_scale_listener =
-{
-    wp_fractional_scale_handle_scale
-};
-
 /**********************************************************************
  *          wayland_surface_create
  *
@@ -202,7 +276,9 @@ struct wayland_surface *wayland_surface_create(HWND hwnd)
         ERR("Failed to create wl_surface Wayland surface\n");
         goto err;
     }
-    wl_surface_set_user_data(surface->wl_surface, hwnd);
+    wl_surface_add_listener(surface->wl_surface, &wayland_surface_listener, surface->hwnd);
+
+    wl_list_init(&surface->output_list);
 
     surface->wp_viewport =
         wp_viewporter_get_viewport(process_wayland.wp_viewporter,
@@ -298,28 +374,6 @@ void wayland_surface_destroy(struct wayland_surface *surface)
     free(surface);
 }
 
-static void wayland_surface_init_fractional_scale(struct wayland_surface *surface,
-                                                  double initial_scale)
-{
-    surface->window.scale = initial_scale;
-
-    if (!process_wayland.wp_fractional_scale_manager_v1) return;
-
-    surface->wp_fractional_scale_v1 =
-        wp_fractional_scale_manager_v1_get_fractional_scale(
-            process_wayland.wp_fractional_scale_manager_v1,
-            surface->wl_surface);
-    if (!surface->wp_fractional_scale_v1)
-    {
-        ERR("Failed to create wp_fractional_scale_v1\n");
-        return;
-    }
-    wp_fractional_scale_v1_add_listener(
-        surface->wp_fractional_scale_v1,
-        &wp_fractional_scale_listener,
-        surface->hwnd);
-}
-
 /**********************************************************************
  *          wayland_surface_make_toplevel
  *
@@ -354,8 +408,6 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
     wayland_surface_set_title(surface, text);
 
     wayland_surface_assign_icon(surface);
-
-    wayland_surface_init_fractional_scale(surface, 1.0);
 
     wl_surface_commit(surface->wl_surface);
     wl_display_flush(process_wayland.wl_display);
@@ -393,8 +445,6 @@ void wayland_surface_make_subsurface(struct wayland_surface *surface,
         goto err;
     }
 
-    wayland_surface_init_fractional_scale(surface, owner->window.scale);
-
     surface->role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
     surface->owner_hwnd = owner->hwnd;
 
@@ -420,14 +470,6 @@ err:
 void wayland_surface_clear_role(struct wayland_surface *surface)
 {
     TRACE("surface=%p\n", surface);
-
-    /* some objects are shared between several roles */
-
-    if (surface->wp_fractional_scale_v1)
-    {
-        wp_fractional_scale_v1_destroy(surface->wp_fractional_scale_v1);
-        surface->wp_fractional_scale_v1 = NULL;
-    }
 
     switch (surface->role)
     {
@@ -689,13 +731,10 @@ static void wayland_surface_reconfigure_client(struct wayland_surface *surface,
                                                struct wayland_client_surface *client,
                                                const RECT *client_rect)
 {
-    struct wayland_window_config *window = &surface->window;
     RECT rect = client->rect;
 
     /* The offset of the client area origin relatively to the window origin. */
     if (client_rect) rect = *client_rect;
-    OffsetRect(&rect, window->client_rect.left - window->rect.left,
-               window->client_rect.top - window->rect.top);
     rect = map_rect_to_surface(surface, rect);
 
     TRACE("hwnd=%p rect=%s\n", surface->hwnd, wine_dbgstr_rect(&rect));
