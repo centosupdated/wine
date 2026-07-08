@@ -224,6 +224,7 @@ struct wayland_output
     struct zxdg_output_v1 *zxdg_output_v1;
     uint32_t global_id;
     unsigned int pending_flags;
+    LONG ref;
     struct wayland_output_state pending, current;
 };
 
@@ -316,8 +317,10 @@ BOOL wayland_process_init(void);
  *          Wayland output
  */
 
+void wayland_output_add_ref(struct wayland_output *output);
 BOOL wayland_output_create(uint32_t id, uint32_t version);
-void wayland_output_destroy(struct wayland_output *output);
+void wayland_output_release(struct wayland_output *output);
+void wayland_output_remove(struct wayland_output *output);
 void wayland_output_use_xdg_extension(struct wayland_output *output);
 
 /**********************************************************************
