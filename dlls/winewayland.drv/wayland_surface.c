@@ -1238,15 +1238,35 @@ struct wayland_client_surface *impl_from_client_surface(struct client_surface *c
     return CONTAINING_RECORD(client, struct wayland_client_surface, client);
 }
 
+struct wayland_client_surface *update_vulkan_client_surface(HWND hwnd, struct client_surface *client)
+{
+    struct wayland_win_data *data;
+
+    if ((data = wayland_win_data_get(hwnd)))
+    {
+        if (client && !data->vulkan_client) data->vulkan_client = client;
+        else if (!client) client = data->vulkan_client;
+        wayland_win_data_release(data);
+    }
+
+    if (client)
+    {
+        client_surface_add_ref(client);
+        return impl_from_client_surface(client);
+    }
+
+    return NULL;
+}
+
 struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format, BOOL gl)
 {
-    struct wayland_client_surface *client;
+    struct wayland_client_surface *client = NULL;
     struct wl_region *empty_region;
 
+    if (!gl && (client = update_vulkan_client_surface(hwnd, NULL))) return &client->client;
     if (!(client = client_surface_create(sizeof(*client), &wayland_client_surface_funcs, hwnd))) return NULL;
 
-    client->wl_surface =
-        wl_compositor_create_surface(process_wayland.wl_compositor);
+    client->wl_surface = wl_compositor_create_surface(process_wayland.wl_compositor);
     if (!client->wl_surface)
     {
         ERR("Failed to create client wl_surface\n");
@@ -1272,6 +1292,8 @@ struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format, 
         ERR("Failed to create client wp_viewport\n");
         goto err;
     }
+
+    if (!gl) update_vulkan_client_surface(hwnd, &client->client);
 
     return &client->client;
 

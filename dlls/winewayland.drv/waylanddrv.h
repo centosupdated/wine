@@ -378,6 +378,8 @@ struct wayland_win_data
     struct wayland_surface *wayland_surface;
     /* wayland client surface (if any) for this window */
     struct wayland_client_surface *client_surface;
+    /* dedicated client surface for vulkan apps on this window */
+    struct client_surface *vulkan_client;
     /* window rects, relative to parent client area */
     struct window_rects rects;
     BOOL is_fullscreen;
