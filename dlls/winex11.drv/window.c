@@ -3350,40 +3350,6 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     if (was_fullscreen) NtUserClipCursor( NULL );
 }
 
-/* check if the window icon should be hidden (i.e. moved off-screen) */
-static BOOL hide_icon( struct x11drv_win_data *data )
-{
-    static const WCHAR trayW[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
-    UNICODE_STRING str = RTL_CONSTANT_STRING( trayW );
-
-    if (data->managed) return TRUE;
-    /* hide icons in desktop mode when the taskbar is active */
-    if (!is_virtual_desktop()) return FALSE;
-    return NtUserIsWindowVisible( NtUserFindWindowEx( 0, 0, &str, NULL, 0 ));
-}
-
-/***********************************************************************
- *           ShowWindow   (X11DRV.@)
- */
-UINT X11DRV_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
-{
-    DWORD style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
-    struct x11drv_win_data *data = get_win_data( hwnd );
-
-    if (!data || !data->whole_window) goto done;
-    if (style & WS_MINIMIZE)
-    {
-        if (((rect->left != -32000 || rect->top != -32000)) && hide_icon( data ))
-        {
-            OffsetRect( rect, -32000 - rect->left, -32000 - rect->top );
-            swp &= ~(SWP_NOMOVE | SWP_NOCLIENTMOVE);
-        }
-    }
-done:
-    release_win_data( data );
-    return swp;
-}
-
 
 /**********************************************************************
  *		SetWindowIcons (X11DRV.@)
