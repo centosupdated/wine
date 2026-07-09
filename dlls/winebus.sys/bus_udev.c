@@ -1347,7 +1347,8 @@ static NTSTATUS lnxev_device_create(struct udev_device *dev, int fd, const char 
 static void udev_add_device(struct udev_device *dev, int fd)
 {
     struct device_desc desc = { .input = -1 };
-    const char *subsystem, *devnode;
+    const char *subsystem, *devnode, *interface;
+    struct udev_device * usb_parent = NULL;
     int bus = 0;
 
     if (!(devnode = udev_device_get_devnode(dev)))
@@ -1375,6 +1376,14 @@ static void udev_add_device(struct udev_device *dev, int fd)
         WARN("udev_device_get_subsystem failed for %s.\n", debugstr_a(devnode));
         close(fd);
         return;
+    }
+
+    if (!strcmp(subsystem, "hidraw"))
+    {
+        /* HID devices on USB can have their product string set from the USB descriptor "interface" */
+        usb_parent = udev_device_get_parent_with_subsystem_devtype(dev, "usb", NULL);
+        if (usb_parent && (interface = udev_device_get_sysattr_value(usb_parent, "interface")))
+            ntdll_umbstowcs(interface, strlen(interface) + 1, desc.product, ARRAY_SIZE(desc.product));
     }
 
     if ((desc.is_hidraw = !strcmp(subsystem, "hidraw")) && !hidraw_device_create(dev, fd, devnode, desc)) return;
