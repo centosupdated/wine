@@ -94,6 +94,7 @@ struct presentation_clock
     float rate;
     LONGLONG frequency;
     CRITICAL_SECTION cs;
+    BOOL scrub_delivered;
     BOOL is_shut_down;
     DWORD key;
 };
@@ -568,9 +569,10 @@ static void CALLBACK presentation_clock_timer_callback(IUnknown *context)
         EnterCriticalSection(&clock->cs);
         LIST_FOR_EACH_ENTRY_SAFE(timer, next, &clock->timers, struct clock_timer, entry)
         {
-            if (timer->time > time + 50000)
+            if (timer->time > time + 50000 && (clock->rate != 0.0f || clock->scrub_delivered))
                 break;
 
+            clock->scrub_delivered = TRUE;
             list_remove(&timer->entry);
             MFInvokeCallback(timer->result);
             IUnknown_Release(&timer->IUnknown_iface);
@@ -649,6 +651,14 @@ static HRESULT clock_change_state(struct presentation_clock *clock, enum clock_c
             }
         }
     }
+
+    /* TODO: native does not reset this if starting from paused at the current position. The conditon would be:
+     * if (clock->rate == 0.0f &&
+     *      (clock->state != MFCLOCK_STATE_RUNNING
+     *      || (clock->state == MFCLOCK_STATE_RUNNING) == (old_state == MFCLOCK_STATE_RUNNING)
+     *      || param.u.offset != PRESENTATION_CURRENT_POSITION))
+     * It's not clear how to make the sample grabber send MEStreamSinkScrubSampleComplete if delivery should not occur. */
+    clock->scrub_delivered = FALSE;
 
     LIST_FOR_EACH_ENTRY(sink, &clock->sinks, struct clock_sink, entry)
     {
@@ -1104,6 +1114,270 @@ HRESULT WINAPI MFCreatePresentationClock(IMFPresentationClock **clock)
     InitializeCriticalSection(&object->cs);
 
     *clock = &object->IMFPresentationClock_iface;
+
+    return S_OK;
+}
+
+struct constant_time_source
+{
+    IMFPresentationTimeSource IMFPresentationTimeSource_iface;
+    IMFClockStateSink IMFClockStateSink_iface;
+    LONG refcount;
+    MFCLOCK_STATE state;
+    LONGLONG start_offset;
+    CRITICAL_SECTION cs;
+};
+
+static struct constant_time_source *impl_from_IMFPresentationTimeSource(IMFPresentationTimeSource *iface)
+{
+    return CONTAINING_RECORD(iface, struct constant_time_source, IMFPresentationTimeSource_iface);
+}
+
+static struct constant_time_source *impl_from_IMFClockStateSink(IMFClockStateSink *iface)
+{
+    return CONTAINING_RECORD(iface, struct constant_time_source, IMFClockStateSink_iface);
+}
+
+static HRESULT WINAPI constant_time_source_QueryInterface(IMFPresentationTimeSource *iface, REFIID riid, void **obj)
+{
+    struct constant_time_source *source = impl_from_IMFPresentationTimeSource(iface);
+
+    TRACE("%p, %s, %p.\n", iface, debugstr_guid(riid), obj);
+
+    if (IsEqualIID(riid, &IID_IMFPresentationTimeSource)
+            || IsEqualIID(riid, &IID_IUnknown))
+    {
+        *obj = &source->IMFPresentationTimeSource_iface;
+    }
+    else if (IsEqualIID(riid, &IID_IMFClockStateSink))
+    {
+        *obj = &source->IMFClockStateSink_iface;
+    }
+    else
+    {
+        WARN("Unsupported %s.\n", debugstr_guid(riid));
+        *obj = NULL;
+        return E_NOINTERFACE;
+    }
+
+    IUnknown_AddRef((IUnknown *)*obj);
+    return S_OK;
+}
+
+static ULONG WINAPI constant_time_source_AddRef(IMFPresentationTimeSource *iface)
+{
+    struct constant_time_source *source = impl_from_IMFPresentationTimeSource(iface);
+    ULONG refcount = InterlockedIncrement(&source->refcount);
+
+    TRACE("%p, refcount %lu.\n", iface, refcount);
+
+    return refcount;
+}
+
+static ULONG WINAPI constant_time_source_Release(IMFPresentationTimeSource *iface)
+{
+    struct constant_time_source *source = impl_from_IMFPresentationTimeSource(iface);
+    ULONG refcount = InterlockedDecrement(&source->refcount);
+
+    TRACE("%p, refcount %lu.\n", iface, refcount);
+
+    if (!refcount)
+    {
+        DeleteCriticalSection(&source->cs);
+        free(source);
+    }
+
+    return refcount;
+}
+
+static HRESULT WINAPI constant_time_source_GetClockCharacteristics(IMFPresentationTimeSource *iface, DWORD *flags)
+{
+    TRACE("%p, %p.\n", iface, flags);
+
+    *flags = MFCLOCK_CHARACTERISTICS_FLAG_FREQUENCY_10MHZ;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_GetCorrelatedTime(IMFPresentationTimeSource *iface, DWORD reserved,
+        LONGLONG *clock_time, MFTIME *system_time)
+{
+    struct constant_time_source *source = impl_from_IMFPresentationTimeSource(iface);
+
+    TRACE("%p, %#lx, %p, %p.\n", iface, reserved, clock_time, system_time);
+
+    *system_time = MFGetSystemTime();
+    *clock_time = source->start_offset;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_GetContinuityKey(IMFPresentationTimeSource *iface, DWORD *key)
+{
+    TRACE("%p, %p.\n", iface, key);
+
+    *key = 0;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_GetState(IMFPresentationTimeSource *iface, DWORD reserved,
+        MFCLOCK_STATE *state)
+{
+    struct constant_time_source *source = impl_from_IMFPresentationTimeSource(iface);
+
+    TRACE("%p, %#lx, %p.\n", iface, reserved, state);
+
+    EnterCriticalSection(&source->cs);
+    *state = source->state;
+    LeaveCriticalSection(&source->cs);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_GetProperties(IMFPresentationTimeSource *iface, MFCLOCK_PROPERTIES *props)
+{
+    TRACE("%p, %p.\n", iface, props);
+
+    if (!props)
+        return E_POINTER;
+
+    memset(props, 0, sizeof(*props));
+    props->qwClockFrequency = MFCLOCK_FREQUENCY_HNS;
+    props->dwClockJitter = 1;
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_GetUnderlyingClock(IMFPresentationTimeSource *iface, IMFClock **clock)
+{
+    TRACE("%p, %p.\n", iface, clock);
+    *clock = NULL;
+    return MF_E_NO_CLOCK;
+}
+
+static const IMFPresentationTimeSourceVtbl systemtimesourcevtbl =
+{
+    constant_time_source_QueryInterface,
+    constant_time_source_AddRef,
+    constant_time_source_Release,
+    constant_time_source_GetClockCharacteristics,
+    constant_time_source_GetCorrelatedTime,
+    constant_time_source_GetContinuityKey,
+    constant_time_source_GetState,
+    constant_time_source_GetProperties,
+    constant_time_source_GetUnderlyingClock,
+};
+
+static HRESULT WINAPI constant_time_source_sink_QueryInterface(IMFClockStateSink *iface, REFIID riid, void **out)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+    return IMFPresentationTimeSource_QueryInterface(&source->IMFPresentationTimeSource_iface, riid, out);
+}
+
+static ULONG WINAPI constant_time_source_sink_AddRef(IMFClockStateSink *iface)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+    return IMFPresentationTimeSource_AddRef(&source->IMFPresentationTimeSource_iface);
+}
+
+static ULONG WINAPI constant_time_source_sink_Release(IMFClockStateSink *iface)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+    return IMFPresentationTimeSource_Release(&source->IMFPresentationTimeSource_iface);
+}
+
+static HRESULT WINAPI constant_time_source_sink_OnClockStart(IMFClockStateSink *iface, MFTIME system_time,
+        LONGLONG start_offset)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+
+    TRACE("%p, %s, %s.\n", iface, debugstr_time(system_time), debugstr_time(start_offset));
+
+    EnterCriticalSection(&source->cs);
+    source->state = MFCLOCK_STATE_RUNNING;
+    if (start_offset != PRESENTATION_CURRENT_POSITION)
+        source->start_offset = start_offset;
+    LeaveCriticalSection(&source->cs);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_sink_OnClockStop(IMFClockStateSink *iface, MFTIME system_time)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+
+    TRACE("%p, %s.\n", iface, debugstr_time(system_time));
+
+    EnterCriticalSection(&source->cs);
+    source->state = MFCLOCK_STATE_STOPPED;
+    source->start_offset = 0;
+    LeaveCriticalSection(&source->cs);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_sink_OnClockPause(IMFClockStateSink *iface, MFTIME system_time)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+
+    TRACE("%p, %s.\n", iface, debugstr_time(system_time));
+
+    EnterCriticalSection(&source->cs);
+    source->state = MFCLOCK_STATE_PAUSED;
+    LeaveCriticalSection(&source->cs);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_sink_OnClockRestart(IMFClockStateSink *iface, MFTIME system_time)
+{
+    struct constant_time_source *source = impl_from_IMFClockStateSink(iface);
+
+    TRACE("%p, %s.\n", iface, debugstr_time(system_time));
+
+    EnterCriticalSection(&source->cs);
+    source->state = MFCLOCK_STATE_RUNNING;
+    LeaveCriticalSection(&source->cs);
+
+    return S_OK;
+}
+
+static HRESULT WINAPI constant_time_source_sink_OnClockSetRate(IMFClockStateSink *iface, MFTIME system_time, float rate)
+{
+    TRACE("%p, %s, %f.\n", iface, debugstr_time(system_time), rate);
+    return S_OK;
+}
+
+static const IMFClockStateSinkVtbl systemtimesourcesinkvtbl =
+{
+    constant_time_source_sink_QueryInterface,
+    constant_time_source_sink_AddRef,
+    constant_time_source_sink_Release,
+    constant_time_source_sink_OnClockStart,
+    constant_time_source_sink_OnClockStop,
+    constant_time_source_sink_OnClockPause,
+    constant_time_source_sink_OnClockRestart,
+    constant_time_source_sink_OnClockSetRate,
+};
+
+HRESULT create_constant_time_source(IMFPresentationTimeSource **time_source)
+{
+    struct constant_time_source *object;
+
+    TRACE("%p.\n", time_source);
+
+    object = calloc(1, sizeof(*object));
+    if (!object)
+        return E_OUTOFMEMORY;
+
+    object->IMFPresentationTimeSource_iface.lpVtbl = &systemtimesourcevtbl;
+    object->IMFClockStateSink_iface.lpVtbl = &systemtimesourcesinkvtbl;
+    object->refcount = 1;
+    object->state = MFCLOCK_STATE_STOPPED;
+    InitializeCriticalSection(&object->cs);
+
+    *time_source = &object->IMFPresentationTimeSource_iface;
 
     return S_OK;
 }

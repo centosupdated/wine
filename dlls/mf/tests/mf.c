@@ -12052,12 +12052,10 @@ static void check_constant_time_source(IMFPresentationTimeSource *time_source)
 
     hr = IMFPresentationTimeSource_GetState(time_source, 0, &state);
     ok(hr == S_OK, "Failed to get state, hr %#lx.\n", hr);
-    todo_wine
     ok(state == MFCLOCK_STATE_STOPPED, "Unexpected state %d.\n", state);
 
     hr = IMFPresentationTimeSource_GetClockCharacteristics(time_source, &value);
     ok(hr == S_OK, "Failed to get flags, hr %#lx.\n", hr);
-    todo_wine
     ok(value == MFCLOCK_CHARACTERISTICS_FLAG_FREQUENCY_10MHZ, "Unexpected flags %#lx.\n", value);
 
     hr = IMFPresentationTimeSource_GetProperties(time_source, &props);
@@ -12067,17 +12065,12 @@ static void check_constant_time_source(IMFPresentationTimeSource *time_source)
     /* Uninitialised on native
      * ok(props.dwClockFlags == 0, "Unexpected flags %#lx.\n", props.dwClockFlags); */
     ok(props.qwClockFrequency == MFCLOCK_FREQUENCY_HNS, "Unexpected frequency %I64u.\n", props.qwClockFrequency);
-    todo_wine
     ok(props.dwClockTolerance == 0, "Unexpected tolerance %lu.\n", props.dwClockTolerance);
     ok(props.dwClockJitter == 1, "Unexpected jitter %lu.\n", props.dwClockJitter);
 
     hr = IMFPresentationTimeSource_GetUnderlyingClock(time_source, &clock);
-    todo_wine
     ok(hr == MF_E_NO_CLOCK, "Unexpected hr %#lx.\n", hr);
-    todo_wine
     ok(!clock, "Got clock %p.\n", clock);
-    if (SUCCEEDED(hr))
-        IMFClock_Release(clock);
 
     mf_systime = MFGetSystemTime();
 
@@ -12105,15 +12098,12 @@ static void check_constant_time_source(IMFPresentationTimeSource *time_source)
             default:
                 ;
         }
-        todo_wine_if(hr != S_OK)
         ok(hr == S_OK, "unexpected hr %#lx.\n", hr);
         hr = IMFPresentationTimeSource_GetState(time_source, 0, &state);
         ok(hr == S_OK, "failed to get state, hr %#lx.\n", hr);
-        todo_wine_if(state != clock_state_change[i].state)
         ok(state == clock_state_change[i].state, "unexpected state %d.\n", state);
         hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, &time, &systime);
         ok(hr == S_OK, "Failed to get time %#lx.\n", hr);
-        todo_wine_if(time != expected_time)
         ok(time == expected_time, "Unexpected time %I64u.\n", time);
         ok(systime >= mf_systime && systime < mf_systime + 5000000, "Unexpected systime %I64u.\n", systime);
 
@@ -12128,20 +12118,17 @@ static void check_constant_time_source(IMFPresentationTimeSource *time_source)
     Sleep(20);
     hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, &time, &systime);
     ok(hr == S_OK, "Failed to get time %#lx.\n", hr);
-    todo_wine
     ok(time == 3000000, "Unexpected time %I64u.\n", time);
 
     hr = IMFClockStateSink_OnClockStart(statesink, 0, PRESENTATION_CURRENT_POSITION);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, &time, &systime);
     ok(hr == S_OK, "Failed to get time %#lx.\n", hr);
-    todo_wine
     ok(time == 3000000, "Unexpected time %I64u.\n", time);
 
     hr = IMFClockStateSink_OnClockStop(statesink, 0);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     hr = IMFClockStateSink_OnClockSetRate(statesink, 0, 0.0f);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     IMFClockStateSink_Release(statesink);
@@ -12232,17 +12219,14 @@ static void test_sample_grabber_scrubbing(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 1000, &propvar);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     res = WaitForSingleObject(grabber_callback->ready_event, 500);
     flaky
     ok(!res, "WaitForSingleObject returned %#lx\n", res);
     IMFPresentationClock_GetTime(presentation_clock, &time);
-    todo_wine
     ok(time == 0, "Unexpected time %I64u.\n", time);
 
     res = WaitForSingleObject(grabber_callback->ready_event, 40);
-    todo_wine
     ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res);
 
     hr = IMFMediaSession_Pause(session);
@@ -12259,13 +12243,11 @@ static void test_sample_grabber_scrubbing(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 1000, &propvar);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     res = WaitForSingleObject(grabber_callback->ready_event, 500);
     flaky
     ok(!res, "WaitForSingleObject returned %#lx\n", res);
     IMFPresentationClock_GetTime(presentation_clock, &time);
-    todo_wine
     ok(time == 1000000, "Unexpected time %I64u.\n", time);
 
     /* Frame stepping. Documentation vaguely implies a zero rate should be set again. Test here without that. */
@@ -12277,12 +12259,12 @@ static void test_sample_grabber_scrubbing(void)
 
     /* The event is not sent, but a sample is in some Windows versions. */
     hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 40, &propvar);
+    todo_wine_if(hr == S_OK)
     ok(hr == WAIT_TIMEOUT, "Unexpected hr %#lx.\n", hr);
     res = WaitForSingleObject(grabber_callback->ready_event, 500);
     flaky
     ok(!res, "WaitForSingleObject returned %#lx\n", res);
     IMFPresentationClock_GetTime(presentation_clock, &time);
-    todo_wine
     ok(time == 1000000, "Unexpected time %I64u.\n", time);
 
     hr = IMFMediaSession_Pause(session);
@@ -12333,14 +12315,12 @@ static void test_sample_grabber_scrubbing(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
     hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 1000, &propvar);
-    todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     /* Frame not sent, possibly because the frame at the current time was already sent. */
     res = WaitForSingleObject(grabber_callback->ready_event, 40);
     todo_wine_if(!res)
     ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res);
     IMFPresentationClock_GetTime(presentation_clock, &time2);
-    todo_wine
     ok(time2 >= time, "Unexpected time %I64u.\n", time2);
 
     IMFRateControl_Release(rate_control);
