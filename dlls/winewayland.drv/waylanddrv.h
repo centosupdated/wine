@@ -72,19 +72,19 @@ enum wayland_window_message
     WM_WAYLAND_SET_FOREGROUND,
 };
 
-enum wayland_surface_config_state
+enum surface_state
 {
-    WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED = (1 << 0),
-    WAYLAND_SURFACE_CONFIG_STATE_RESIZING = (1 << 1),
-    WAYLAND_SURFACE_CONFIG_STATE_TILED = (1 << 2),
-    WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN = (1 << 3)
+    SURFACE_STATE_MAXIMIZED = (1 << 0),
+    SURFACE_STATE_RESIZING = (1 << 1),
+    SURFACE_STATE_TILED = (1 << 2),
+    SURFACE_STATE_FULLSCREEN = (1 << 3)
 };
 
 enum wayland_surface_role
 {
     WAYLAND_SURFACE_ROLE_NONE,
     WAYLAND_SURFACE_ROLE_TOPLEVEL,
-    WAYLAND_SURFACE_ROLE_SUBSURFACE,
+    WAYLAND_SURFACE_ROLE_POPUP,
 };
 
 struct wayland_keyboard
@@ -225,19 +225,19 @@ struct wayland_output
     struct wayland_output_state current;
 };
 
-struct wayland_surface_config
+struct surface_config
 {
-    RECT rect;
-    enum wayland_surface_config_state state;
-    uint32_t serial;
-    BOOL processed;
+    RECT                rect;       /* rect of the compositor surface (in surface coordinates) */
+    enum surface_state  state;      /* state of the compositor surface */
+    uint32_t            serial;     /* serial of the corresponding xdg_surface_configure event */
+    BOOL                processed;  /* config has been fully applied to the surface win32 window */
 };
 
 struct wayland_window_config
 {
     RECT rect;
     RECT client_rect;
-    enum wayland_surface_config_state state;
+    enum surface_state state;
     /* The scale (i.e., normalized dpi) the window is rendering at. */
     double scale;
     BOOL visible;
@@ -282,23 +282,28 @@ struct wayland_surface
     struct wayland_shm_buffer *big_icon_buffer;
 
     enum wayland_surface_role role;
+
+    struct xdg_surface *xdg_surface;
     union
     {
         struct
         {
-            struct xdg_surface *xdg_surface;
             struct xdg_toplevel *xdg_toplevel;
             struct xdg_toplevel_icon_v1 *xdg_toplevel_icon;
         };
         struct
         {
-            struct wl_subsurface *wl_subsurface;
+            struct xdg_popup *xdg_popup;
             HWND owner_hwnd;
         };
     };
     struct wp_alpha_modifier_surface_v1 *wp_alpha_modifier_surface_v1;
 
-    struct wayland_surface_config pending, requested, processing, current;
+    struct surface_config pending;      /* incomplete surface config being received from the compositor */
+    struct surface_config requested;    /* latest complete surface config received from the compositor */
+    struct surface_config processing;   /* surface config being applied to the surface win32 window */
+    struct surface_config current;      /* latest config that has been applied to the surface win32 window */
+
     BOOL resizing;
     struct wayland_window_config window;
     int content_width, content_height;
@@ -328,13 +333,14 @@ void wayland_surface_destroy(struct wayland_surface *surface);
 void wayland_surface_make_toplevel(struct wayland_surface *surface);
 void wayland_surface_make_subsurface(struct wayland_surface *surface,
                                      struct wayland_surface *parent);
+void wayland_surface_make_popup(struct wayland_surface *surface,
+                                struct wayland_surface *owner);
 void wayland_surface_clear_role(struct wayland_surface *surface);
 void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 struct wayland_shm_buffer *shm_buffer,
                                 HRGN surface_damage_region);
 BOOL wayland_surface_reconfigure(struct wayland_surface *surface);
-BOOL wayland_surface_config_is_compatible(struct wayland_surface_config *conf, RECT rect,
-                                          enum wayland_surface_config_state state);
+BOOL wayland_surface_config_is_compatible(struct wayland_surface *surface, struct surface_config *conf);
 RECT map_rect_to_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_to_surface(struct wayland_surface *surface, POINT point);
 RECT map_rect_from_surface(struct wayland_surface *surface, RECT rect);
@@ -349,6 +355,11 @@ void wayland_surface_set_opacity(struct wayland_surface *surface, BYTE alpha, UI
 static inline BOOL wayland_surface_is_toplevel(struct wayland_surface *surface)
 {
     return surface->role == WAYLAND_SURFACE_ROLE_TOPLEVEL && surface->xdg_toplevel;
+}
+
+static inline BOOL wayland_surface_is_popup(struct wayland_surface *surface)
+{
+    return surface->role == WAYLAND_SURFACE_ROLE_POPUP && surface->xdg_popup;
 }
 
 /**********************************************************************
