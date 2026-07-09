@@ -362,7 +362,7 @@ static void relative_pointer_v1_relative_motion(void *private,
 {
     const POINT raw_pos = { .x = wl_fixed_to_double(dx_unaccel), .y = wl_fixed_to_double(dy_unaccel) };
     struct raw_mouse raw = { .count = 1, .data = { raw_pos } };
-    INPUT input = { .type = INPUT_MOUSE };
+    INPUT input = { .type = INPUT_MOUSE, .mi.dwFlags = MOUSEEVENTF_MOVE };
     HWND hwnd;
     struct wayland_win_data *data;
     double screen_x = 0.0, screen_y = 0.0;
@@ -386,7 +386,6 @@ static void relative_pointer_v1_relative_motion(void *private,
 
         input.mi.dx = round(pointer->accum_x);
         input.mi.dy = round(pointer->accum_y);
-        input.mi.dwFlags = MOUSEEVENTF_MOVE;
 
         pointer->accum_x -= input.mi.dx;
         pointer->accum_y -= input.mi.dy;
