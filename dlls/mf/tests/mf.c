@@ -3851,6 +3851,7 @@ enum clock_action
     CLOCK_START,
     CLOCK_STOP,
     CLOCK_PAUSE,
+    CLOCK_RESTART,
 };
 
 static HRESULT WINAPI test_clock_sink_QueryInterface(IMFClockStateSink *iface, REFIID riid, void **obj)
@@ -12008,6 +12009,367 @@ static void test_async_transform(void)
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }
 
+static void check_constant_time_source(IMFPresentationTimeSource *time_source)
+{
+    IMFClock *clock = (void *)0xdeadbeef;
+    LONGLONG time, expected_time;
+    IMFClockStateSink *statesink;
+    MFTIME systime, mf_systime;
+    MFCLOCK_PROPERTIES props;
+    MFCLOCK_STATE state;
+    DWORD value;
+    HRESULT hr;
+    UINT i;
+
+    static const struct clock_state_test
+    {
+        enum clock_action action;
+        MFCLOCK_STATE state;
+    }
+    clock_state_change[] =
+    {
+        { CLOCK_STOP, MFCLOCK_STATE_STOPPED },
+        { CLOCK_RESTART, MFCLOCK_STATE_RUNNING },
+        { CLOCK_PAUSE, MFCLOCK_STATE_PAUSED },
+        { CLOCK_PAUSE, MFCLOCK_STATE_PAUSED },
+        { CLOCK_STOP, MFCLOCK_STATE_STOPPED },
+        { CLOCK_STOP, MFCLOCK_STATE_STOPPED },
+        { CLOCK_RESTART, MFCLOCK_STATE_RUNNING },
+        { CLOCK_START, MFCLOCK_STATE_RUNNING },
+        { CLOCK_START, MFCLOCK_STATE_RUNNING },
+        { CLOCK_RESTART, MFCLOCK_STATE_RUNNING },
+        { CLOCK_PAUSE, MFCLOCK_STATE_PAUSED },
+        { CLOCK_START, MFCLOCK_STATE_RUNNING },
+        { CLOCK_PAUSE, MFCLOCK_STATE_PAUSED },
+        { CLOCK_RESTART, MFCLOCK_STATE_RUNNING },
+        { CLOCK_RESTART, MFCLOCK_STATE_RUNNING },
+        { CLOCK_STOP, MFCLOCK_STATE_STOPPED },
+        { CLOCK_PAUSE, MFCLOCK_STATE_PAUSED },
+    };
+
+    hr = IMFPresentationTimeSource_QueryInterface(time_source, &IID_IMFClockStateSink, (void **)&statesink);
+    ok(hr == S_OK, "Failed to get state sink, hr %#lx.\n", hr);
+
+    hr = IMFPresentationTimeSource_GetState(time_source, 0, &state);
+    ok(hr == S_OK, "Failed to get state, hr %#lx.\n", hr);
+    todo_wine
+    ok(state == MFCLOCK_STATE_STOPPED, "Unexpected state %d.\n", state);
+
+    hr = IMFPresentationTimeSource_GetClockCharacteristics(time_source, &value);
+    ok(hr == S_OK, "Failed to get flags, hr %#lx.\n", hr);
+    todo_wine
+    ok(value == MFCLOCK_CHARACTERISTICS_FLAG_FREQUENCY_10MHZ, "Unexpected flags %#lx.\n", value);
+
+    hr = IMFPresentationTimeSource_GetProperties(time_source, &props);
+    ok(hr == S_OK, "Failed to get clock properties, hr %#lx.\n", hr);
+    ok(props.qwCorrelationRate == 0, "Unexpected correlation rate %I64u.\n", props.qwCorrelationRate);
+    ok(IsEqualGUID(&props.guidClockId, &GUID_NULL), "Unexpected clock id %s.\n", wine_dbgstr_guid(&props.guidClockId));
+    /* Uninitialised on native
+     * ok(props.dwClockFlags == 0, "Unexpected flags %#lx.\n", props.dwClockFlags); */
+    ok(props.qwClockFrequency == MFCLOCK_FREQUENCY_HNS, "Unexpected frequency %I64u.\n", props.qwClockFrequency);
+    todo_wine
+    ok(props.dwClockTolerance == 0, "Unexpected tolerance %lu.\n", props.dwClockTolerance);
+    ok(props.dwClockJitter == 1, "Unexpected jitter %lu.\n", props.dwClockJitter);
+
+    hr = IMFPresentationTimeSource_GetUnderlyingClock(time_source, &clock);
+    todo_wine
+    ok(hr == MF_E_NO_CLOCK, "Unexpected hr %#lx.\n", hr);
+    todo_wine
+    ok(!clock, "Got clock %p.\n", clock);
+    if (SUCCEEDED(hr))
+        IMFClock_Release(clock);
+
+    mf_systime = MFGetSystemTime();
+
+    /* State changes. */
+    for (i = 0, expected_time = 0; i < ARRAY_SIZE(clock_state_change); ++i)
+    {
+        winetest_push_context("Test %u", i);
+
+        switch (clock_state_change[i].action)
+        {
+            case CLOCK_STOP:
+                hr = IMFClockStateSink_OnClockStop(statesink, 0);
+                expected_time = 0;
+                break;
+            case CLOCK_RESTART:
+                hr = IMFClockStateSink_OnClockRestart(statesink, 0);
+                break;
+            case CLOCK_PAUSE:
+                hr = IMFClockStateSink_OnClockPause(statesink, 0);
+                break;
+            case CLOCK_START:
+                expected_time = expected_time ? expected_time + 100000 : 2000000;
+                hr = IMFClockStateSink_OnClockStart(statesink, 0, expected_time);
+                break;
+            default:
+                ;
+        }
+        todo_wine_if(hr != S_OK)
+        ok(hr == S_OK, "unexpected hr %#lx.\n", hr);
+        hr = IMFPresentationTimeSource_GetState(time_source, 0, &state);
+        ok(hr == S_OK, "failed to get state, hr %#lx.\n", hr);
+        todo_wine_if(state != clock_state_change[i].state)
+        ok(state == clock_state_change[i].state, "unexpected state %d.\n", state);
+        hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, &time, &systime);
+        ok(hr == S_OK, "Failed to get time %#lx.\n", hr);
+        todo_wine_if(time != expected_time)
+        ok(time == expected_time, "Unexpected time %I64u.\n", time);
+        ok(systime >= mf_systime && systime < mf_systime + 5000000, "Unexpected systime %I64u.\n", systime);
+
+        winetest_pop_context();
+    }
+
+    /* Clock time is constant */
+    hr = IMFClockStateSink_OnClockSetRate(statesink, 0, 1.0f);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFClockStateSink_OnClockStart(statesink, 0, 3000000);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    Sleep(20);
+    hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, &time, &systime);
+    ok(hr == S_OK, "Failed to get time %#lx.\n", hr);
+    todo_wine
+    ok(time == 3000000, "Unexpected time %I64u.\n", time);
+
+    hr = IMFClockStateSink_OnClockStart(statesink, 0, PRESENTATION_CURRENT_POSITION);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, &time, &systime);
+    ok(hr == S_OK, "Failed to get time %#lx.\n", hr);
+    todo_wine
+    ok(time == 3000000, "Unexpected time %I64u.\n", time);
+
+    hr = IMFClockStateSink_OnClockStop(statesink, 0);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFClockStateSink_OnClockSetRate(statesink, 0, 0.0f);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFClockStateSink_Release(statesink);
+}
+
+static void test_sample_grabber_scrubbing(void)
+{
+    media_type_desc video_rgb32_desc =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+    };
+
+    struct test_grabber_callback *grabber_callback;
+    IMFPresentationClock *presentation_clock;
+    IMFPresentationTimeSource *time_source;
+    IMFRateControl *rate_control;
+    IMFAsyncCallback *callback;
+    IMFActivate *sink_activate;
+    IMFMediaType *output_type;
+    IMFMediaSession *session;
+    IMFMediaSource *source;
+    IMFTopology *topology;
+    LONGLONG time, time2;
+    PROPVARIANT propvar;
+    IMFClock *clock;
+    HRESULT hr;
+    DWORD res;
+
+    hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+    ok(hr == S_OK, "Failed to start up, hr %#lx.\n", hr);
+
+    if (!(source = create_media_source(L"test.mp4", L"video/mp4")))
+    {
+        win_skip("MP4 media source is not supported, skipping tests.\n");
+        goto done;
+    }
+
+    grabber_callback = impl_from_IMFSampleGrabberSinkCallback(create_test_grabber_callback());
+    grabber_callback->ready_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(!!grabber_callback->ready_event, "CreateEventW failed, error %lu\n", GetLastError());
+
+    hr = MFCreateMediaType(&output_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(output_type, video_rgb32_desc, -1);
+    hr = MFCreateSampleGrabberSinkActivate(output_type, &grabber_callback->IMFSampleGrabberSinkCallback_iface, &sink_activate);
+    ok(hr == S_OK, "Failed to create grabber sink, hr %#lx.\n", hr);
+    IMFMediaType_Release(output_type);
+
+    hr = MFCreateMediaSession(NULL, &session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    topology = create_test_topology(source, sink_activate, NULL);
+    hr = IMFMediaSession_SetTopology(session, 0, topology);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFTopology_Release(topology);
+
+    hr = MFGetService((IUnknown*)session, &MF_RATE_CONTROL_SERVICE, &IID_IMFRateControl, (void **)&rate_control);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaSession_GetClock(session, &clock);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFClock_QueryInterface(clock, &IID_IMFPresentationClock, (void **)&presentation_clock);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFClock_Release(clock);
+
+    hr = IMFPresentationClock_GetTimeSource(presentation_clock, &time_source);
+    ok(hr == MF_E_CLOCK_NO_TIME_SOURCE, "Unexpected hr %#lx.\n", hr);
+
+    callback = create_test_callback(TRUE);
+
+    hr = IMFRateControl_SetRate(rate_control, FALSE, 0.0f);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionRateChanged, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFPresentationClock_GetTimeSource(presentation_clock, &time_source);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    check_constant_time_source(time_source);
+    IMFPresentationTimeSource_Release(time_source);
+
+    SET_EXPECT(OnProcessSample);
+
+    /* Documentation is silent on scrub without current position on first start, but it works in some Windows versions. */
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionStarted, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 1000, &propvar);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    res = WaitForSingleObject(grabber_callback->ready_event, 500);
+    flaky
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
+    IMFPresentationClock_GetTime(presentation_clock, &time);
+    todo_wine
+    ok(time == 0, "Unexpected time %I64u.\n", time);
+
+    res = WaitForSingleObject(grabber_callback->ready_event, 40);
+    todo_wine
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res);
+
+    hr = IMFMediaSession_Pause(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionPaused, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* Scrub at a different location. */
+    propvar.vt = VT_I8;
+    propvar.hVal.QuadPart = 1000000;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionStarted, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 1000, &propvar);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    res = WaitForSingleObject(grabber_callback->ready_event, 500);
+    flaky
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
+    IMFPresentationClock_GetTime(presentation_clock, &time);
+    todo_wine
+    ok(time == 1000000, "Unexpected time %I64u.\n", time);
+
+    /* Frame stepping. Documentation vaguely implies a zero rate should be set again. Test here without that. */
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionStarted, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* The event is not sent, but a sample is in some Windows versions. */
+    hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 40, &propvar);
+    ok(hr == WAIT_TIMEOUT, "Unexpected hr %#lx.\n", hr);
+    res = WaitForSingleObject(grabber_callback->ready_event, 500);
+    flaky
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
+    IMFPresentationClock_GetTime(presentation_clock, &time);
+    todo_wine
+    ok(time == 1000000, "Unexpected time %I64u.\n", time);
+
+    hr = IMFMediaSession_Pause(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionPaused, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFRateControl_SetRate(rate_control, FALSE, 1.0f);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionRateChanged, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* Clock is now a system clock. */
+    hr = IMFPresentationClock_GetTimeSource(presentation_clock, &time_source);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFPresentationTimeSource_GetClockCharacteristics(time_source, &res);
+    ok(hr == S_OK, "Failed to get flags, hr %#lx.\n", hr);
+    ok(!!(res & MFCLOCK_CHARACTERISTICS_FLAG_IS_SYSTEM_CLOCK), "Unexpected flags %#lx.\n", res);
+    IMFPresentationTimeSource_Release(time_source);
+
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionStarted, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    res = WaitForSingleObject(grabber_callback->ready_event, 500);
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
+    res = WaitForSingleObject(grabber_callback->ready_event, 500);
+    ok(!res, "WaitForSingleObject returned %#lx\n", res);
+    IMFPresentationClock_GetTime(presentation_clock, &time);
+    ok(time > 1000000, "Unexpected time %I64u.\n", time);
+
+    /* Test enabling scrubbing at non-zero current position. */
+    hr = IMFMediaSession_Pause(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionPaused, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFRateControl_SetRate(rate_control, FALSE, 0.0f);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionRateChanged, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    WaitForSingleObject(grabber_callback->ready_event, 0);
+    propvar.vt = VT_EMPTY;
+    hr = IMFMediaSession_Start(session, &GUID_NULL, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event(session, callback, MESessionStarted, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = wait_media_event_until_blocking(session, callback, MESessionScrubSampleComplete, 1000, &propvar);
+    todo_wine
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    /* Frame not sent, possibly because the frame at the current time was already sent. */
+    res = WaitForSingleObject(grabber_callback->ready_event, 40);
+    todo_wine_if(!res)
+    ok(res == WAIT_TIMEOUT, "WaitForSingleObject returned %#lx\n", res);
+    IMFPresentationClock_GetTime(presentation_clock, &time2);
+    todo_wine
+    ok(time2 >= time, "Unexpected time %I64u.\n", time2);
+
+    IMFRateControl_Release(rate_control);
+    IMFPresentationClock_Release(presentation_clock);
+
+    hr = IMFMediaSession_Stop(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaSession_Close(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = wait_media_event_until_blocking(session, callback, MESessionClosed, 1000, &propvar);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFMediaSession_Shutdown(session);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFMediaSource_Shutdown(source);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFActivate_ShutdownObject(sink_activate);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    IMFActivate_Release(sink_activate);
+    IMFSampleGrabberSinkCallback_Release(&grabber_callback->IMFSampleGrabberSinkCallback_iface);
+    IMFMediaSession_Release(session);
+    IMFMediaSource_Release(source);
+
+done:
+    hr = MFShutdown();
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+}
+
 START_TEST(mf)
 {
     init_functions();
@@ -12054,4 +12416,5 @@ START_TEST(mf)
     test_media_session_invalid_topology();
     test_media_session_sink_shutdown();
     test_async_transform();
+    test_sample_grabber_scrubbing();
 }
