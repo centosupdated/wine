@@ -620,6 +620,7 @@ static const struct user_driver_funcs x11drv_funcs =
 
     .pActivateKeyboardLayout = X11DRV_ActivateKeyboardLayout,
     .pBeep = X11DRV_Beep,
+    .pGetKeyboardLayoutList = X11DRV_GetKeyboardLayoutList,
     .pGetKeyNameText = X11DRV_GetKeyNameText,
     .pMapVirtualKeyEx = X11DRV_MapVirtualKeyEx,
     .pToUnicodeEx = X11DRV_ToUnicodeEx,
