@@ -1242,6 +1242,8 @@ static HRESULT WINAPI Global_GetDispID(IDispatchEx *iface, BSTR bstrName, DWORD 
         { L"invokeDisp",      DISPID_GLOBAL_INVOKEDISP },
         { L"invokeMethod",    DISPID_GLOBAL_INVOKEMETHOD },
         { L"testObj",         DISPID_GLOBAL_TESTOBJ },
+        /* host property sharing its name with a builtin function */
+        { L"InputBox",        DISPID_GLOBAL_TESTOBJ },
         { L"collectionObj" ,  DISPID_GLOBAL_COLLOBJ },
         { L"vbvar",           DISPID_GLOBAL_VBVAR, REF_EXPECT(global_vbvar_d) },
         { L"letobj",          DISPID_GLOBAL_LETOBJ },
@@ -2079,6 +2081,8 @@ static HRESULT WINAPI ActiveScriptSite_GetItemInfo(IActiveScriptSite *iface, LPC
         *ppiunkItem = (IUnknown*)&Global;
     }else if(!lstrcmpW(pstrName, L"indexedObj")) {
         *ppiunkItem = (IUnknown*)&indexedObj;
+    }else if(!lstrcmpW(pstrName, L"Trim")) {
+        *ppiunkItem = (IUnknown*)&testObj;
     }else {
         ok(0, "unexpected pstrName %s\n", wine_dbgstr_w(pstrName));
         *ppiunkItem = NULL;
@@ -3745,6 +3749,74 @@ static void test_sub_decl_scope(void)
     }
 }
 
+static void test_named_item_builtin_shadowing(void)
+{
+    IActiveScriptParse *parser;
+    IActiveScript *engine;
+    BSTR str;
+    HRESULT hres;
+
+    strict_dispid_check = FALSE;
+
+    engine = create_and_init_script(SCRIPTITEM_GLOBALMEMBERS, TRUE);
+    if(!engine)
+        return;
+
+    hres = IActiveScript_QueryInterface(engine, &IID_IActiveScriptParse, (void**)&parser);
+    ok(hres == S_OK, "Could not get IActiveScriptParse: %08lx\n", hres);
+
+    hres = IActiveScript_AddNamedItem(engine, L"Trim", SCRIPTITEM_ISVISIBLE);
+    ok(hres == S_OK, "AddNamedItem failed: %08lx\n", hres);
+
+    str = SysAllocString(L"Call ok(getVT(Trim) = \"VT_DISPATCH\", \"getVT(Trim) = \" & getVT(Trim))\n"
+                         L"Trim.propput = 1\n");
+    SET_EXPECT(testobj_propput_d);
+    SET_EXPECT(testobj_propput_i);
+    hres = IActiveScriptParse_ParseScriptText(parser, str, NULL, NULL, NULL, 0, 0, 0, NULL, NULL);
+    ok(hres == S_OK, "ParseScriptText failed: %08lx\n", hres);
+    CHECK_CALLED(testobj_propput_d);
+    CHECK_CALLED(testobj_propput_i);
+    SysFreeString(str);
+
+    IActiveScriptParse_Release(parser);
+    close_script(engine);
+}
+
+/* Native counts '\n', '\r' and '\r\n' as line endings, so a '\n\r' pair is
+   two. Each script ends with a failing statement preceded by two separators,
+   and the reported 0-based error line is the number of line endings before
+   it: 2 for the single-break styles, 4 for the doubled '\n\r' and '\r\r'. */
+static void test_error_line_endings(void)
+{
+    static const struct {
+        const WCHAR *src;
+        ULONG error_line;
+    } tests[] = {
+        { L"' a\n' b\nx = 1 \\ 0\n",             2 },
+        { L"' a\r\n' b\r\nx = 1 \\ 0\r\n",       2 },
+        { L"' a\r' b\rx = 1 \\ 0\r",             2 },
+        { L"' a\n' b\rx = 1 \\ 0\r",             2 },
+        { L"' a\r' b\nx = 1 \\ 0\n",             2 },
+        { L"' a\n\r' b\n\rx = 1 \\ 0\n\r",       4 },
+        { L"' a\r\r' b\r\rx = 1 \\ 0\r\r",       4 },
+        { L"' a\r\n' b\rx = 1 \\ 0\r\n",         2 },
+    };
+    HRESULT hres;
+    unsigned i;
+
+    for (i = 0; i < ARRAY_SIZE(tests); i++) {
+        error_line = ~0;
+        error_code = 0;
+        onerror_hres = S_OK;
+        SET_EXPECT(OnScriptError);
+        hres = parse_script_wr(tests[i].src);
+        CLEAR_CALLED(OnScriptError);
+        ok(hres == 0x80020101 && error_code == 11 && error_line == tests[i].error_line,
+           "[%u] %s: hres=%08lx code=%u line=%lu\n", i, wine_dbgstr_w(tests[i].src),
+           hres, error_code, error_line);
+    }
+}
+
 static void test_msgbox(void)
 {
     HRESULT hres;
@@ -4240,6 +4312,12 @@ static void run_tests(void)
     CHECK_CALLED(testobj_propput_d);
     CHECK_CALLED(testobj_propput_i);
 
+    /* the builtin function wins over a global-members host property of the same name */
+    SET_EXPECT(OnScriptError);
+    hres = parse_script_wr(L"InputBox.propput = 1");
+    ok(hres == MAKE_VBSERROR(450), "InputBox.propput = 1 returned: %08lx\n", hres);
+    CHECK_CALLED(OnScriptError);
+
     SET_EXPECT(global_propargput_d);
     SET_EXPECT(global_propargput_i);
     parse_script_w(L"propargput(counter(), counter()) = counter()");
@@ -4438,11 +4516,13 @@ static void run_tests(void)
     test_procedures();
     test_gc();
     test_msgbox();
+    test_named_item_builtin_shadowing();
     test_isexpression();
     test_option_explicit_errors();
     test_parse_errors();
     test_class_decl_scope();
     test_sub_decl_scope();
+    test_error_line_endings();
     test_redefine_scope();
     test_getref_error_reporting();
     test_getref_external_caller_error();
