@@ -1310,9 +1310,12 @@ static void test_media_types(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
+        /* DMO color converter does not support ARGB32 */
+        todo_wine_if(i == 0)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_Disconnect(sink);
+        todo_wine_if(i == 0)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         /* Test negative height */
@@ -1322,9 +1325,12 @@ static void test_media_types(void)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_ReceiveConnection(sink, &peer->source.pin.IPin_iface, &req_mt);
+        /* DMO color converter does not support ARGB32 */
+        todo_wine_if(i == 0)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         hr = IPin_Disconnect(sink);
+        todo_wine_if(i == 0)
         ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
         winetest_pop_context();

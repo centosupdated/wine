@@ -20,7 +20,9 @@
 
 #include "quartz_private.h"
 
+#include "mediaobj.h"
 #include "vfw.h"
+#include "wmcodecdsp.h"
 
 #include "wine/debug.h"
 
@@ -34,6 +36,8 @@ struct color_converter
     struct strmbase_passthrough passthrough;
 
     struct strmbase_sink sink;
+
+    IMediaObject *dmo;
 };
 
 struct subtype
@@ -79,6 +83,34 @@ static const struct subtype *get_subtype(const AM_MEDIA_TYPE *mt)
     return subtype;
 }
 
+static LONG calculate_stride(const BITMAPINFOHEADER *bmi_header)
+{
+    LONG stride = (bmi_header->biWidth * (bmi_header->biBitCount / 8) + 3) & ~3;
+    if (bmi_header->biHeight >= 0)
+        return stride;
+    else
+        return -stride;
+}
+
+static void populate_output_dmo_mt(
+        const AM_MEDIA_TYPE *input_mt, const AM_MEDIA_TYPE *output_mt, DMO_MEDIA_TYPE *dmo_mt)
+{
+    const VIDEOINFOHEADER *input_video_info;
+    VIDEOINFOHEADER *video_info;
+
+    input_video_info = (VIDEOINFOHEADER *)input_mt->pbFormat;
+
+    video_info = calloc(1, sizeof(*video_info));
+    memcpy(video_info, output_mt->pbFormat, sizeof(*video_info));
+    video_info->bmiHeader.biWidth = input_video_info->bmiHeader.biWidth;
+    video_info->bmiHeader.biHeight = input_video_info->bmiHeader.biHeight;
+    video_info->bmiHeader.biSizeImage = abs(calculate_stride(&video_info->bmiHeader)) * video_info->bmiHeader.biHeight;
+
+    memcpy(dmo_mt, output_mt, sizeof(*dmo_mt));
+    dmo_mt->pbFormat = (BYTE *)video_info;
+    dmo_mt->lSampleSize = video_info->bmiHeader.biSizeImage;
+}
+
 static struct color_converter *impl_from_strmbase_filter(struct strmbase_filter *iface)
 {
     return CONTAINING_RECORD(iface, struct color_converter, filter);
@@ -107,15 +139,15 @@ static HRESULT color_sink_query_accept(struct strmbase_pin *iface, const AM_MEDI
 
 static HRESULT color_sink_connect(struct strmbase_sink *iface, IPin *peer, const AM_MEDIA_TYPE *mt)
 {
-    if (!get_subtype(mt))
-    {
-        TRACE("Connection refused\n");
-        return VFW_E_TYPE_NOT_ACCEPTED;
-    }
+    struct color_converter *filter = impl_from_strmbase_filter(iface->pin.filter);
+    HRESULT hr = VFW_E_TYPE_NOT_ACCEPTED;
 
-    /* TODO: Set up color conversion */
-    FIXME("stub\n");
-    return S_OK;
+    if (get_subtype(mt))
+        hr = IMediaObject_SetInputType(filter->dmo, 0, mt, 0);
+
+    TRACE("Returning %#lx.\n", hr);
+
+    return hr;
 }
 
 static const struct strmbase_sink_ops sink_ops =
@@ -128,10 +160,17 @@ static const struct strmbase_sink_ops sink_ops =
 static HRESULT WINAPI color_source_DecideBufferSize(
         struct strmbase_source *iface, IMemAllocator *alloc, ALLOCATOR_PROPERTIES *props)
 {
+    struct color_converter *filter = impl_from_strmbase_filter(iface->pin.filter);
     const struct subtype *subtype;
     ALLOCATOR_PROPERTIES actual;
     BITMAPINFOHEADER *header;
+    DMO_MEDIA_TYPE dmo_mt;
     long min_image_size;
+    HRESULT hr;
+
+    populate_output_dmo_mt(&filter->sink.pin.mt, &iface->pin.mt, &dmo_mt);
+    if (FAILED(hr = IMediaObject_SetOutputType(filter->dmo, 0, &dmo_mt, 0)))
+        return hr;
 
     if (!props->cbAlign)
         props->cbAlign = 1;
@@ -262,6 +301,8 @@ static void color_destroy(struct strmbase_filter *iface)
     strmbase_passthrough_cleanup(&filter->passthrough);
     strmbase_filter_cleanup(&filter->filter);
 
+    IMediaObject_Release(filter->dmo);
+
     free(filter);
 }
 
@@ -326,8 +367,16 @@ HRESULT color_create(IUnknown *outer, IUnknown **out)
     strmbase_passthrough_init(&object->passthrough, (IUnknown *)&object->source.pin.IPin_iface);
     ISeekingPassThru_Init(&object->passthrough.ISeekingPassThru_iface, FALSE, &object->sink.pin.IPin_iface);
 
-    TRACE("Created Color Converter %p.\n", object);
-    *out = &object->filter.IUnknown_inner;
+    if (SUCCEEDED(hr = CoCreateInstance(&CLSID_CColorConvertDMO, NULL, CLSCTX_INPROC_SERVER, &IID_IMediaObject,
+                          (void **)&object->dmo)))
+    {
+        TRACE("Created Color Converter %p.\n", object);
+        *out = &object->filter.IUnknown_inner;
+    }
+    else
+    {
+        ERR("Failed to create color conversion transform %#lx.\n", hr);
+    }
 
-    return S_OK;
+    return hr;
 }
