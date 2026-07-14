@@ -38,6 +38,7 @@ static const struct user_driver_funcs waylanddrv_funcs =
     .pClipCursor = WAYLAND_ClipCursor,
     .pDesktopWindowProc = WAYLAND_DesktopWindowProc,
     .pDestroyWindow = WAYLAND_DestroyWindow,
+    .pGetKeyboardLayoutList = WAYLAND_GetKeyboardLayoutList,
     .pSetIMECompositionRect = WAYLAND_SetIMECompositionRect,
     .pKbdLayerDescriptor = WAYLAND_KbdLayerDescriptor,
     .pReleaseKbdTables = WAYLAND_ReleaseKbdTables,
