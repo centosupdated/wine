@@ -680,6 +680,27 @@ set "FOO_PATH=%cd%" > NUL
 cd ..
 call :setError 666 & (start /B /WAIT /d "%FOO_PATH%" cmd /s /c "if /I \"%%cd%%\"==\"%FOO_PATH%\" (exit 0) else (exit 1)" >nul &&echo !errorlevel!)
 rd /q /s foo
+
+rem Ensure START handles a protocol URL longer than MAX_PATH.
+set "WINE_START_PROTOCOL=wineteststart%random%%random%"
+set "WINE_START_URL=%WINE_START_PROTOCOL%://callback/"
+for /l %%i in (1,1,512) do set "WINE_START_URL=!WINE_START_URL!a"
+set "WINE_START_RESULT=%cd%\start_result.txt"
+del /q "%WINE_START_RESULT%" >nul 2>&1
+reg add "HKCU\Software\Classes\%WINE_START_PROTOCOL%" /ve /d "URL:%WINE_START_PROTOCOL%" /f >nul
+reg add "HKCU\Software\Classes\%WINE_START_PROTOCOL%" /v "URL Protocol" /d "" /f >nul
+reg add "HKCU\Software\Classes\%WINE_START_PROTOCOL%\shell\open\command" /ve ^
+    /d "%comspec% /d /c type nul > %WINE_START_RESULT%" /f >nul
+reg add "HKCR\%WINE_START_PROTOCOL%" /ve /d "URL:%WINE_START_PROTOCOL%" /f >nul 2>&1
+reg add "HKCR\%WINE_START_PROTOCOL%" /v "URL Protocol" /d "" /f >nul 2>&1
+reg add "HKCR\%WINE_START_PROTOCOL%\shell\open\command" /ve ^
+    /d "%comspec% /d /c type nul > %WINE_START_RESULT%" /f >nul 2>&1
+start "" /b /wait !WINE_START_URL! >nul 2>&1
+if exist "%WINE_START_RESULT%" (echo long protocol URL handled) else echo protocol handler was not invoked
+reg delete "HKCR\%WINE_START_PROTOCOL%" /f >nul 2>&1
+reg delete "HKCU\Software\Classes\%WINE_START_PROTOCOL%" /f >nul 2>&1
+del /q "%WINE_START_RESULT%" >nul 2>&1
+
 echo --- success/failure for TYPE command
 mkdir foo & cd foo
 mkdir bar

@@ -290,19 +290,21 @@ static BOOL search_path(const WCHAR *firstParam, WCHAR **full_path)
             lstrcpyW (pathtosearch, L".");
         }
         if (wcschr(firstParam, '.') != NULL) extensionsupplied = TRUE;
-        if (lstrlenW(firstParam) >= MAX_PATH) {
+        if (lstrlenW(firstParam) >= ARRAY_SIZE(stemofsearch))
             return FALSE;
-        }
-
         lstrcpyW(stemofsearch, firstParam);
 
     } else {
 
         /* Convert eg. ..\fred to include a directory by removing file part */
-        GetFullPathNameW(firstParam, ARRAY_SIZE(pathtosearch), pathtosearch, NULL);
+        len = GetFullPathNameW(firstParam, ARRAY_SIZE(pathtosearch), pathtosearch, NULL);
+        if (!len || len >= ARRAY_SIZE(pathtosearch))
+            return FALSE;
         lastSlash = wcsrchr(pathtosearch, '\\');
         if (lastSlash && wcschr(lastSlash, '.') != NULL) extensionsupplied = TRUE;
-        lstrcpyW(stemofsearch, lastSlash+1);
+        if (lstrlenW(lastSlash ? lastSlash + 1 : firstParam) >= ARRAY_SIZE(stemofsearch))
+            return FALSE;
+        lstrcpyW(stemofsearch, lastSlash ? lastSlash + 1 : firstParam);
 
         /* Reduce pathtosearch to a path with trailing '\' to support c:\a.bat and
            c:\windows\a.bat syntax                                                 */
@@ -336,10 +338,14 @@ static BOOL search_path(const WCHAR *firstParam, WCHAR **full_path)
         }
 
         if (*pos) { /* Reached semicolon */
+            if (pos - pathposn >= ARRAY_SIZE(thisDir))
+                return FALSE;
             memcpy(thisDir, pathposn, (pos-pathposn) * sizeof(WCHAR));
             thisDir[(pos-pathposn)] = 0x00;
             pathposn = pos+1;
         } else {    /* Reached string end */
+            if (lstrlenW(pathposn) >= ARRAY_SIZE(thisDir))
+                return FALSE;
             lstrcpyW(thisDir, pathposn);
             pathposn = NULL;
         }
@@ -356,7 +362,12 @@ static BOOL search_path(const WCHAR *firstParam, WCHAR **full_path)
 
         /* Since you can have eg. ..\.. on the path, need to expand
            to full information                                      */
-        GetFullPathNameW(temp, MAX_PATH, thisDir, NULL);
+        len = GetFullPathNameW(temp, ARRAY_SIZE(thisDir), thisDir, NULL);
+        if (!len || len >= ARRAY_SIZE(thisDir))
+            return FALSE;
+
+        if (lstrlenW(thisDir) + 1 + lstrlenW(stemofsearch) + 2 >= ARRAY_SIZE(thisDir))
+            return FALSE;
 
         /* 1. If extension supplied, see if that file exists */
         if (thisDir[lstrlenW(thisDir) - 1] != '\\') lstrcatW(thisDir, L"\\");
@@ -385,6 +396,13 @@ static BOOL search_path(const WCHAR *firstParam, WCHAR **full_path)
                 /* 3. Yes - Try each path ext */
                 while (thisExt) {
                     WCHAR *nextExt = wcschr(thisExt, ';');
+                    SIZE_T ext_len = nextExt ? nextExt - thisExt : lstrlenW(thisExt);
+
+                    if (pos + ext_len >= thisDir + ARRAY_SIZE(thisDir))
+                    {
+                        thisExt = nextExt ? nextExt + 1 : NULL;
+                        continue;
+                    }
 
                     if (nextExt) {
                         memcpy(pos, thisExt, (nextExt-thisExt) * sizeof(WCHAR));
