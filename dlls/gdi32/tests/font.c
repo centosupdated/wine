@@ -2328,7 +2328,7 @@ static void test_bitmap_sfnt_outline_metrics(void)
     if (ret && !wcscmp( selected_name, face_name ))
     {
         size = GetOutlineTextMetricsW( hdc, 0, NULL );
-        todo_wine ok( size > sizeof(*otm), "Got metrics size %lu.\n", size );
+        ok( size > sizeof(*otm), "Got metrics size %lu.\n", size );
         if (size > sizeof(*otm))
         {
             otm = calloc( 1, size );
