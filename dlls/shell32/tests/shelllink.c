@@ -1559,13 +1559,11 @@ static void test_IExtractIconW_GetIconLocation(void)
      *    This is unaccounted for here, as it doesn't affect this case.
      */
 
-    todo_wine {
-        ok ( !wcscmp( notepad_exe_icon_path, shortcut_icon_path ) &&
-             notepad_exe_icon_index == shortcut_icon_index,
-             "Got different icon locations for shortcut versus its target: (%s, %d) != (%s, %d)\n",
-             wine_dbgstr_w( shortcut_icon_path ), shortcut_icon_index,
-             wine_dbgstr_w( notepad_exe_icon_path ), notepad_exe_icon_index );
-    }
+    ok ( !wcscmp( notepad_exe_icon_path, shortcut_icon_path ) &&
+         notepad_exe_icon_index == shortcut_icon_index,
+         "Got different icon locations for shortcut versus its target: (%s, %d) != (%s, %d)\n",
+         wine_dbgstr_w( shortcut_icon_path ), shortcut_icon_index,
+         wine_dbgstr_w( notepad_exe_icon_path ), notepad_exe_icon_index );
 }
 
 START_TEST(shelllink)
