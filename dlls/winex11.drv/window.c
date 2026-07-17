@@ -1744,6 +1744,7 @@ static UINT window_update_client_config( struct x11drv_win_data *data )
     unsigned long old_generation, generation;
     long old_monitors[4], monitors[4];
     UINT flags;
+    HMONITOR monitor;
 
     if (!data->managed) return 0; /* unmanaged windows are managed by the Win32 side */
     if (is_virtual_desktop()) return 0; /* ignore window manager config changes in virtual desktop mode */
@@ -1769,6 +1770,22 @@ static UINT window_update_client_config( struct x11drv_win_data *data )
 
     flags = SWP_NOACTIVATE | SWP_NOZORDER;
     rect = new_rect = window_rect_from_visible( &data->rects, data->current_state.rect );
+
+    if (!(data->current_state.net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)) &&
+        ((monitor = NtUserMonitorFromRect( &new_rect, MONITOR_DEFAULTTONEAREST ))) &&
+        !(NtUserGetWindowLongW( data->hwnd, GWL_STYLE ) & WS_MAXIMIZE))
+    {
+        MONITORINFO monitor_info = {.cbSize = sizeof(monitor_info)};
+        if (NtUserGetMonitorInfo( monitor, &monitor_info ))
+        {
+            if (monitor_info.rcWork.bottom == data->current_state.rect.bottom &&
+                monitor_info.rcWork.top <= data->current_state.rect.top &&
+                (monitor_info.rcWork.right - monitor_info.rcWork.left) == (data->current_state.rect.right - data->current_state.rect.left) &&
+                (monitor_info.rcWork.bottom - monitor_info.rcWork.top) >= (data->current_state.rect.bottom - data->current_state.rect.top))
+                return 0;
+        }
+    }
+
     if (new_rect.left == old_rect.left && new_rect.top == old_rect.top) flags |= SWP_NOMOVE;
     else OffsetRect( &rect, old_rect.left - new_rect.left, old_rect.top - new_rect.top );
     if (rect.right == old_rect.right && rect.bottom == old_rect.bottom) flags |= SWP_NOSIZE;
