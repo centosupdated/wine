@@ -409,6 +409,95 @@ static BYTE shape_from_color_key_32( UINT32 *bits, UINT32 color_mask, UINT32 col
     return ~mask;
 }
 
+static void set_layer_region( struct window_surface *surface, HRGN hrgn )
+{
+    static const RECT empty_rect;
+    RGNDATA *data;
+    DWORD size;
+    HWND hwnd = surface->hwnd;
+
+    if (hrgn)
+    {
+        if (!(size = NtGdiGetRegionData( hrgn, 0, NULL ))) return;
+        if (!(data = malloc( size ))) return;
+        if (!NtGdiGetRegionData( hrgn, size, data ))
+        {
+            free( data );
+            return;
+        }
+        SERVER_START_REQ( set_layer_region )
+        {
+            req->window = wine_server_user_handle( hwnd );
+            if (data->rdh.nCount)
+                wine_server_add_data( req, data->Buffer, data->rdh.nCount * sizeof(RECT) );
+            else
+                wine_server_add_data( req, &empty_rect, sizeof(empty_rect) );
+            wine_server_call( req );
+        }
+        SERVER_END_REQ;
+        free( data );
+    }
+    else  /* clear existing region */
+    {
+        SERVER_START_REQ( set_layer_region )
+        {
+            req->window = wine_server_user_handle( hwnd );
+            wine_server_call( req );
+        }
+        SERVER_END_REQ;
+    }
+}
+
+static inline void flush_rgn_data( HRGN rgn, RGNDATA *data )
+{
+    HRGN tmp = NtGdiExtCreateRegion( NULL, data->rdh.dwSize + data->rdh.nRgnSize, data );
+    NtGdiCombineRgn( rgn, rgn, tmp, RGN_OR );
+    NtGdiDeleteObjectApp( tmp );
+    data->rdh.nCount = 0;
+}
+
+static inline void add_row( HRGN rgn, RGNDATA *data, int x, int y, int len )
+{
+    RECT *rect = (RECT *)data->Buffer + data->rdh.nCount;
+
+    if (len <= 0) return;
+    rect->left   = x;
+    rect->top    = y;
+    rect->right  = x + len;
+    rect->bottom = y + 1;
+    data->rdh.nCount++;
+    if (data->rdh.nCount * sizeof(RECT) > data->rdh.nRgnSize - sizeof(RECT))
+        flush_rgn_data( rgn, data );
+}
+
+static HRGN create_region_from_shape_bits( BYTE *shape, UINT stride, UINT width, UINT height )
+{
+    char buffer[4096];
+    RGNDATA *rgn_data = (RGNDATA *)buffer;
+    HRGN rgn;
+    UINT start, x, y;
+
+    rgn_data->rdh.dwSize = sizeof(rgn_data->rdh);
+    rgn_data->rdh.iType  = RDH_RECTANGLES;
+    rgn_data->rdh.nCount = 0;
+    rgn_data->rdh.nRgnSize = sizeof(buffer) - sizeof(rgn_data->rdh);
+    rgn = NtGdiCreateRectRgn( 0, 0, 0, 0 );
+
+    for (y = 0; y < height; y++, shape += stride)
+    {
+        x = 0;
+        while (x < width)
+        {
+            while (x < width && !(shape[x / 8] & (0x80 >> (x & 7)))) x++;
+            start = x;
+            while (x < width && (shape[x / 8] & (0x80 >> (x & 7)))) x++;
+            add_row( rgn, rgn_data, start, y, x - start );
+        }
+    }
+    if (rgn_data->rdh.nCount) flush_rgn_data( rgn, rgn_data );
+    return rgn;
+}
+
 static BOOL set_surface_shape( struct window_surface *surface, const RECT *rect, const RECT *dirty,
                                const BITMAPINFO *color_info, void *color_bits )
 {
@@ -424,6 +513,12 @@ static BOOL set_surface_shape( struct window_surface *surface, const RECT *rect,
     width = color_info->bmiHeader.biWidth;
     height = abs( color_info->bmiHeader.biHeight );
     assert( !(width & 7) ); /* expect 1bpp bitmap to be aligned on bytes */
+
+    if (surface->color_key == CLR_INVALID && alpha_mask == 0)
+    {
+        set_layer_region( surface, NULL );
+        return FALSE;
+    }
 
     if ((is_new = !surface->shape_bitmap)) surface->shape_bitmap = NtGdiCreateBitmap( width, height, 1, 1, NULL );
     if (!(shape_bits = window_surface_get_shape( surface, shape_info ))) return FALSE;
@@ -503,6 +598,12 @@ static BOOL set_surface_shape( struct window_surface *surface, const RECT *rect,
     }
 
     ret = is_new || memcmp( old_shape, shape_bits, shape_info->bmiHeader.biSizeImage );
+    if (ret)
+    {
+        HRGN rgn = alpha_mask == 0 ? NULL : create_region_from_shape_bits( shape_bits, shape_stride, width, height );
+        set_layer_region( surface, rgn );
+        NtGdiDeleteObjectApp( rgn );
+    }
     free( old_shape );
     return ret;
 }

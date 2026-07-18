@@ -1957,6 +1957,12 @@ static void dump_set_window_region_request( const struct set_window_region_reque
     dump_varargs_rectangles( ", region=", cur_size );
 }
 
+static void dump_set_layer_region_request( const struct set_layer_region_request *req )
+{
+    fprintf( stderr, " window=%08x", req->window );
+    dump_varargs_rectangles( ", region=", cur_size );
+}
+
 static void dump_get_update_region_request( const struct get_update_region_request *req )
 {
     fprintf( stderr, " window=%08x", req->window );
@@ -3704,6 +3710,7 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_visible_region_request,
     (dump_func)dump_get_window_region_request,
     (dump_func)dump_set_window_region_request,
+    (dump_func)dump_set_layer_region_request,
     (dump_func)dump_get_update_region_request,
     (dump_func)dump_update_window_zorder_request,
     (dump_func)dump_redraw_window_request,
@@ -4015,6 +4022,7 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_get_windows_offset_reply,
     (dump_func)dump_get_visible_region_reply,
     (dump_func)dump_get_window_region_reply,
+    NULL,
     NULL,
     (dump_func)dump_get_update_region_reply,
     NULL,
@@ -4328,6 +4336,7 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "get_visible_region",
     "get_window_region",
     "set_window_region",
+    "set_layer_region",
     "get_update_region",
     "update_window_zorder",
     "redraw_window",
