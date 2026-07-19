@@ -586,7 +586,7 @@ static void test_system_menu_lazy(void)
     ok(hwnd != NULL, "CreateWindowEx failed, error %ld\n", GetLastError());
     SetWindowLongA(hwnd, GWL_STYLE, GetWindowLongA(hwnd, GWL_STYLE) & ~WS_SYSMENU);
     menu = GetSystemMenu(hwnd, FALSE);
-    todo_wine
+
     ok(menu == NULL, "system menu when WS_SYSMENU removed before GetSystemMenu %p\n", menu);
     DestroyWindow(hwnd);
 
