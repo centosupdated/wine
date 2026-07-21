@@ -574,6 +574,16 @@ static HRESULT WINAPI color_sink_Receive(struct strmbase_sink *iface, IMediaSamp
     return hr;
 }
 
+HRESULT color_sink_can_block(struct strmbase_sink *iface)
+{
+    struct color_converter *filter = impl_from_strmbase_filter(iface->pin.filter);
+
+    if (!filter->source.pMemInputPin)
+        return VFW_E_NOT_CONNECTED;
+
+    return IMemInputPin_ReceiveCanBlock(filter->source.pMemInputPin);
+}
+
 static const struct strmbase_sink_ops sink_ops =
 {
     .base.pin_query_interface = color_sink_query_interface,
@@ -581,6 +591,7 @@ static const struct strmbase_sink_ops sink_ops =
     .pfnReceive = color_sink_Receive,
     .sink_connect = color_sink_connect,
     .sink_end_flush = color_sink_end_flush,
+    .sink_receive_can_block = color_sink_can_block,
 };
 
 static HRESULT color_source_query_interface(struct strmbase_pin *iface, REFIID iid, void **out)

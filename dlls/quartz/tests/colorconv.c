@@ -1831,7 +1831,6 @@ static void test_sample_processing(
     testsink->can_block = S_FALSE;
 
     hr = IMemInputPin_ReceiveCanBlock(input);
-    todo_wine
     ok(hr == S_FALSE, "Got hr %#lx.\n", hr);
 
     sink_allocator = mem_allocator_from_IMemAllocator(testsink->sink.pAllocator);
