@@ -4057,6 +4057,7 @@ struct handle_info
     int            new_y;
     struct rectangle new_clip;    /* new clip rectangle */
     unsigned int   last_change;   /* time of last position change */
+    unsigned int   ever_set;
 @END
 #define SET_CURSOR_HANDLE 0x01
 #define SET_CURSOR_COUNT  0x02

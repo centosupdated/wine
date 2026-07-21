@@ -136,15 +136,17 @@ HCURSOR WINAPI NtUserSetCursor( HCURSOR cursor )
 HCURSOR WINAPI NtUserGetCursor(void)
 {
     HCURSOR ret;
+    bool is_set;
 
     SERVER_START_REQ( set_cursor )
     {
         req->flags = 0;
         wine_server_call( req );
         ret = wine_server_ptr_handle( reply->prev_handle );
+        is_set = reply->ever_set;
     }
     SERVER_END_REQ;
-    return ret;
+    return is_set ? ret : LoadImageW(NULL, (LPCWSTR) IDC_WAIT, IMAGE_CURSOR, 0, 0, LR_SHARED | LR_DEFAULTSIZE);
 }
 
 HICON alloc_cursoricon_handle( BOOL is_icon )

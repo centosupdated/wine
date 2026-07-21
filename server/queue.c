@@ -4019,6 +4019,7 @@ DECL_HANDLER(set_user_input_time)
 DECL_HANDLER(set_cursor)
 {
     struct msg_queue *queue = get_current_queue();
+    struct process *process = current->process;
     user_handle_t prev_cursor, new_cursor;
     struct thread_input *input;
     input_shm_t *input_shm;
@@ -4047,7 +4048,10 @@ DECL_HANDLER(set_cursor)
     SHARED_WRITE_BEGIN( input_shm, input_shm_t )
     {
         if (req->flags & SET_CURSOR_HANDLE)
+        {
             shared->cursor = req->handle;
+            process->set_cursor = 1;
+        }
         if (req->flags & SET_CURSOR_COUNT)
         {
             queue->cursor_count += req->show_count;
@@ -4067,6 +4071,7 @@ DECL_HANDLER(set_cursor)
     reply->new_y       = desktop_shm->cursor.y;
     reply->new_clip    = desktop_shm->cursor.clip;
     reply->last_change = desktop_shm->cursor.last_change;
+    reply->ever_set    = process->set_cursor;
 }
 
 /* Get the history of the 64 last cursor positions */
