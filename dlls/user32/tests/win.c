@@ -9493,6 +9493,113 @@ static void test_layered_window(void)
     DeleteObject( hbm );
 }
 
+static void test_layered_window_alpha_shape(void)
+{
+    HWND hwnd, behind;
+    HDC hdc_src;
+    HBITMAP dib, old_bmp;
+    BITMAPINFOHEADER bi = {0};
+    DWORD *bits;
+    POINT pt_src = {0, 0}, pt;
+    SIZE sz = {100, 100};
+    BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    BOOL ret, environment_ok;
+    HWND found;
+    int i;
+
+    if (!pUpdateLayeredWindow)
+    {
+        win_skip( "UpdateLayeredWindow not supported\n" );
+        return;
+    }
+
+    /* Use an off-screen position unlikely to be covered by leftover windows from
+     * other tests. The window itself is a popup so it's not constrained to the
+     * parent's client area. */
+
+    /* Background window: catches clicks that fall through the transparent area */
+    behind = CreateWindowExA( 0, "static", "behind", WS_POPUP | WS_VISIBLE,
+                              900, 700, 100, 100, 0, 0, 0, NULL );
+    ok( behind != 0, "CreateWindowEx failed, error %lu\n", GetLastError() );
+    SetWindowPos( behind, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+
+    /* Layered window on top of 'behind' */
+    hwnd = CreateWindowExA( WS_EX_LAYERED, "static", "layered", WS_POPUP | WS_VISIBLE,
+                            900, 700, 100, 100, 0, 0, 0, NULL );
+    ok( hwnd != 0, "CreateWindowEx failed, error %lu\n", GetLastError() );
+    SetWindowPos( hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+
+    /* 32bpp top-down DIB: top 50 rows opaque white, bottom 50 rows fully transparent */
+    bi.biSize        = sizeof(bi);
+    bi.biWidth       = 100;
+    bi.biHeight      = -100;  /* top-down: memory row 0 is the top row on screen */
+    bi.biPlanes      = 1;
+    bi.biBitCount    = 32;
+    bi.biCompression = BI_RGB;
+    dib = CreateDIBSection( NULL, (BITMAPINFO *)&bi, DIB_RGB_COLORS, (void **)&bits, NULL, 0 );
+    ok( dib != 0, "CreateDIBSection failed\n" );
+    for (i = 0; i < 50 * 100; i++) bits[i] = 0xFFFFFFFF;  /* opaque white */
+    for (i = 50 * 100; i < 100 * 100; i++) bits[i] = 0x00000000;  /* fully transparent */
+
+    hdc_src = CreateCompatibleDC( 0 );
+    old_bmp = SelectObject( hdc_src, dib );
+
+    /* Per-pixel alpha (ULW_ALPHA + AC_SRC_ALPHA), top half opaque, bottom half transparent */
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    ret = pUpdateLayeredWindow( hwnd, 0, NULL, &sz, hdc_src, &pt_src, 0, &bf, ULW_ALPHA );
+    ok( ret, "UpdateLayeredWindow failed, error %lu\n", GetLastError() );
+
+    /* Hit-test over the opaque top area: should hit the layered window itself.
+     * If something else is on top, the test environment isn't clean — skip the
+     * whole test rather than emit spurious failures. */
+    pt.x = 900 + 50; pt.y = 700 + 20;
+    found = WindowFromPoint( pt );
+    environment_ok = (found == hwnd);
+    if (!environment_ok)
+        skip( "unexpected window %p at opaque point, expected %p (test environment not clean)\n", found, hwnd );
+
+    if (environment_ok)
+    {
+        /* Hit-test over the transparent bottom area: should fall through to 'behind' */
+        pt.x = 900 + 50; pt.y = 700 + 70;
+        found = WindowFromPoint( pt );
+        todo_wine
+        ok( found == behind, "WindowFromPoint returned %p for transparent area, expected %p\n", found, behind );
+    }
+
+    /* Make all pixels opaque: whole window should hit-test as the layered window */
+    for (i = 50 * 100; i < 100 * 100; i++) bits[i] = 0xFFFFFFFF;
+    bf.SourceConstantAlpha = 255;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+    ret = pUpdateLayeredWindow( hwnd, 0, NULL, &sz, hdc_src, &pt_src, 0, &bf, ULW_ALPHA );
+    ok( ret, "UpdateLayeredWindow failed, error %lu\n", GetLastError() );
+    if (environment_ok)
+    {
+        pt.x = 900 + 50; pt.y = 700 + 70;  /* previously-transparent area */
+        found = WindowFromPoint( pt );
+        ok( found == hwnd, "WindowFromPoint returned %p for opaque window, expected %p\n", found, hwnd );
+    }
+
+    /* SourceConstantAlpha = 0 makes the whole window transparent */
+    bf.SourceConstantAlpha = 0;
+    ret = pUpdateLayeredWindow( hwnd, 0, NULL, &sz, hdc_src, &pt_src, 0, &bf, ULW_ALPHA );
+    ok( ret, "UpdateLayeredWindow with SourceConstantAlpha=0 failed, error %lu\n", GetLastError() );
+    if (environment_ok)
+    {
+        pt.x = 900 + 50; pt.y = 700 + 20;  /* previously-opaque area */
+        found = WindowFromPoint( pt );
+        todo_wine
+        ok( found == behind, "WindowFromPoint returned %p for fully transparent window, expected %p\n", found, behind );
+    }
+
+    SelectObject( hdc_src, old_bmp );
+    DeleteDC( hdc_src );
+    DeleteObject( dib );
+    DestroyWindow( hwnd );
+    DestroyWindow( behind );
+}
+
 static MONITORINFO mi;
 
 static LRESULT CALLBACK fullscreen_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -10694,6 +10801,99 @@ static void window_from_point_proc(HWND parent)
 
     CloseHandle(start_event);
     CloseHandle(end_event);
+}
+
+static void test_window_from_point_layered(void)
+{
+    HWND win, top, bottom;
+    unsigned int *bits, width = 100, height = 100, x, y;
+    char bmibuf[sizeof(BITMAPINFO) + 256 * sizeof(RGBQUAD)];
+    BITMAPINFO *bmi = (BITMAPINFO *)bmibuf;
+    HBITMAP bitmap, holdbmp;
+    SIZE size = { width, height };
+    POINT dst = { 0, 0 }, src = { 0, 0 }, pt = { 0, 0 };
+    HDC hdc;
+    BOOL ret;
+    BLENDFUNCTION bf;
+    bf.BlendOp = AC_SRC_OVER;
+    bf.BlendFlags = 0;
+    bf.SourceConstantAlpha = 128;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+
+    if (!pUpdateLayeredWindow)
+    {
+        win_skip( "UpdateLayeredWindow is not available\n" );
+        return;
+    }
+
+    bottom = CreateWindowExA(0, "MainWindowClass", "bottom", WS_POPUP | WS_VISIBLE,
+              0, 0, width, height, NULL, NULL, GetModuleHandleA(0), NULL);
+    ok(bottom != 0, "CreateWindowEx error %lu\n", GetLastError());
+
+    pt.x = 25;
+    pt.y = 50;
+    ClientToScreen( bottom, &pt );
+    win = WindowFromPoint(pt);
+    pt.x = 75;
+    pt.y = 50;
+    ClientToScreen( bottom, &pt );
+    if (win == bottom)
+        win = WindowFromPoint(pt);
+    if (win != bottom)
+    {
+        skip("there's another window covering test window\n");
+        DestroyWindow( bottom );
+        return;
+    }
+
+    top = CreateWindowExA(WS_EX_LAYERED | WS_EX_TOPMOST, "MainWindowClass", "top", WS_POPUP | WS_VISIBLE,
+            0, 0, width, height, NULL, NULL, GetModuleHandleA(0), NULL);
+    ok(top != 0, "CreateWindowEx error %lu\n", GetLastError());
+
+    hdc = CreateCompatibleDC( 0 );
+
+    memset( bmi, 0, sizeof(bmibuf) );
+    bmi->bmiHeader.biSize = sizeof(bmi->bmiHeader);
+    bmi->bmiHeader.biWidth = width;
+    bmi->bmiHeader.biHeight = height * -1;
+    bmi->bmiHeader.biBitCount = 32;
+    bmi->bmiHeader.biPlanes = 1;
+    bmi->bmiHeader.biCompression = BI_RGB;
+
+    bitmap = CreateDIBSection( 0, bmi, DIB_RGB_COLORS, (void**)&bits, NULL, 0 );
+    ok( bitmap != NULL, "CreateDIBSection error %lu\n", GetLastError() );
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            bits[y * width + x] = (x < width / 2) ? 0 : 0xFF00FFC8;
+        }
+    }
+
+    holdbmp = SelectObject( hdc, bitmap );
+
+    ret = pUpdateLayeredWindow( top, 0, &dst, &size, hdc, &src, 0, &bf, ULW_ALPHA );
+    ok( ret, "UpdateLayeredWindow should succeed on layered window\n" );
+
+    SelectObject( hdc, holdbmp );
+    DeleteObject( bitmap );
+    DeleteDC( hdc );
+
+    pt.x = 25;
+    pt.y = 50;
+    ClientToScreen( bottom, &pt );
+    win = WindowFromPoint( pt );
+    ok(win == bottom, "expected %p window, got %p\n", bottom, win);
+
+    pt.x = 75;
+    pt.y = 50;
+    ClientToScreen( top, &pt );
+    win = WindowFromPoint( pt );
+    ok(win == top, "expected %p window, got %p\n", top, win);
+
+    DestroyWindow( top );
+    DestroyWindow( bottom );
 }
 
 static void test_window_from_point(HWND main_window, const char *argv0)
@@ -14676,6 +14876,7 @@ START_TEST(win)
     /* Add the tests below this line */
     test_child_window_from_point();
     test_window_from_point(hwndMain, argv[0]);
+    test_window_from_point_layered();
     test_thick_child_size(hwndMain);
     test_fullscreen();
     test_hwnd_message();
@@ -14737,6 +14938,7 @@ START_TEST(win)
     test_GetUpdateRect();
     test_Expose();
     test_layered_window();
+    test_layered_window_alpha_shape();
 
     test_SetForegroundWindow(hwndMain);
     test_handles( hwndMain );

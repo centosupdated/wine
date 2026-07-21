@@ -2608,7 +2608,74 @@ BOOL WINAPI NtUserSetLayeredWindowAttributes( HWND hwnd, COLORREF key, BYTE alph
 
 /*****************************************************************************
  *           UpdateLayeredWindow (win32u.@)
+ *
+ * Returns a malloc'd array of RECTs covering pixels with non-zero alpha.
+ * Caller must free. *count receives the number of rects; returns NULL on
+ * error or when the surface has no per-pixel alpha. An empty result (count
+ * == 0, non-NULL return) means the whole surface is transparent.
  */
+static RECT *surface_alpha_to_region_data( struct window_surface *surface, DWORD *count )
+{
+    char buf[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+    BITMAPINFO *info = (BITMAPINFO *)buf;
+    void *bits;
+    RECT *rects = NULL;
+    DWORD max_rects = 0, n = 0;
+    int width, height, y;
+    UINT32 alpha_mask = surface->alpha_mask;
+
+    *count = 0;
+    if (!alpha_mask)
+    {
+        TRACE( "alpha_mask: 0\n" );
+        return NULL;
+    }
+
+    window_surface_lock( surface );
+    bits = window_surface_get_color( surface, info );
+    if (!bits || info->bmiHeader.biBitCount != 32)
+    {
+        TRACE( "no bits or non-32bpp\n" );
+        window_surface_unlock( surface );
+        return NULL;
+    }
+
+    width = info->bmiHeader.biWidth;
+    height = info->bmiHeader.biHeight;
+    if (height < 0) height = -height;
+
+    for (y = 0; y < height; y++)
+    {
+        const UINT32 *row = (const UINT32 *)((const char *)bits + y * width * 4);
+        int x = 0;
+        while (x < width)
+        {
+            int start;
+            while (x < width && !(row[x] & alpha_mask)) x++;
+            if (x >= width) break;
+            start = x;
+            while (x < width && (row[x] & alpha_mask)) x++;
+            if (n >= max_rects)
+            {
+                DWORD new_max = max_rects ? max_rects * 2 : 64;
+                RECT *new_rects = realloc( rects, new_max * sizeof(RECT) );
+                if (!new_rects) { free( rects ); window_surface_unlock( surface ); *count = 0; return NULL; }
+                rects = new_rects;
+                max_rects = new_max;
+            }
+            rects[n].left = start;
+            rects[n].top = y;
+            rects[n].right = x;
+            rects[n].bottom = y + 1;
+            n++;
+        }
+    }
+    window_surface_unlock( surface );
+    *count = n;
+    TRACE( "hwnd %p surface %p -> %u rects\n", surface->hwnd, surface, n );
+    return rects;
+}
+
 BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_dst, const SIZE *size,
                                        HDC hdc_src, const POINT *pts_src, COLORREF key,
                                        const BLENDFUNCTION *blend, DWORD flags, const RECT *dirty )
@@ -2707,6 +2774,36 @@ BOOL WINAPI NtUserUpdateLayeredWindow( HWND hwnd, HDC hdc_dst, const POINT *pts_
 
         user_driver->pUpdateLayeredWindow( hwnd, source_alpha, flags );
         window_surface_flush( surface );
+    }
+
+    /* UpdateLayeredWindow path: sync per-pixel alpha shape to server win_region
+     * so that hit-testing and visible-region computation can skip transparent
+     * pixels. source_alpha==0 means the whole window is transparent (empty
+     * region); otherwise scan the surface alpha channel. */
+    if (surface != &dummy_surface)
+    {
+        DWORD count = 0;
+        RECT *rects = NULL;
+        static const RECT empty_rect;
+
+        if (source_alpha != 0 && surface->alpha_mask)
+            rects = surface_alpha_to_region_data( surface, &count );
+
+        TRACE( "hwnd %p source_alpha %u alpha_mask %08x -> %u rects\n",
+               hwnd, source_alpha, surface->alpha_mask, count );
+
+        SERVER_START_REQ( set_window_region )
+        {
+            req->window = wine_server_user_handle( hwnd );
+            req->redraw = FALSE;
+            if (count)
+                wine_server_add_data( req, rects, count * sizeof(RECT) );
+            else
+                wine_server_add_data( req, &empty_rect, sizeof(empty_rect) );
+            wine_server_call( req );
+        }
+        SERVER_END_REQ;
+        free( rects );
     }
 
 done:
