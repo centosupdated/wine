@@ -113,6 +113,7 @@ struct wayland_pointer
     struct wp_cursor_shape_device_v1 *wp_cursor_shape_device_v1;
     HWND focused_hwnd;
     HWND constraint_hwnd;
+    BOOL relative_mode;
     BOOL pending_warp;
     uint32_t enter_serial;
     uint32_t button_serial;
@@ -235,7 +236,6 @@ struct wayland_surface_config
 struct wayland_window_config
 {
     RECT rect;
-    RECT client_rect;
     enum wayland_surface_config_state state;
     /* The scale (i.e., normalized dpi) the window is rendering at. */
     double scale;
