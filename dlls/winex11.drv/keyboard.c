@@ -1478,61 +1478,31 @@ static void update_lock_state( HWND hwnd, WORD vkey, UINT state, UINT time )
 
     if (!NtUserGetAsyncKeyboardState( keystate )) return;
 
-    if (vkey != VK_CAPITAL)
+    /* Adjust the CAPSLOCK state if it has been changed outside wine */
+    if (!(keystate[VK_CAPITAL] & 0x01) != !(state & LockMask) && vkey != VK_CAPITAL)
     {
-        /* Clear stale CAPSLOCK down */
-        if (!!(keystate[VK_CAPITAL] & 0x01) == !!(state & LockMask) && keystate[VK_CAPITAL] & 0x80)
-        {
-            TRACE("Clearing stale CapsLock down (%#.2x)\n", keystate[VK_CAPITAL]);
-            keystate[VK_CAPITAL] &= ~0x80;
-            set_async_key_state( keystate );
-        }
-        /* Adjust the CAPSLOCK state if it has been changed outside wine */
-        else if (!(keystate[VK_CAPITAL] & 0x01) != !(state & LockMask))
-        {
-            DWORD flags = 0;
-            if (keystate[VK_CAPITAL] & 0x80) flags ^= KEYEVENTF_KEYUP;
-            TRACE("Adjusting CapsLock state (%#.2x)\n", keystate[VK_CAPITAL]);
-            adjust_lock_state( keystate, hwnd, VK_CAPITAL, 0x3a, flags, time );
-        }
+        DWORD flags = 0;
+        if (keystate[VK_CAPITAL] & 0x80) flags ^= KEYEVENTF_KEYUP;
+        TRACE("Adjusting CapsLock state (%#.2x)\n", keystate[VK_CAPITAL]);
+        adjust_lock_state( keystate, hwnd, VK_CAPITAL, 0x3a, flags, time );
     }
 
-    if ((vkey & 0xff) != VK_NUMLOCK)
+    /* Adjust the NUMLOCK state if it has been changed outside wine */
+    if (!(keystate[VK_NUMLOCK] & 0x01) != !(state & NumLockMask) && (vkey & 0xff) != VK_NUMLOCK)
     {
-        /* Clear stale NUMLOCK down */
-        if (!!(keystate[VK_NUMLOCK] & 0x01) == !!(state & NumLockMask) && keystate[VK_NUMLOCK] & 0x80)
-        {
-            TRACE("Clearing stale NumLock down (%#.2x)\n", keystate[VK_NUMLOCK]);
-            keystate[VK_NUMLOCK] &= ~0x80;
-            set_async_key_state( keystate );
-        }
-        /* Adjust the NUMLOCK state if it has been changed outside wine */
-        else if (!(keystate[VK_NUMLOCK] & 0x01) != !(state & NumLockMask))
-        {
-            DWORD flags = KEYEVENTF_EXTENDEDKEY;
-            if (keystate[VK_NUMLOCK] & 0x80) flags ^= KEYEVENTF_KEYUP;
-            TRACE("Adjusting NumLock state (%#.2x)\n", keystate[VK_NUMLOCK]);
-            adjust_lock_state( keystate, hwnd, VK_NUMLOCK, 0x45, flags, time );
-        }
+        DWORD flags = KEYEVENTF_EXTENDEDKEY;
+        if (keystate[VK_NUMLOCK] & 0x80) flags ^= KEYEVENTF_KEYUP;
+        TRACE("Adjusting NumLock state (%#.2x)\n", keystate[VK_NUMLOCK]);
+        adjust_lock_state( keystate, hwnd, VK_NUMLOCK, 0x45, flags, time );
     }
 
-    if (vkey != VK_SCROLL)
+    /* Adjust the SCROLLLOCK state if it has been changed outside wine */
+    if (!(keystate[VK_SCROLL] & 0x01) != !(state & ScrollLockMask) && vkey != VK_SCROLL)
     {
-        /* Clear stale SCROLLLOCK down */
-        if (!!(keystate[VK_SCROLL] & 0x01) == !!(state & ScrollLockMask) && keystate[VK_SCROLL] & 0x80)
-        {
-            TRACE("Clearing stale ScrLock down (%#.2x)\n", keystate[VK_SCROLL]);
-            keystate[VK_SCROLL] &= ~0x80;
-            set_async_key_state( keystate );
-        }
-        /* Adjust the SCROLLLOCK state if it has been changed outside wine */
-        else if (!(keystate[VK_SCROLL] & 0x01) != !(state & ScrollLockMask))
-        {
-            DWORD flags = 0;
-            if (keystate[VK_SCROLL] & 0x80) flags ^= KEYEVENTF_KEYUP;
-            TRACE("Adjusting ScrLock state (%#.2x)\n", keystate[VK_SCROLL]);
-            adjust_lock_state( keystate, hwnd, VK_SCROLL, 0x46, flags, time );
-        }
+        DWORD flags = 0;
+        if (keystate[VK_SCROLL] & 0x80) flags ^= KEYEVENTF_KEYUP;
+        TRACE("Adjusting ScrLock state (%#.2x)\n", keystate[VK_SCROLL]);
+        adjust_lock_state( keystate, hwnd, VK_SCROLL, 0x46, flags, time );
     }
 }
 
