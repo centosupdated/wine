@@ -24,6 +24,8 @@
 
 #include "config.h"
 
+#include <errno.h>
+#include <poll.h>
 #include <stdlib.h>
 
 #include "ntstatus.h"
@@ -57,6 +59,8 @@ static const struct user_driver_funcs waylanddrv_funcs =
     .pCreateWindowSurface = WAYLAND_CreateWindowSurface,
     .pVulkanInit = WAYLAND_VulkanInit,
     .pOpenGLInit = WAYLAND_OpenGLInit,
+    .pNotifyIcon = WAYLAND_NotifyIcon,
+    .pCleanupIcons = WAYLAND_CleanupIcons,
 };
 
 static void wayland_init_process_name(void)
@@ -106,9 +110,50 @@ err:
 
 static NTSTATUS waylanddrv_unix_read_events(void *arg)
 {
-    while (wl_display_dispatch_queue(process_wayland.wl_display,
-                                     process_wayland.wl_event_queue) != -1)
-        continue;
+    struct pollfd fds[3];
+    fds[0].fd = wl_display_get_fd(process_wayland.wl_display);
+    fds[0].events = POLLIN;
+    fds[1].fd = wayland_systray_get_fd();
+    fds[1].events = POLLIN;
+    fds[2].fd = -1;
+    fds[2].events = POLLIN;
+    for (;;)
+    {
+        BOOL dispatch_systray = FALSE;
+        while (wl_display_prepare_read_queue(process_wayland.wl_display,
+                                             process_wayland.wl_event_queue) != 0)
+            wl_display_dispatch_queue_pending(process_wayland.wl_display,
+                                              process_wayland.wl_event_queue);
+        if (wl_display_flush(process_wayland.wl_display) == -1 && errno == EAGAIN)
+            fds[0].events |= POLLOUT;
+        else
+            fds[0].events &= ~POLLOUT;
+        if (poll(fds, ARRAY_SIZE(fds), -1) == -1)
+        {
+            wl_display_cancel_read(process_wayland.wl_display);
+            continue;
+        }
+        if (fds[0].revents & (POLLIN | POLLERR | POLLHUP))
+        {
+            if (wl_display_read_events(process_wayland.wl_display) == -1)
+                break;
+            wl_display_dispatch_queue_pending(process_wayland.wl_display,
+                                              process_wayland.wl_event_queue);
+        }
+        else
+        {
+            wl_display_cancel_read(process_wayland.wl_display);
+        }
+        if (fds[1].revents & POLLIN)
+        {
+            wayland_systray_clear_wakeup();
+            dispatch_systray = TRUE;
+        }
+        if (fds[2].revents & (POLLIN | POLLOUT | POLLERR | POLLHUP | POLLNVAL))
+            dispatch_systray = TRUE;
+        if (dispatch_systray)
+            fds[2].fd = wayland_systray_dispatch(&fds[2].events);
+    }
     /* This function only returns on a fatal error, e.g., if our connection
      * to the Wayland server is lost. */
     return STATUS_UNSUCCESSFUL;
