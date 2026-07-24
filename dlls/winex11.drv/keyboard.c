@@ -236,6 +236,7 @@ static WORD keyc2scan( unsigned int keycode, unsigned int state )
 }
 
 static int NumLockMask, ScrollLockMask, AltGrMask; /* mask in the XKeyEvent state */
+static char LockBits = 0;
 
 static pthread_mutex_t kbd_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct list xkb_layouts = LIST_INIT( xkb_layouts );
@@ -1472,37 +1473,60 @@ static void adjust_lock_state( BYTE *keystate, HWND hwnd, WORD vkey, WORD scan, 
 static void update_lock_state( HWND hwnd, WORD vkey, UINT state, UINT time )
 {
     BYTE keystate[256];
+    XkbStateRec xkb_state;
+    char NewLockBits, ChangedBits;
 
     /* Note: X sets the below states on key down and clears them on key up.
        Windows triggers them on key down. */
 
     if (!NtUserGetAsyncKeyboardState( keystate )) return;
 
-    /* Adjust the CAPSLOCK state if it has been changed outside wine */
-    if (!(keystate[VK_CAPITAL] & 0x01) != !(state & LockMask) && vkey != VK_CAPITAL)
+    if (vkey != VK_CAPITAL && vkey != VK_NUMLOCK && vkey != VK_SCROLL)
     {
-        DWORD flags = 0;
-        if (keystate[VK_CAPITAL] & 0x80) flags ^= KEYEVENTF_KEYUP;
-        TRACE("Adjusting CapsLock state (%#.2x)\n", keystate[VK_CAPITAL]);
-        adjust_lock_state( keystate, hwnd, VK_CAPITAL, 0x3a, flags, time );
-    }
+        if (thread_init_display() && XkbGetState(thread_init_display(), XkbUseCoreKbd, &xkb_state) == Success)
+            NewLockBits = xkb_state.locked_mods & (LockMask | NumLockMask | ScrollLockMask);
+        else
+            NewLockBits = state & (LockMask | NumLockMask | ScrollLockMask);
+        ChangedBits = LockBits ^ NewLockBits;
 
-    /* Adjust the NUMLOCK state if it has been changed outside wine */
-    if (!(keystate[VK_NUMLOCK] & 0x01) != !(state & NumLockMask) && (vkey & 0xff) != VK_NUMLOCK)
-    {
-        DWORD flags = KEYEVENTF_EXTENDEDKEY;
-        if (keystate[VK_NUMLOCK] & 0x80) flags ^= KEYEVENTF_KEYUP;
-        TRACE("Adjusting NumLock state (%#.2x)\n", keystate[VK_NUMLOCK]);
-        adjust_lock_state( keystate, hwnd, VK_NUMLOCK, 0x45, flags, time );
-    }
+        /* Adjust the CAPSLOCK state if it has been changed outside wine */
+        if ((ChangedBits & LockMask) && vkey != VK_CAPITAL)
+        {
+            if (!(keystate[VK_CAPITAL] & 0x01) != !(state & LockMask))
+            {
+                DWORD flags = 0;
+                if (keystate[VK_CAPITAL] & 0x80) flags ^= KEYEVENTF_KEYUP;
+                TRACE("Adjusting CapsLock state (%#.2x)\n", keystate[VK_CAPITAL]);
+                adjust_lock_state( keystate, hwnd, VK_CAPITAL, 0x3a, flags, time );
+            }
+            LockBits = NewLockBits;
+        }
 
-    /* Adjust the SCROLLLOCK state if it has been changed outside wine */
-    if (!(keystate[VK_SCROLL] & 0x01) != !(state & ScrollLockMask) && vkey != VK_SCROLL)
-    {
-        DWORD flags = 0;
-        if (keystate[VK_SCROLL] & 0x80) flags ^= KEYEVENTF_KEYUP;
-        TRACE("Adjusting ScrLock state (%#.2x)\n", keystate[VK_SCROLL]);
-        adjust_lock_state( keystate, hwnd, VK_SCROLL, 0x46, flags, time );
+        /* Adjust the NUMLOCK state if it has been changed outside wine */
+        if ((ChangedBits & NumLockMask) && (vkey & 0xff) != VK_NUMLOCK)
+        {
+            if (!(keystate[VK_NUMLOCK] & 0x01) != !(state & NumLockMask))
+            {
+                DWORD flags = KEYEVENTF_EXTENDEDKEY;
+                if (keystate[VK_NUMLOCK] & 0x80) flags ^= KEYEVENTF_KEYUP;
+                TRACE("Adjusting NumLock state (%#.2x)\n", keystate[VK_NUMLOCK]);
+                adjust_lock_state( keystate, hwnd, VK_NUMLOCK, 0x45, flags, time );
+            }
+            LockBits = NewLockBits;
+        }
+
+        /* Adjust the SCROLLLOCK state if it has been changed outside wine */
+        if ((ChangedBits & ScrollLockMask) && vkey != VK_SCROLL)
+        {
+            if (!(keystate[VK_SCROLL] & 0x01) != !(state & ScrollLockMask))
+            {
+                DWORD flags = 0;
+                if (keystate[VK_SCROLL] & 0x80) flags ^= KEYEVENTF_KEYUP;
+                TRACE("Adjusting ScrLock state (%#.2x)\n", keystate[VK_SCROLL]);
+                adjust_lock_state( keystate, hwnd, VK_SCROLL, 0x46, flags, time );
+            }
+        }
+        LockBits = NewLockBits;
     }
 }
 
@@ -2768,6 +2792,8 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
     HWND focus;
     XIC xic;
     Status status = 0;
+    char xkb_locked = 0;
+    XkbStateRec xkb_state;
 
     if (scanCode & 0x8000)
     {
@@ -2800,23 +2826,32 @@ INT X11DRV_ToUnicodeEx( UINT virtKey, UINT scanCode, const BYTE *lpKeyState,
 
     if (lpKeyState[VK_SHIFT] & 0x80)
     {
-	TRACE_(key)("ShiftMask = %04x\n", ShiftMask);
-	e.state |= ShiftMask;
-    }
-    if (lpKeyState[VK_CAPITAL] & 0x01)
-    {
-	TRACE_(key)("LockMask = %04x\n", LockMask);
-	e.state |= LockMask;
+	    TRACE_(key)("ShiftMask = %04x\n", ShiftMask);
+	    e.state |= ShiftMask;
     }
     if (lpKeyState[VK_CONTROL] & 0x80)
     {
-	TRACE_(key)("ControlMask = %04x\n", ControlMask);
-	e.state |= ControlMask;
+	    TRACE_(key)("ControlMask = %04x\n", ControlMask);
+	    e.state |= ControlMask;
     }
-    if (lpKeyState[VK_NUMLOCK] & 0x01)
+    if (display && XkbGetState(display, XkbUseCoreKbd, &xkb_state) == Success)
     {
-	TRACE_(key)("NumLockMask = %04x\n", NumLockMask);
-	e.state |= NumLockMask;
+        xkb_locked = xkb_state.locked_mods;
+        if (xkb_locked & LockMask)
+        {
+            TRACE_(key)("LockMask = %04x\n", LockMask);
+            e.state |= LockMask;
+        }
+        if (xkb_locked & NumLockMask)
+        {
+            TRACE_(key)("NumLockMask = %04x\n", NumLockMask);
+            e.state |= NumLockMask;
+        }
+        if (xkb_locked & ScrollLockMask)
+        {
+            TRACE_(key)("ScrollLockMask = %04x\n", ScrollLockMask);
+            e.state |= ScrollLockMask;
+        }
     }
 
     /* Restore saved AltGr state */
