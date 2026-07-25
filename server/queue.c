@@ -2307,14 +2307,14 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
 }
 
 static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const union hw_input *input,
-                                   unsigned int origin, struct msg_queue *sender, int repeat );
+                                   unsigned int origin, struct msg_queue *sender, int repeat, int skip_ll_hook );
 
 static void key_repeat_timeout( void *private )
 {
     struct desktop *desktop = private;
 
     desktop->key_repeat.timeout = NULL;
-    queue_keyboard_message( desktop, desktop->key_repeat.win, &desktop->key_repeat.input, IMO_HARDWARE, NULL, 1 );
+    queue_keyboard_message( desktop, desktop->key_repeat.win, &desktop->key_repeat.input, IMO_HARDWARE, NULL, 1, 0 );
 }
 
 static void stop_key_repeat( struct desktop *desktop )
@@ -2327,7 +2327,7 @@ static void stop_key_repeat( struct desktop *desktop )
 
 /* queue a hardware message for a keyboard event */
 static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, const union hw_input *input,
-                                   unsigned int origin, struct msg_queue *sender, int repeat )
+                                   unsigned int origin, struct msg_queue *sender, int repeat, int skip_ll_hook )
 {
     desktop_shm_t *desktop_shm = desktop->shared;
     struct hw_msg_source source = { IMDT_KEYBOARD, origin };
@@ -2339,7 +2339,7 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
     lparam_t lparam = input->kbd.scan << 16;
     unsigned int flags = 0;
     BOOL unicode = input->kbd.flags & KEYEVENTF_UNICODE;
-    int wait;
+    int wait = 0;
 
     if (!(time = input->kbd.time)) time = get_tick_count();
 
@@ -2486,7 +2486,7 @@ static int queue_keyboard_message( struct desktop *desktop, user_handle_t win, c
     msg->wparam = vkey;
     msg->lparam = (flags << 16) | lparam | 1u /* repeat count */;
 
-    if (!(wait = send_hook_ll_message( desktop, msg, WH_KEYBOARD_LL, lparam | hook_vkey, sender )))
+    if (skip_ll_hook || !(wait = send_hook_ll_message( desktop, msg, WH_KEYBOARD_LL, lparam | hook_vkey, sender )))
         queue_hardware_message( desktop, msg, 1 );
 
     return wait;
@@ -3231,6 +3231,7 @@ DECL_HANDLER(send_hardware_message)
     unsigned int origin = (req->flags & SEND_HWMSG_INJECTED ? IMO_INJECTED : IMO_HARDWARE);
     struct msg_queue *sender = req->flags & SEND_HWMSG_INJECTED ? get_current_queue() : NULL;
     bool rawinput = !!(req->flags & SEND_HWMSG_RAWINPUT);
+    bool skip_ll_hook = !!(req->flags & SEND_HWMSG_SKIP_LL_HOOK);
     desktop_shm_t *desktop_shm;
     int wait = 0;
 
@@ -3253,7 +3254,7 @@ DECL_HANDLER(send_hardware_message)
         wait = queue_mouse_message( desktop, req->win, &req->input, origin, sender, rawinput );
         break;
     case INPUT_KEYBOARD:
-        wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender, 0 );
+        wait = queue_keyboard_message( desktop, req->win, &req->input, origin, sender, 0, skip_ll_hook );
         break;
     case INPUT_HARDWARE:
         queue_custom_hardware_message( desktop, req->win, origin, &req->input );
