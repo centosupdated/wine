@@ -1305,7 +1305,7 @@ static WORD EVENT_event_to_vkey( XIC xic, XKeyEvent *e)
 /***********************************************************************
  *           X11DRV_send_keyboard_input
  */
-static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, UINT flags, UINT time )
+static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, UINT flags, UINT time, UINT send_flags )
 {
     INPUT input;
 
@@ -1318,7 +1318,7 @@ static void X11DRV_send_keyboard_input( HWND hwnd, WORD vkey, WORD scan, UINT fl
     input.ki.time        = time;
     input.ki.dwExtraInfo = 0;
 
-    NtUserSendHardwareInput( hwnd, 0, &input, 0 );
+    NtUserSendHardwareInput( hwnd, send_flags, &input, 0 );
 }
 
 
@@ -1436,7 +1436,7 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
                 TRACE( "Sending KEYUP for a modifier %#.2x\n", vkey);
                 flags = KEYEVENTF_KEYUP;
                 if (scan_is_extended( keys[vkey].scan )) flags |= KEYEVENTF_EXTENDEDKEY;
-                X11DRV_send_keyboard_input( keymapnotify_hwnd, vkey, keys[vkey].scan & 0xff, flags, NtGetTickCount() );
+                X11DRV_send_keyboard_input( keymapnotify_hwnd, vkey, keys[vkey].scan & 0xff, flags, NtGetTickCount(), 0 );
             }
 
             update_key_state( keystate, vkey, keys[vkey].pressed );
@@ -1458,8 +1458,10 @@ static void adjust_lock_state( BYTE *keystate, HWND hwnd, WORD vkey, WORD scan, 
 {
     BYTE prev_state = keystate[vkey] & 0x01;
 
-    X11DRV_send_keyboard_input( hwnd, vkey, scan, flags, time );
-    X11DRV_send_keyboard_input( hwnd, vkey, scan, flags ^ KEYEVENTF_KEYUP, time );
+    /* Lock-key inputs don't reconcile correctly with low-level hooks which results in the lock-key state
+     * becoming out of sync with the system state. SEND_HWMSG_SKIP_LL_HOOK is passed here to prevent that. */
+    X11DRV_send_keyboard_input( hwnd, vkey, scan, flags, time, SEND_HWMSG_SKIP_LL_HOOK );
+    X11DRV_send_keyboard_input( hwnd, vkey, scan, flags ^ KEYEVENTF_KEYUP, time, SEND_HWMSG_SKIP_LL_HOOK );
 
     /* Keyboard hooks may have blocked processing lock keys causing our state
      * to be different than state on X server side. Although Windows allows hooks
@@ -1604,7 +1606,7 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
 
     update_lock_state( hwnd, vkey, event->state, event_time );
 
-    X11DRV_send_keyboard_input( hwnd, vkey & 0xff, scan & 0xff, dwFlags, event_time );
+    X11DRV_send_keyboard_input( hwnd, vkey & 0xff, scan & 0xff, dwFlags, event_time, 0 );
     return TRUE;
 }
 
