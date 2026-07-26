@@ -37,6 +37,7 @@
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include "wlr-data-control-unstable-v1-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "pointer-warp-v1-client-protocol.h"
 #include "alpha-modifier-v1-client-protocol.h"
@@ -85,6 +86,7 @@ enum wayland_surface_role
     WAYLAND_SURFACE_ROLE_NONE,
     WAYLAND_SURFACE_ROLE_TOPLEVEL,
     WAYLAND_SURFACE_ROLE_SUBSURFACE,
+    WAYLAND_SURFACE_ROLE_LAYER,
 };
 
 struct wayland_keyboard
@@ -180,6 +182,7 @@ struct wayland
     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
     struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3;
     struct zwlr_data_control_manager_v1 *zwlr_data_control_manager_v1;
+    struct zwlr_layer_shell_v1 *zwlr_layer_shell_v1;
     struct wl_data_device_manager *wl_data_device_manager;
     struct xdg_toplevel_icon_manager_v1 *xdg_toplevel_icon_manager_v1;
     struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
@@ -289,6 +292,10 @@ struct wayland_surface
             struct xdg_surface *xdg_surface;
             struct xdg_toplevel *xdg_toplevel;
             struct xdg_toplevel_icon_v1 *xdg_toplevel_icon;
+        };
+        struct
+        {
+            struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1;
         };
         struct
         {
