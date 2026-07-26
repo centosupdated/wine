@@ -461,12 +461,10 @@ static void verify_cab_contents(char *cab_name, char * const *names,
     if (!hfdi) return;
 
     ret = FDICopy(hfdi, cab_name, curr_dir, 0, fdi_notify, NULL, NULL);
-    todo_wine ok(ret, "failed to extract %s, erfOper %d, erfType %d\n",
-                 cab_name, erf.erfOper, erf.erfType);
+    ok(ret, "failed to extract %s, erfOper %d, erfType %d\n", cab_name, erf.erfOper, erf.erfType);
     FDIDestroy(hfdi);
 
-    todo_wine ok(extracted_count == count, "extracted %u files, expected %u\n",
-                 extracted_count, count);
+    ok(extracted_count == count, "extracted %u files, expected %u\n", extracted_count, count);
     for (i = 0; i < min(extracted_count, count); i++)
     {
         winetest_push_context("file %u", i);
@@ -536,15 +534,14 @@ static void test_dataless_folder(BOOL empty_first)
     add_file(hfci, name3);
 
     ret = FCIFlushCabinet(hfci, FALSE, fci_get_next_cabinet, fci_progress);
-    todo_wine ok(ret, "failed to flush the cabinet, erfOper %d, erfType %d\n",
-                 erf.erfOper, erf.erfType);
-    todo_wine ok(!invalid_seek, "seek was called with an invalid handle\n");
+    ok(ret, "failed to flush the cabinet, erfOper %d, erfType %d\n", erf.erfOper, erf.erfType);
+    ok(!invalid_seek, "seek was called with an invalid handle\n");
 
     ret = FCIDestroy(hfci);
     ok(ret, "failed to destroy the FCI context\n");
 
     cab = load_file(cab_name, &size);
-    todo_wine ok(cab != NULL, "failed to load %s\n", cab_name);
+    ok(cab != NULL, "failed to load %s\n", cab_name);
     if (cab && (folder = check_cab_header(cab, size, 2, ARRAY_SIZE(names))))
     {
         if (empty_first)
@@ -606,15 +603,14 @@ static void test_only_empty_files(void)
     add_file(hfci, empty);
 
     ret = FCIFlushCabinet(hfci, FALSE, fci_get_next_cabinet, fci_progress);
-    todo_wine ok(ret, "failed to flush the cabinet, erfOper %d, erfType %d\n",
-                 erf.erfOper, erf.erfType);
-    todo_wine ok(!invalid_seek, "seek was called with an invalid handle\n");
+    ok(ret, "failed to flush the cabinet, erfOper %d, erfType %d\n", erf.erfOper, erf.erfType);
+    ok(!invalid_seek, "seek was called with an invalid handle\n");
 
     ret = FCIDestroy(hfci);
     ok(ret, "failed to destroy the FCI context\n");
 
     cab = load_file(cab_name, &size);
-    todo_wine ok(cab != NULL, "failed to load %s\n", cab_name);
+    ok(cab != NULL, "failed to load %s\n", cab_name);
     if (cab && (folder = check_cab_header(cab, size, 1, ARRAY_SIZE(names))))
     {
         ok(folder->cCFData == 0, "got %u data blocks\n", folder->cCFData);
