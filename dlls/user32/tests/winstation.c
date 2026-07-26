@@ -26,6 +26,7 @@
 #include "winternl.h"
 
 static NTSTATUS (WINAPI *pNtQueryObject)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+static BOOL (WINAPI *pIsThreadDesktopComposited)(void);
 
 #define DESKTOP_ALL_ACCESS 0x01ff
 
@@ -266,6 +267,9 @@ static void test_handles(void)
     w2 = OpenWindowStationA( "foo\\bar", TRUE, WINSTA_ALL_ACCESS );
     ok( !w2, "create station succeeded\n" );
     ok( GetLastError() == ERROR_PATH_NOT_FOUND, "wrong error %lu\n", GetLastError() );
+
+    /* undocumented */
+    ok( pIsThreadDesktopComposited() == 1, "IsThreadDesktopComposited failed\n" );
 
     /* desktops */
     d1 = GetThreadDesktop(GetCurrentThreadId());
@@ -1109,6 +1113,7 @@ START_TEST(winstation)
     int argc;
     HMODULE hntdll = GetModuleHandleA("ntdll.dll");
     pNtQueryObject = (void *)GetProcAddress(hntdll, "NtQueryObject");
+    pIsThreadDesktopComposited = (void *)GetProcAddress(GetModuleHandleA("user32"), "IsThreadDesktopComposited");
 
     /* Check whether this platform supports WindowStation calls */
 
