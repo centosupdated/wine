@@ -4344,6 +4344,46 @@ static int get_sys_int(const char *dirname, const char *basename)
     return get_sys_str(dirname, basename, s) ? atoi(s) : 0;
 }
 
+enum battery_status
+{
+    BATTERY_UNKNOWN,
+    BATTERY_CHARGING,
+    BATTERY_DISCHARGING,
+    BATTERY_NOT_CHARGING,
+    BATTERY_FULL
+};
+
+enum battery_power_unit
+{
+    BATTERY_UNIT_UNKNOWN,
+    BATTERY_UNIT_ENERGY,
+    BATTERY_UNIT_CHARGE
+};
+
+struct linux_battery
+{
+    enum battery_status status;
+    unsigned int present;
+    enum battery_power_unit power_unit;
+    union {
+        struct {
+            int energy_full_uwh;
+            int energy_now_uwh;
+            int power_now_uw;
+        } energy;
+        struct {
+            int charge_full_uah;
+            int charge_now_uah;
+            int current_now_ua;
+        } charge;
+    } capacity;
+
+    LONG64 voltage_now;
+    int alarm;
+    int capacity_alert_min;
+    int capacity_alert_max;
+};
+
 static NTSTATUS fill_battery_state( SYSTEM_BATTERY_STATE *bs )
 {
     DIR *d = opendir("/sys/class/power_supply");
