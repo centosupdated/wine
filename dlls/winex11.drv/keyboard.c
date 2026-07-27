@@ -1347,6 +1347,11 @@ static void update_key_state( BYTE *keystate, BYTE key, int down )
     else keystate[key] &= ~0x80;
 }
 
+static BOOL scan_is_extended( WORD scan )
+{
+    return scan & 0x100 || scan == 0x36;
+}
+
 /***********************************************************************
  *           X11DRV_KeymapNotify
  *
@@ -1431,7 +1436,7 @@ BOOL X11DRV_KeymapNotify( HWND hwnd, XEvent *event )
             {
                 TRACE( "Sending KEYUP for a modifier %#.2x\n", vkey);
                 flags = KEYEVENTF_KEYUP;
-                if (keys[vkey].scan & 0x100) flags |= KEYEVENTF_EXTENDEDKEY;
+                if (scan_is_extended( keys[vkey].scan )) flags |= KEYEVENTF_EXTENDEDKEY;
                 X11DRV_send_keyboard_input( keymapnotify_hwnd, vkey, keys[vkey].scan & 0xff, flags, NtGetTickCount() );
             }
 
@@ -1619,7 +1624,7 @@ BOOL X11DRV_KeyEvent( HWND hwnd, XEvent *xev )
 
     dwFlags = 0;
     if ( event->type == KeyRelease ) dwFlags |= KEYEVENTF_KEYUP;
-    if ( scan & 0x100 ) dwFlags |= KEYEVENTF_EXTENDEDKEY;
+    if (scan_is_extended( scan )) dwFlags |= KEYEVENTF_EXTENDEDKEY;
 
     update_lock_state( hwnd, vkey, event->state, event_time );
 
