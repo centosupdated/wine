@@ -7926,13 +7926,13 @@ static void test_sc_maximize_hidden(void)
     SendMessageA(hwnd, WM_SYSCOMMAND, SC_MAXIMIZE, 0);
 
     style = GetWindowLongA(hwnd, GWL_STYLE);
-    todo_wine ok(!(style & WS_VISIBLE), "SC_MAXIMIZE should not show the window, style %08lx\n", style);
-    todo_wine ok(!IsWindowVisible(hwnd), "SC_MAXIMIZE should not show the window\n");
-    todo_wine ok(GetActiveWindow() != hwnd, "SC_MAXIMIZE should not activate the window\n");
+    ok(!(style & WS_VISIBLE), "SC_MAXIMIZE should not show the window, style %08lx\n", style);
+    ok(!IsWindowVisible(hwnd), "SC_MAXIMIZE should not show the window\n");
+    ok(GetActiveWindow() != hwnd, "SC_MAXIMIZE should not activate the window\n");
 
     /* an explicit ShowWindow() does show and activate it */
     ret = ShowWindow(hwnd, SW_SHOW);
-    todo_wine ok(!ret, "unexpected ret: %d\n", ret);
+    ok(!ret, "unexpected ret: %d\n", ret);
     ok(IsWindowVisible(hwnd), "window should be visible\n");
     ok(GetActiveWindow() == hwnd, "window should be active\n");
     ok(IsZoomed(hwnd), "window should still be maximized\n");

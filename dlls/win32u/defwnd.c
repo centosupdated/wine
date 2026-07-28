@@ -996,6 +996,11 @@ static LRESULT handle_sys_command( HWND hwnd, WPARAM wparam, LPARAM lparam )
         break;
 
     case SC_MAXIMIZE:
+        /* on Windows this is a no-op for a window that is already maximized but
+         * not yet visible: it neither shows nor activates it, unlike an explicit
+         * ShowWindow( SW_SHOWMAXIMIZED ) which does both. */
+        if ((get_window_long( hwnd, GWL_STYLE ) & (WS_MAXIMIZE | WS_VISIBLE)) == WS_MAXIMIZE)
+            break;
         if (is_iconic(hwnd)) NtUserShowOwnedPopups( hwnd, TRUE );
         NtUserShowWindow( hwnd, SW_MAXIMIZE );
         break;
