@@ -302,6 +302,13 @@ static NTSTATUS reply_property(const char *prop_name, DBusMessageIter *iter, str
 
 static void click_systray(struct tray_icon *icon, UINT down, UINT up, int x, int y)
 {
+    /* We need to convert the coordinates from Wayland to Win32.
+     * NOTE: Because the primary monitor in Win32 is always at 0,0 right now, this is actually a
+     * no-op, but it will be required if primary monitor support is ever added to Wayland.
+     */
+    x = x + NtUserGetSystemMetrics(SM_XVIRTUALSCREEN);
+    y = y + NtUserGetSystemMetrics(SM_YVIRTUALSCREEN);
+    NtUserSetCursorPos(x, y);
     if (icon->version >= NOTIFYICON_VERSION_4)
     {
         WPARAM wparam = MAKEWPARAM(x, y);
@@ -796,6 +803,11 @@ static void init_dbus_functions(void)
 
 static BOOL load_dbus_functions(void)
 {
+    if (!process_wayland.zwlr_layer_shell_v1)
+    {
+        TRACE("zwlr_layer_shell_v1 missing, disabling DBus SNI tray integration\n");
+        return FALSE;
+    }
     pthread_once(&dbus_init_once, init_dbus_functions);
     return dbus_available;
 }

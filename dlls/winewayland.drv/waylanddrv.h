@@ -54,6 +54,7 @@
 
 /* We only use 4 byte formats. */
 #define WINEWAYLAND_BYTES_PER_PIXEL 4
+#define POPUPMENU_CLASS_ATOM MAKEINTATOM(32768)
 
 /**********************************************************************
  *          Globals
@@ -71,6 +72,7 @@ enum wayland_window_message
     WM_WAYLAND_INIT_DISPLAY_DEVICES = WM_WINE_FIRST_DRIVER_MSG,
     WM_WAYLAND_CONFIGURE,
     WM_WAYLAND_SET_FOREGROUND,
+    WM_WAYLAND_CANCEL_UNFOCUSED,
 };
 
 enum wayland_surface_config_state
@@ -335,6 +337,7 @@ void wayland_surface_destroy(struct wayland_surface *surface);
 void wayland_surface_make_toplevel(struct wayland_surface *surface);
 void wayland_surface_make_subsurface(struct wayland_surface *surface,
                                      struct wayland_surface *parent);
+void wayland_surface_make_layer(struct wayland_surface *surface);
 void wayland_surface_clear_role(struct wayland_surface *surface);
 void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 struct wayland_shm_buffer *shm_buffer,
@@ -346,6 +349,7 @@ RECT map_rect_to_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_to_surface(struct wayland_surface *surface, POINT point);
 RECT map_rect_from_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_from_surface(struct wayland_surface *surface, POINT point);
+RECT map_rect_to_output(struct wayland_surface *surface, RECT rect);
 void wayland_client_surface_attach(struct wayland_client_surface *client, HWND toplevel, const RECT *rect);
 void wayland_surface_ensure_contents(struct wayland_surface *surface);
 void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR title);
@@ -415,6 +419,7 @@ void wayland_window_init(void);
 
 void wayland_keyboard_init(struct wl_keyboard *wl_keyboard);
 void wayland_keyboard_deinit(void);
+void wayland_keyboard_release_all_keys(HWND hwnd);
 const KBDTABLES *WAYLAND_KbdLayerDescriptor(HKL hkl);
 void WAYLAND_ReleaseKbdTables(const KBDTABLES *);
 void activate_keyboard_hkl(HWND hwnd, BOOL ime);
