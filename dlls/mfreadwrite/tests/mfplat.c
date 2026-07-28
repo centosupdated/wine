@@ -263,6 +263,10 @@ struct test_media_stream
     IMFMediaEventQueue *event_queue;
     BOOL is_new;
     LONGLONG sample_duration, sample_time;
+    unsigned pending_requests;
+    IUnknown *tokens[10];
+    BOOL request_sample_called;
+    BOOL manual_samples;
 };
 
 static struct test_media_stream *impl_from_IMFMediaStream(IMFMediaStream *iface)
@@ -357,16 +361,11 @@ static HRESULT WINAPI test_media_stream_GetStreamDescriptor(IMFMediaStream *ifac
 
 static BOOL fail_request_sample;
 
-static HRESULT WINAPI test_media_stream_RequestSample(IMFMediaStream *iface, IUnknown *token)
+static inline HRESULT test_media_stream_queue_sample(struct test_media_stream *stream, IUnknown *token)
 {
-    struct test_media_stream *stream = impl_from_IMFMediaStream(iface);
     IMFMediaBuffer *buffer;
     IMFSample *sample;
     HRESULT hr;
-
-    if (fail_request_sample)
-        return E_NOTIMPL;
-
     hr = MFCreateSample(&sample);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     if (stream->sample_duration)
@@ -406,6 +405,42 @@ static HRESULT WINAPI test_media_stream_RequestSample(IMFMediaStream *iface, IUn
     return S_OK;
 }
 
+static HRESULT test_media_stream_handle_request_samples(struct test_media_stream *stream)
+{
+    HRESULT hr;
+    unsigned i;
+
+    for (i = 0; i < stream->pending_requests; i++)
+    {
+        hr = test_media_stream_queue_sample(stream, stream->tokens[i]);
+        if (stream->tokens[i]) IUnknown_Release(stream->tokens[i]);
+        if (FAILED(hr)) return hr;
+    }
+
+    stream->pending_requests = 0;
+    return S_OK;
+}
+
+static HRESULT WINAPI test_media_stream_RequestSample(IMFMediaStream *iface, IUnknown *token)
+{
+    struct test_media_stream *stream = impl_from_IMFMediaStream(iface);
+    HRESULT hr = S_OK;
+
+    if (fail_request_sample)
+        return E_NOTIMPL;
+
+    if (stream->manual_samples)
+    {
+        stream->tokens[stream->pending_requests] = token;
+        if (token) IUnknown_AddRef(token);
+        stream->pending_requests++;
+    } else hr = test_media_stream_queue_sample(stream, token);
+
+    stream->request_sample_called = TRUE;
+
+    return hr;
+}
+
 static const IMFMediaStreamVtbl test_media_stream_vtbl =
 {
     test_media_stream_QueryInterface,
@@ -432,6 +467,8 @@ struct test_source
     unsigned stream_count;
     enum source_state state;
     CRITICAL_SECTION cs;
+
+    BOOL start_called;
 };
 
 static struct test_source *impl_from_IMFMediaSource(IMFMediaSource *iface)
@@ -554,18 +591,29 @@ static HRESULT WINAPI test_source_Start(IMFMediaSource *iface, IMFPresentationDe
 
     for (i = 0; i < source->stream_count; ++i)
     {
+        struct test_media_stream *stream;
+
         if (!is_stream_selected(pd, i))
             continue;
 
+        stream = source->streams[i];
+        if (stream->pending_requests)
+        {
+            unsigned j;
+            for (j = 0; j < stream->pending_requests; j++)
+                if (stream->tokens[j]) IUnknown_Release(stream->tokens[j]);
+            stream->pending_requests = 0;
+        }
+
         var.vt = VT_UNKNOWN;
-        var.punkVal = (IUnknown *)&source->streams[i]->IMFMediaStream_iface;
+        var.punkVal = (IUnknown *)&stream->IMFMediaStream_iface;
         event_type = source->streams[i]->is_new ? MENewStream : MEUpdatedStream;
         source->streams[i]->is_new = FALSE;
         hr = IMFMediaEventQueue_QueueEventParamVar(source->event_queue, event_type, &GUID_NULL, S_OK, &var);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 
         event_type = source->state == SOURCE_RUNNING ? MEStreamSeeked : MEStreamStarted;
-        hr = IMFMediaEventQueue_QueueEventParamVar(source->streams[i]->event_queue, event_type, &GUID_NULL,
+        hr = IMFMediaEventQueue_QueueEventParamVar(stream->event_queue, event_type, &GUID_NULL,
                 S_OK, NULL);
         ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     }
@@ -573,6 +621,8 @@ static HRESULT WINAPI test_source_Start(IMFMediaSource *iface, IMFPresentationDe
     source->state = SOURCE_RUNNING;
 
     LeaveCriticalSection(&source->cs);
+
+    source->start_called = TRUE;
 
     return S_OK;
 }
@@ -720,6 +770,13 @@ struct async_callback
     IMFSourceReaderCallback IMFSourceReaderCallback_iface;
     LONG refcount;
     HANDLE event;
+    BOOL sample_requested;
+
+    HRESULT hr;
+    DWORD stream_index;
+    DWORD stream_flags;
+    LONGLONG timestamp;
+    IMFSample *sample;
 };
 
 static struct async_callback *impl_from_IMFSourceReaderCallback(IMFSourceReaderCallback *iface)
@@ -761,7 +818,14 @@ static ULONG WINAPI async_callback_Release(IMFSourceReaderCallback *iface)
 static HRESULT WINAPI async_callback_OnReadSample(IMFSourceReaderCallback *iface, HRESULT hr, DWORD stream_index,
         DWORD stream_flags, LONGLONG timestamp, IMFSample *sample)
 {
-    ok(0, "Unexpected call.\n");
+    struct async_callback *callback = impl_from_IMFSourceReaderCallback(iface);
+    ok(callback->sample_requested, "Unexpected OnReadSample call.\n");
+    callback->stream_index = stream_index;
+    callback->stream_flags = stream_flags;
+    callback->timestamp = timestamp;
+    callback->sample = sample;
+    callback->hr = hr;
+    SetEvent(callback->event);
     return E_NOTIMPL;
 }
 
@@ -794,6 +858,8 @@ static struct async_callback *create_async_callback(void)
     callback = calloc(1, sizeof(*callback));
     callback->IMFSourceReaderCallback_iface.lpVtbl = &async_callback_vtbl;
     callback->refcount = 1;
+    callback->event = CreateEventA(NULL, FALSE, FALSE, NULL);
+    callback->sample_requested = FALSE;
 
     return callback;
 }
@@ -1152,6 +1218,149 @@ static void test_source_reader(const char *filename, bool video)
     IMFByteStream_Release(stream);
 
     winetest_pop_context();
+}
+
+static void test_async_source_reader(void)
+{
+    static const struct attribute_desc rgb32_stream_type_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96),
+        {0},
+    };
+
+    struct async_callback *callback = create_async_callback();
+    IMFStreamDescriptor *video_stream;
+    struct test_source *test_source;
+    IMFAttributes *attributes;
+    IMFMediaType *media_type;
+    IMFSourceReader *reader;
+    IMFMediaSource *source;
+    PROPVARIANT var;
+    HRESULT hr;
+    DWORD res, i;
+
+    hr = MFCreateMediaType(&media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    init_media_type(media_type, rgb32_stream_type_desc, -1);
+    hr = MFCreateStreamDescriptor(0, 1, &media_type, &video_stream);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    source = create_test_source(&video_stream, 1);
+    ok(!!source, "Failed to create test source.\n");
+    test_source = impl_from_IMFMediaSource(source);
+
+    hr = MFCreateAttributes(&attributes, 1);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = IMFAttributes_SetUnknown(attributes, &MF_SOURCE_READER_ASYNC_CALLBACK,
+            (IUnknown *)&callback->IMFSourceReaderCallback_iface);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    hr = MFCreateSourceReaderFromMediaSource(source, attributes, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFSourceReader_SetCurrentMediaType(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, NULL, media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    /* ReadSample without any streams selected. */
+    callback->sample_requested = TRUE;
+    hr = IMFSourceReader_ReadSample(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, NULL, NULL, NULL, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    res = WaitForSingleObject(callback->event, 200);
+    todo_wine ok(!res, "ReadSample didn't finish\n");
+    if (!res)
+    {
+        ok(callback->sample == NULL, "Unexpected sample\n");
+        ok(callback->stream_index == MF_SOURCE_READER_FIRST_VIDEO_STREAM, "Unexpected stream_index %lu\n", callback->stream_index);
+        ok(callback->stream_flags == 1, "Unexpected stream_flags %lu\n", callback->stream_flags);
+        ok(callback->timestamp == 0, "Unexpected timestamp\n");
+        ok(callback->hr == MF_E_INVALIDREQUEST, "Unexpected hr %#lx\n", callback->hr);
+    }
+
+    /* Second time fails immediately, not asynchronously. */
+    hr = IMFSourceReader_ReadSample(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, NULL, NULL, NULL, NULL);
+    todo_wine ok(hr == MF_E_INVALIDREQUEST, "Unexpected hr %#lx.\n", hr);
+
+    IMFSourceReader_Release(reader);
+    IMFMediaSource_Release(source);
+
+    source = create_test_source(&video_stream, 1);
+    ok(!!source, "Failed to create test source.\n");
+    IMFStreamDescriptor_Release(video_stream);
+    test_source = impl_from_IMFMediaSource(source);
+
+    hr = MFCreateSourceReaderFromMediaSource(source, attributes, &reader);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    hr = IMFSourceReader_SetCurrentMediaType(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, NULL, media_type);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    IMFAttributes_Release(attributes);
+    IMFMediaType_Release(media_type);
+
+    hr = IMFSourceReader_SetStreamSelection(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+    ok(hr == S_OK, "Unexpected hr %#lx\n", hr);
+
+    /* Race ReadSample with SetCurrentPosition.
+     * Trying to figure out if a SetCurrentPosition will be rejected while
+     * a ReadSample is in flight. */
+    test_source->streams[0]->manual_samples = TRUE;
+    hr = IMFSourceReader_ReadSample(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, NULL, NULL, NULL, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+    while (!test_source->streams[0]->request_sample_called)
+        Sleep(0);
+
+    var.vt = VT_I8;
+    var.hVal.QuadPart = 0;
+    hr = IMFSourceReader_SetCurrentPosition(reader, &GUID_NULL, &var);
+    ok(hr == MF_E_INVALIDREQUEST, "Unexpected hr %#lx.\n", hr);
+
+    test_media_stream_handle_request_samples(test_source->streams[0]);
+
+    res = WaitForSingleObject(callback->event, 1000);
+    ok(res == WAIT_OBJECT_0, "ReadSample didn't finish\n");
+
+    /* The other order. */
+
+    /* A hypothetical scenario. Since ReadSample and SetCurrentPosition happens asynchronously,
+     * it's perceivable that the media stream RequestSample job created by the later ReadSample call
+     * _may_ be added to queue prior to the SetCurrentPosition triggers a media source Start. This
+     * media source Start may cause the RequestSample job to be dropped, and the source reader
+     * should handle this correctly and not hang.
+     *
+     * The source reader implementation can handle this in one of at least two ways. It can either
+     * make sure this ordering never happens, e.g. by synchronously set a flag of some sort in
+     * SetCurrentPosition, then wait for the completion of pending seek in ReadSample; or it should
+     * react to the RequestSample job being dropped.
+     */
+
+    for (i = 0; i < 100; i++)
+    {
+        test_source->start_called = FALSE;
+        test_source->streams[0]->request_sample_called = FALSE;
+
+        hr = IMFSourceReader_SetCurrentPosition(reader, &GUID_NULL, &var);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        hr = IMFSourceReader_ReadSample(reader, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, NULL, NULL, NULL, NULL);
+        ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+
+        while (!test_source->start_called)
+            Sleep(0);
+        while (!test_source->streams[0]->request_sample_called)
+            Sleep(0);
+
+        test_media_stream_handle_request_samples(test_source->streams[0]);
+
+        res = WaitForSingleObject(callback->event, 200);
+        if (res) break;
+    }
+
+    ok(!res, "ReadSample didn't finish\n");
+
+    IMFSourceReaderCallback_Release(&callback->IMFSourceReaderCallback_iface);
+    IMFSourceReader_Release(reader);
+    IMFMediaSource_Release(source);
 }
 
 static void test_source_reader_from_media_source(void)
@@ -3902,6 +4111,7 @@ START_TEST(mfplat)
     test_source_reader("test.wav", false);
     test_source_reader("test.mp4", true);
     test_source_reader_from_media_source();
+    test_async_source_reader();
     test_source_reader_transforms(FALSE, FALSE);
     test_source_reader_transforms(TRUE, FALSE);
     test_source_reader_transforms(FALSE, TRUE);
@@ -3914,7 +4124,6 @@ START_TEST(mfplat)
     test_sink_writer_get_object();
     test_sink_writer_add_stream();
     test_sink_writer_sample_process();
-
     hr = MFShutdown();
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
 }

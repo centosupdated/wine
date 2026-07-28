@@ -1543,7 +1543,7 @@ static HRESULT WINAPI source_reader_async_commands_callback_Invoke(IMFAsyncCallb
                 }
                 else
                 {
-                    stub_stream.index = command->u.read.stream_index;
+                    stub_stream.index = hr == MF_E_MEDIA_SOURCE_NO_STREAMS_SELECTED ? 0 : stream_index;
                     source_reader_queue_response(reader, &stub_stream, hr, MF_SOURCE_READERF_ERROR, 0, NULL);
                 }
             }
@@ -1562,10 +1562,10 @@ static HRESULT WINAPI source_reader_async_commands_callback_Invoke(IMFAsyncCallb
         case SOURCE_READER_ASYNC_SEEK:
 
             EnterCriticalSection(&reader->cs);
-            if (SUCCEEDED(IMFMediaSource_Start(reader->source, reader->descriptor, &command->u.seek.format,
+            if (FAILED(IMFMediaSource_Start(reader->source, reader->descriptor, &command->u.seek.format,
                     &command->u.seek.position)))
             {
-                reader->flags |= SOURCE_READER_SEEKING;
+                reader->flags &= ~SOURCE_READER_SEEKING;
             }
             LeaveCriticalSection(&reader->cs);
 
@@ -2358,6 +2358,8 @@ static HRESULT WINAPI src_reader_SetCurrentPosition(IMFSourceReaderEx *iface, RE
 
     if (SUCCEEDED(hr))
     {
+        reader->flags |= SOURCE_READER_SEEKING;
+
         for (i = 0; i < reader->stream_count; ++i)
         {
             reader->streams[i].last_sample_ts = 0;
@@ -2378,7 +2380,6 @@ static HRESULT WINAPI src_reader_SetCurrentPosition(IMFSourceReaderEx *iface, RE
         {
             if (SUCCEEDED(IMFMediaSource_Start(reader->source, reader->descriptor, format, position)))
             {
-                reader->flags |= SOURCE_READER_SEEKING;
                 while (reader->flags & SOURCE_READER_SEEKING)
                 {
                     SleepConditionVariableCS(&reader->state_event, &reader->cs, INFINITE);
