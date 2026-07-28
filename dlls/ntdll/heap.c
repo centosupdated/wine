@@ -19,6 +19,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include "minwindef.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -439,6 +440,16 @@ static inline struct block *next_block( const SUBHEAP *subheap, const struct blo
     next = (char *)block + block_get_size( block );
     if (!contains( data, last - (char *)data, next, sizeof(*block) )) return NULL;
     return (struct block *)next;
+}
+
+static inline struct block *subheap_find_block( const SUBHEAP *subheap, const struct block *block )
+{
+    struct block *subheap_block = first_block(subheap);
+    while ( subheap_block < block )
+    {
+        subheap_block = next_block(subheap, subheap_block);
+    }
+    return subheap_block;
 }
 
 static inline BOOL check_subheap( const SUBHEAP *subheap, const struct heap *heap )
@@ -2401,8 +2412,12 @@ static NTSTATUS heap_walk_blocks( const struct heap *heap, const SUBHEAP *subhea
     const struct block *blocks = first_block( subheap );
 
     if (entry->lpData == commit_end) return STATUS_NO_MORE_ENTRIES;
-    if (entry->lpData == base) block = blocks;
-    else if (!(block = next_block( subheap, block )))
+    if (entry->lpData == base)
+        block = blocks;
+    else
+        block = next_block( subheap, block );
+
+    if (!block)
     {
         entry->lpData = (void *)commit_end;
         entry->cbData = end - commit_end;
@@ -2410,6 +2425,12 @@ static NTSTATUS heap_walk_blocks( const struct heap *heap, const SUBHEAP *subhea
         entry->iRegionIndex = 0;
         entry->wFlags = RTL_HEAP_ENTRY_UNCOMMITTED;
         return STATUS_SUCCESS;
+    }
+
+    if ((block_get_flags( block ) & BLOCK_FLAG_LFH) && subheap_find_block(subheap, block) == block)
+    {
+        struct group* group = (struct group *)(block + 1);
+        block = &group->first_block;
     }
 
     if (block_get_flags( block ) & BLOCK_FLAG_FREE)
