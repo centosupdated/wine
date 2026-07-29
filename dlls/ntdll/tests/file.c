@@ -3462,11 +3462,9 @@ static void test_file_disposition_information(void)
     ok( handle != INVALID_HANDLE_VALUE, "failed to create temp file\n" );
     fdi.DoDeleteFile = TRUE;
     res = pNtSetInformationFile( handle, &io, &fdi, sizeof fdi, FileDispositionInformation );
-    todo_wine
     ok( res == STATUS_CANNOT_DELETE, "unexpected FileDispositionInformation result (expected STATUS_CANNOT_DELETE, got %lx)\n", res );
     CloseHandle( handle );
     fileDeleted = GetFileAttributesA( buffer ) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
-    todo_wine
     ok( !fileDeleted, "File shouldn't have been deleted\n" );
     SetFileAttributesA( buffer, FILE_ATTRIBUTE_NORMAL );
     DeleteFileA( buffer );
@@ -4984,15 +4982,7 @@ static void test_NtCreateFile(void)
 
             ret = GetFileAttributesW(path);
             ret &= ~FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
-            /* FIXME: leave only 'else' case below once Wine is fixed */
-            if (ret != td[i].attrib_out)
-            {
-                todo_wine
-                ok(ret == td[i].attrib_out, "%ld: expected %#lx got %#lx\n", i, td[i].attrib_out, ret);
-                SetFileAttributesW(path, td[i].attrib_out);
-            }
-            else
-                ok(ret == td[i].attrib_out, "%ld: expected %#lx got %#lx\n", i, td[i].attrib_out, ret);
+            ok(ret == td[i].attrib_out, "%ld: expected %#lx got %#lx\n", i, td[i].attrib_out, ret);
 
             CloseHandle(handle);
         }
@@ -6013,12 +6003,12 @@ static void test_file_readonly_access(void)
 
     /* NtOpenFile FILE_{READ,WRITE}_ATTRIBUTES */
     status = pNtOpenFile(&handle, FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, &attr, &io, default_sharing, FILE_NON_DIRECTORY_FILE);
-    todo_wine ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %#lx.\n", status);
+    ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %#lx.\n", status);
     CloseHandle(handle);
 
     /* NtOpenFile FILE_{READ,WRITE}_EA */
     status = pNtOpenFile(&handle, FILE_READ_EA | FILE_WRITE_EA, &attr, &io, default_sharing, FILE_NON_DIRECTORY_FILE);
-    todo_wine ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %#lx.\n", status);
+    ok(status == STATUS_SUCCESS, "expected STATUS_SUCCESS, got %#lx.\n", status);
     CloseHandle(handle);
 
     /* NtOpenFile DELETE without FILE_DELETE_ON_CLOSE */

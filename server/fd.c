@@ -1876,8 +1876,10 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
     struct stat st;
     struct closed_fd *closed_fd;
     struct fd *fd;
+    int open_flags = flags & ~O_TRUNC;
     int root_fd = -1;
-    int rw_mode;
+    int rw_mode = O_RDONLY;
+    int existed = FALSE;
     char *path;
 
     if (((options & FILE_DELETE_ON_CLOSE) && !(access & DELETE)) ||
@@ -1908,34 +1910,44 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
     }
 
     /* create the directory if needed */
-    if ((options & FILE_DIRECTORY_FILE) && (flags & O_CREAT))
+    if (options & FILE_DIRECTORY_FILE)
     {
-        if (mkdir( name, *mode ) == -1)
+        if (flags & O_CREAT)
         {
-            if (errno != EEXIST || (flags & O_EXCL))
+            if (mkdir( name, *mode ) == -1)
             {
-                file_set_error();
-                goto error;
+                if (errno != EEXIST || (flags & O_EXCL))
+                {
+                    file_set_error();
+                    goto error;
+                }
             }
+            open_flags &= ~(O_CREAT | O_EXCL);
         }
-        flags &= ~(O_CREAT | O_EXCL | O_TRUNC);
     }
-
-    if ((access & FILE_UNIX_WRITE_ACCESS) && !(options & FILE_DIRECTORY_FILE))
+    else if ((access & (FILE_WRITE_DATA | FILE_APPEND_DATA)))
     {
-        if (access & FILE_UNIX_READ_ACCESS) rw_mode = O_RDWR;
+        if (access & (FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA)) rw_mode = O_RDWR;
         else rw_mode = O_WRONLY;
     }
-    else rw_mode = O_RDONLY;
 
-    if ((fd->unix_fd = open( name, rw_mode | (flags & ~O_TRUNC), *mode )) == -1)
+    if ((flags & O_TRUNC) && !stat(name, &st) && S_ISREG(st.st_mode))
     {
-        /* if we tried to open a directory for write access, retry read-only */
-        if (errno == EISDIR)
+        if (!(access & FILE_WRITE_ATTRIBUTES))
         {
-            if ((access & FILE_UNIX_WRITE_ACCESS) || (flags & O_CREAT))
-                fd->unix_fd = open( name, O_RDONLY | (flags & ~(O_TRUNC | O_CREAT | O_EXCL)), *mode );
+            open_flags |= O_TRUNC;
+            if (rw_mode == O_RDONLY)
+                rw_mode = O_RDWR;
         }
+
+        existed = TRUE;
+    }
+
+    if ((fd->unix_fd = open( name, rw_mode | open_flags, *mode )) == -1)
+    {
+        /* if we tried to open a directory with invalid flags */
+        if (errno == EISDIR)
+            fd->unix_fd = open( name, O_RDONLY | (open_flags & ~(O_CREAT | O_EXCL)), *mode );
 
         if (fd->unix_fd == -1)
         {
@@ -1947,6 +1959,9 @@ struct fd *open_fd( struct fd *root, const char *name, struct unicode_str nt_nam
             goto error;
         }
     }
+
+    if (existed)
+        fchmod(fd->unix_fd, *mode);
 
     fd->nt_name = dup_nt_name( root, nt_name, &fd->nt_namelen );
     fd->unix_name = NULL;
