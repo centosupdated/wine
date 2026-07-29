@@ -3892,20 +3892,160 @@ SymbolicName=WSAEMFILE
 Language=ENU
 Too many open files.
 .
+MessageId=10035
+SymbolicName=WSAEWOULDBLOCK
+Language=ENU
+Resource temporarily unavailable.
+.
+MessageId=10036
+SymbolicName=WSAEINPROGRESS
+Language=ENU
+Operation now in progress.
+.
+MessageId=10037
+SymbolicName=WSAEALREADY
+Language=ENU
+Operation already in progress.
+.
+MessageId=10038
+SymbolicName=WSAENOTSOCK
+Language=ENU
+Socket operation on non-socket.
+.
+MessageId=10039
+SymbolicName=WSAEDESTADDRREQ
+Language=ENU
+Destination address required.
+.
+MessageId=10040
+SymbolicName=WSAEMSGSIZE
+Language=ENU
+Message too long.
+.
+MessageId=10041
+SymbolicName=WSAEPROTOTYPE
+Language=ENU
+Protocol wrong type for socket.
+.
+MessageId=10042
+SymbolicName=WSAENOPROTOOPT
+Language=ENU
+Protocol not available.
+.
+MessageId=10043
+SymbolicName=WSAEPROTONOSUPPORT
+Language=ENU
+Protocol not supported.
+.
+MessageId=10044
+SymbolicName=WSAESOCKTNOSUPPORT
+Language=ENU
+Socket type not supported.
+.
+MessageId=10045
+SymbolicName=WSAEOPNOTSUPP
+Language=ENU
+Operation not supported.
+.
+MessageId=10046
+SymbolicName=WSAEPFNOSUPPORT
+Language=ENU
+Protocol family not supported.
+.
+MessageId=10047
+SymbolicName=WSAEAFNOSUPPORT
+Language=ENU
+Address family not supported by protocol.
+.
+MessageId=10048
+SymbolicName=WSAEADDRINUSE
+Language=ENU
+Address already in use.
+.
 MessageId=10049
 SymbolicName=WSAEADDRNOTAVAIL
 Language=ENU
 Cannot assign requested address.
+.
+MessageId=10050
+SymbolicName=WSAENETDOWN
+Language=ENU
+Network is down.
+.
+MessageId=10051
+SymbolicName=WSAENETUNREACH
+Language=ENU
+Network is unreachable.
+.
+MessageId=10052
+SymbolicName=WSAENETRESET
+Language=ENU
+Network dropped connection on reset.
+.
+MessageId=10053
+SymbolicName=WSAECONNABORTED
+Language=ENU
+Software caused connection abort.
 .
 MessageId=10054
 SymbolicName=WSAECONNRESET
 Language=ENU
 Connection reset by peer.
 .
+MessageId=10055
+SymbolicName=WSAENOBUFS
+Language=ENU
+No buffer space available.
+.
+MessageId=10056
+SymbolicName=WSAEISCONN
+Language=ENU
+Transport endpoint is already connected.
+.
+MessageId=10057
+SymbolicName=WSAENOTCONN
+Language=ENU
+Transport endpoint is not connected.
+.
+MessageId=10058
+SymbolicName=WSAESHUTDOWN
+Language=ENU
+Cannot send after transport endpoint shutdown.
+.
+MessageId=10059
+SymbolicName=WSAETOOMANYREFS
+Language=ENU
+Too many references.
+.
+MessageId=10060
+SymbolicName=WSAETIMEDOUT
+Language=ENU
+Connection timed out.
+.
 MessageId=10061
 SymbolicName=WSAECONNREFUSED
 Language=ENU
 Connection refused.
+.
+MessageId=10063
+SymbolicName=WSAENAMETOOLONG
+Language=ENU
+Name too long.
+.
+MessageId=10064
+SymbolicName=WSAEHOSTDOWN
+Language=ENU
+Host is down.
+.
+MessageId=10065
+SymbolicName=WSAEHOSTUNREACH
+Language=ENU
+No route to host.
+.
+MessageId=10066
+SymbolicName=WSAENOTEMPTY
+Language=ENU
+Directory not empty.
 .
 MessageId=11001
 SymbolicName=WSAHOST_NOT_FOUND
