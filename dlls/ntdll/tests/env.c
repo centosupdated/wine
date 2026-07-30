@@ -720,6 +720,142 @@ static void test_RtlSetEnvironmentVariable(void)
     ok(!status, "got %#lx\n", status);
 }
 
+/* if 'value' is non NULL, returns TRUE iff env var 'name' is present and of value 'value'
+ * if 'value' is NULL, returns TRUE iff env var 'name' is not present in the environment strings
+ */
+static BOOL check_pseudo_in_env_strings(const WCHAR *name, const WCHAR *value)
+{
+    WCHAR *envstrings;
+    WCHAR *ptr;
+    size_t len = wcslen(name);
+    BOOL ret = FALSE;
+
+    envstrings = GetEnvironmentStringsW();
+    if (envstrings)
+    {
+        for (ptr = envstrings; *ptr; ptr += wcslen(ptr) + 1)
+        {
+            if (!wcsncmp(ptr, name, len) && ptr[len] == L'=')
+            {
+                ret = value && !wcscmp(&ptr[len + 1], value);
+                break;
+            }
+        }
+        if (!value && !*ptr) ret = TRUE;
+        FreeEnvironmentStringsW(envstrings);
+    }
+    return ret;
+}
+
+static DWORD test_one_pseudo_variable(const WCHAR *pseudo, WCHAR *value, UINT value_len)
+{
+    const WCHAR *dummystr = L"let's land onto the moon";
+    WCHAR value2_buffer[1024];
+    UNICODE_STRING var_string, value_string, value2_string;
+    NTSTATUS status;
+    BOOL ret;
+
+    RtlInitUnicodeString(&var_string, pseudo);
+    value_string.Buffer = value;
+    value_string.MaximumLength = value_len * sizeof(WCHAR);
+
+    status = RtlQueryEnvironmentVariable_U(small_env, &var_string, &value_string);
+    todo_wine
+    ok(!status, "Should have found %ls env var in small_env (%#lx)\n", pseudo, status);
+
+    status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value_string);
+    todo_wine
+    ok(!status && value_string.Length >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
+    ok(value_string.Length == wcslen(value_string.Buffer) * sizeof(WCHAR),
+       "Expecting length of %u but got %u\n",
+       (unsigned int)(wcslen(value_string.Buffer) * sizeof(WCHAR)), value_string.Length);
+
+    if (pRtlQueryEnvironmentVariable)
+    {
+        SIZE_T ret_len;
+        status = pRtlQueryEnvironmentVariable(NULL, (WCHAR *)pseudo, wcslen(pseudo),
+                                              value, value_len / sizeof(WCHAR), &ret_len);
+        todo_wine
+        ok(!status && ret_len >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
+    }
+    ret = check_pseudo_in_env_strings(pseudo, NULL);
+    ok(ret, "Pseudo env var %ls shouldn't be present in env strings\n", pseudo);
+
+    status = set_env_var(NULL, pseudo, dummystr);
+    ok(!status, "Should be able to write value for set %ls\n", pseudo);
+
+    value2_string.Buffer = value2_buffer;
+    value2_string.MaximumLength = sizeof(value2_buffer);
+
+    status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value2_string);
+    ok(!status && value2_string.Length >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
+    todo_wine
+    ok(!wcscmp(value2_string.Buffer, value_string.Buffer),
+       "Expecting %ls but got %ls for env variable %ls\n",
+       value_string.Buffer, value2_string.Buffer, pseudo);
+
+    ret = check_pseudo_in_env_strings(pseudo, dummystr);
+    ok(ret, "Pseudo env var %ls should be present in env strings with value %ls\n", pseudo, dummystr);
+
+    status = set_env_var(NULL, pseudo, NULL);
+    ok(!status, "Should be able to remove value for set %ls\n", pseudo);
+
+    status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value2_string);
+    todo_wine
+    ok(!status && value2_string.Length >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
+    todo_wine
+    ok(!wcscmp(value, value2_string.Buffer), "Should get back pseudo value for %ls\n", pseudo);
+
+    ret = check_pseudo_in_env_strings(pseudo, NULL);
+    ok(ret, "Pseudo env var %ls shouldn't be present in env strings\n", pseudo);
+
+    value2_string.Buffer = value2_buffer;
+    value2_string.MaximumLength = wcslen(value) * sizeof(WCHAR); /* missing one wchar */
+    memset(value2_buffer, 0xa5, sizeof(value2_buffer));
+
+    status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value2_string);
+    todo_wine
+    ok(status == STATUS_BUFFER_TOO_SMALL && value2_string.Length >= sizeof(WCHAR),
+       "Couldn't find %ls env var\n", pseudo);
+    todo_wine
+    ok(!value2_string.Buffer[0], "Expecting empty buffer for env variable %ls\n", pseudo);
+    ok(value2_string.Length == value_string.Length, "Expecting length of %u but got %u\n",
+       value_string.Length, value2_string.Length);
+
+    return value_string.Length / sizeof(WCHAR);
+}
+
+static void test_pseudo_env_variables(void)
+{
+    WCHAR value[1024];
+    WCHAR value2[1024];
+    DWORD size, size2;
+
+    size = test_one_pseudo_variable(L"__APPDIR__", value, ARRAY_SIZE(value));
+    size2 = GetModuleFileNameW(NULL, value2, ARRAY_SIZE(value2));
+    ok(size2 && size2 + 1 < ARRAY_SIZE(value2), "couldn't get app module filename\n");
+    ok(size + 1 < size2, "Mismatch in sizes (%lu / %lu)\n", size, size2);
+    todo_wine
+    ok(size && !memcmp(value, value2, size * sizeof(WCHAR)) && value[size - 1] == L'\\',
+       "__APPDIR__: got %ls while expecting %ls\\\n", value, value2);
+    todo_wine
+    ok(!wcschr(&value2[size], L'/') && !wcschr(&value2[size], L'\\'),
+       "expecting %ls not to include directories\n", &value2[size]);
+
+    size = test_one_pseudo_variable(L"__CD__", value, ARRAY_SIZE(value));
+    size2 = GetCurrentDirectoryW(ARRAY_SIZE(value2), value2);
+    ok(size2 && size2 + 1 < ARRAY_SIZE(value2), "couldn't get current directory\n");
+    todo_wine
+    ok(size2 + 1 == size, "Mismatch in sizes (%lu / %lu)\n", size, size2);
+    todo_wine
+    ok(!memcmp(value, value2, size2 * sizeof(WCHAR)) && value[size2] == L'\\',
+       "__CD__: got %ls while expecting %ls\\\n", value, value2);
+    /* FIXME could check changing directories
+     * - that __CD__ changes automatically
+     * - even if an old value still present in env strings
+     */
+}
+
 START_TEST(env)
 {
     HMODULE mod = GetModuleHandleA("ntdll.dll");
@@ -740,4 +876,5 @@ START_TEST(env)
     test_RtlSetCurrentEnvironment();
     test_RtlSetEnvironmentVariable();
     test_RtlExpandEnvironmentStrings();
+    test_pseudo_env_variables();
 }
