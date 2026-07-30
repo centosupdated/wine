@@ -224,11 +224,12 @@ static void wayland_add_device_monitor(const struct gdi_device_manager *device_m
     device_manager->add_monitor(&monitor, param);
 }
 
-static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *mode)
+static void populate_devmode(struct wayland_output_mode *output_mode, DEVMODEW *mode, int transform)
 {
     mode->dmFields = DM_DISPLAYORIENTATION | DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT |
                      DM_DISPLAYFLAGS | DM_DISPLAYFREQUENCY;
-    mode->dmDisplayOrientation = DMDO_DEFAULT;
+    /* Transform maps cleanly to orientation; 0-3 are 0,90,180,270, 4-7 are the flipped variants. */
+    mode->dmDisplayOrientation = transform % 4;
     mode->dmDisplayFlags = 0;
     mode->dmBitsPerPel = 32;
     mode->dmPelsWidth = output_mode->width;
@@ -248,7 +249,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
     if (!(modes = malloc(output_info->output->modes_count * sizeof(*modes))))
         return;
 
-    populate_devmode(output_info->output->current_mode, &current);
+    populate_devmode(output_info->output->current_mode, &current, output_info->output->transform);
     current.dmFields |= DM_POSITION;
     current.dmPosition.x = output_info->x - primary->x;
     current.dmPosition.y = output_info->y - primary->y;
@@ -257,7 +258,7 @@ static void wayland_add_device_modes(const struct gdi_device_manager *device_man
                       struct wayland_output_mode, entry)
     {
         DEVMODEW mode = {.dmSize = sizeof(mode)};
-        populate_devmode(output_mode, &mode);
+        populate_devmode(output_mode, &mode, output_info->output->transform);
         modes[modes_count++] = mode;
     }
 
