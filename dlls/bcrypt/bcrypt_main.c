@@ -1299,7 +1299,8 @@ static NTSTATUS create_hash( const struct algorithm *alg, UCHAR *secret, ULONG s
     const SYMCRYPT_HASH *desc = get_hash_from_alg( alg->id );
 
     if (!desc) return STATUS_NOT_IMPLEMENTED;
-    if (!(hash = calloc( 1, sizeof(*hash) ))) return STATUS_NO_MEMORY;
+    if (!(hash = _aligned_malloc( sizeof(struct hash), TYPE_ALIGNMENT(struct hash) ))) return STATUS_NO_MEMORY;
+    memset( hash, 0, sizeof(*hash) );
     hash->hdr.magic = MAGIC_HASH;
     hash->alg_id    = alg->id;
     hash->len       = builtin_algorithms[alg->id].hash_length;
@@ -1310,7 +1311,7 @@ static NTSTATUS create_hash( const struct algorithm *alg, UCHAR *secret, ULONG s
 
     if (secret_len && !(hash->secret = malloc( secret_len )))
     {
-        free( hash );
+        _aligned_free( hash );
         return STATUS_NO_MEMORY;
     }
     memcpy( hash->secret, secret, secret_len );
@@ -1358,12 +1359,12 @@ NTSTATUS WINAPI BCryptDuplicateHash( BCRYPT_HASH_HANDLE handle, BCRYPT_HASH_HAND
     if (!handle_copy) return STATUS_INVALID_PARAMETER;
     if (object) FIXME( "ignoring object buffer\n" );
 
-    if (!(hash_copy = malloc( sizeof(*hash_copy) ))) return STATUS_NO_MEMORY;
+    if (!(hash_copy = _aligned_malloc( sizeof(struct hash), TYPE_ALIGNMENT(struct hash) ))) return STATUS_NO_MEMORY;
 
     memcpy( hash_copy, hash_orig, sizeof(*hash_orig) );
     if (hash_orig->secret && !(hash_copy->secret = malloc( hash_orig->secret_len )))
     {
-        free( hash_copy );
+        _aligned_free( hash_copy );
         return STATUS_NO_MEMORY;
     }
     memcpy( hash_copy->secret, hash_orig->secret, hash_orig->secret_len );
@@ -1385,7 +1386,8 @@ static void destroy_hash( struct hash *hash )
 {
     if (!hash) return;
     free( hash->secret );
-    destroy_object( &hash->hdr );
+    secure_zero( &hash->hdr.magic, sizeof(hash->hdr.magic) );
+    _aligned_free( hash );
 }
 
 NTSTATUS WINAPI BCryptDestroyHash( BCRYPT_HASH_HANDLE handle )
