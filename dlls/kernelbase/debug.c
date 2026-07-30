@@ -23,7 +23,6 @@
 #include <stdlib.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
 #include "winternl.h"
@@ -282,6 +281,7 @@ void WINAPI DECLSPEC_HOTPATCH OutputDebugStringW( LPCWSTR str )
     STRING strA;
 
     WARN( "%s\n", debugstr_w(str) );
+    if (!str) return;
 
     RtlInitUnicodeString( &strW, str );
     if (!RtlUnicodeStringToAnsiString( &strA, &strW, TRUE ))

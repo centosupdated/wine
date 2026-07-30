@@ -926,7 +926,7 @@ BOOL WINAPI NtGdiGetAndSetDCDword( HDC hdc, UINT method, DWORD value, DWORD *pre
 {
     PHYSDEV physdev;
     BOOL ret = TRUE;
-    DWORD prev;
+    DWORD prev = 0;
     DC *dc;
 
     if (!(dc = get_dc_ptr( hdc ))) return 0;
@@ -1049,6 +1049,10 @@ BOOL WINAPI NtGdiGetDCDword( HDC hdc, UINT method, DWORD *result )
 
     case NtGdiIsMemDC:
         *result = get_gdi_object_type( hdc ) == NTGDI_OBJ_MEMDC;
+        break;
+
+    case NtGdiHasOpenGL:
+        *result = get_gdi_object_type( hdc ) == NTGDI_OBJ_MEMDC || dc->is_display;
         break;
 
     default:

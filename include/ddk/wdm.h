@@ -477,6 +477,26 @@ typedef struct _DEVICE_OBJECT {
 } DEVICE_OBJECT;
 typedef struct _DEVICE_OBJECT *PDEVICE_OBJECT;
 
+struct _DEVICE_OBJECT_POWER_EXTENSION;
+typedef struct _DEVOBJ_EXTENSION {
+  CSHORT Type;
+  USHORT Size;
+  PDEVICE_OBJECT DeviceObject;
+  ULONG PowerFlags;
+  struct _DEVICE_OBJECT_POWER_EXTENSION *Dope;
+  ULONG ExtensionFlags;
+  PVOID DeviceNode;
+  PDEVICE_OBJECT AttachedTo;
+  LONG StartIoCount;
+  LONG StartIoKey;
+  ULONG StartIoFlags;
+  PVPB Vpb;
+  PVOID DependencyNode;
+  PVOID InterruptContext;
+  LONG InterruptCount;
+  PVOID VerifierContext;
+} DEVOBJ_EXTENSION, *PDEVOBJ_EXTENSION;
+
 typedef struct _DEVICE_RELATIONS {
   ULONG Count;
   PDEVICE_OBJECT Objects[1];
@@ -909,7 +929,10 @@ typedef enum {
   DevicePropertyAddress,
   DevicePropertyUINumber,
   DevicePropertyInstallState,
-  DevicePropertyRemovalPolicy
+  DevicePropertyRemovalPolicy,
+  DevicePropertyResourceRequirements,
+  DevicePropertyAllocatedResources,
+  DevicePropertyContainerID,
 } DEVICE_REGISTRY_PROPERTY;
 
 typedef enum _DEVICE_TEXT_TYPE {
@@ -1942,7 +1965,7 @@ NTSTATUS  WINAPI ZwEnumerateKey(HANDLE,ULONG,KEY_INFORMATION_CLASS,void *,DWORD,
 NTSTATUS  WINAPI ZwEnumerateValueKey(HANDLE,ULONG,KEY_VALUE_INFORMATION_CLASS,PVOID,ULONG,PULONG);
 NTSTATUS  WINAPI ZwFlushInstructionCache(HANDLE,LPCVOID,SIZE_T);
 NTSTATUS  WINAPI ZwFlushKey(HANDLE);
-NTSTATUS  WINAPI ZwFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,ULONG);
+NTSTATUS  WINAPI ZwFlushVirtualMemory(HANDLE,LPCVOID*,SIZE_T*,IO_STATUS_BLOCK*);
 NTSTATUS  WINAPI ZwFreeVirtualMemory(HANDLE,PVOID*,SIZE_T*,ULONG);
 NTSTATUS  WINAPI ZwFsControlFile(HANDLE,HANDLE,PIO_APC_ROUTINE,PVOID,PIO_STATUS_BLOCK,ULONG,PVOID,ULONG,PVOID,ULONG);
 NTSTATUS  WINAPI ZwInitiatePowerAction(POWER_ACTION,SYSTEM_POWER_STATE,ULONG,BOOLEAN);

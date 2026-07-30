@@ -27,7 +27,6 @@
 #include <stdio.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 
@@ -86,27 +85,14 @@ static void completion_wait_destroy( struct object * );
 
 static const struct object_ops completion_wait_ops =
 {
-    sizeof(struct completion_wait), /* size */
-    &no_type,                       /* type */
-    completion_wait_dump,           /* dump */
-    add_queue,                      /* add_queue */
-    remove_queue,                   /* remove_queue */
-    completion_wait_signaled,       /* signaled */
-    completion_wait_satisfied,      /* satisfied */
-    no_signal,                      /* signal */
-    no_get_fd,                      /* get_fd */
-    default_get_sync,               /* get_sync */
-    default_map_access,             /* map_access */
-    default_get_sd,                 /* get_sd */
-    default_set_sd,                 /* set_sd */
-    no_get_full_name,               /* get_full_name */
-    no_lookup_name,                 /* lookup_name */
-    no_link_name,                   /* link_name */
-    NULL,                           /* unlink_name */
-    no_open_file,                   /* open_file */
-    no_kernel_obj_list,             /* get_kernel_obj_list */
-    no_close_handle,                /* close_handle */
-    completion_wait_destroy         /* destroy */
+    .size         = sizeof(struct completion_wait),
+    .type         = &no_type,
+    .dump         = completion_wait_dump,
+    .add_queue    = add_queue,
+    .remove_queue = remove_queue,
+    .signaled     = completion_wait_signaled,
+    .satisfied    = completion_wait_satisfied,
+    .destroy      = completion_wait_destroy,
 };
 
 static void completion_wait_destroy( struct object *obj )
@@ -161,27 +147,12 @@ static void completion_destroy( struct object * );
 
 static const struct object_ops completion_ops =
 {
-    sizeof(struct completion), /* size */
-    &completion_type,          /* type */
-    completion_dump,           /* dump */
-    NULL,                      /* add_queue */
-    NULL,                      /* remove_queue */
-    NULL,                      /* signaled */
-    NULL,                      /* satisfied */
-    no_signal,                 /* signal */
-    no_get_fd,                 /* get_fd */
-    completion_get_sync,       /* get_sync */
-    default_map_access,        /* map_access */
-    default_get_sd,            /* get_sd */
-    default_set_sd,            /* set_sd */
-    default_get_full_name,     /* get_full_name */
-    no_lookup_name,            /* lookup_name */
-    directory_link_name,       /* link_name */
-    default_unlink_name,       /* unlink_name */
-    no_open_file,              /* open_file */
-    no_kernel_obj_list,        /* get_kernel_obj_list */
-    completion_close_handle,   /* close_handle */
-    completion_destroy         /* destroy */
+    .size         = sizeof(struct completion),
+    .type         = &completion_type,
+    .dump         = completion_dump,
+    .get_sync     = completion_get_sync,
+    .close_handle = completion_close_handle,
+    .destroy      = completion_destroy,
 };
 
 static void completion_destroy( struct object *obj)
@@ -264,13 +235,11 @@ static struct completion_wait *create_completion_wait( struct thread *thread )
     return wait;
 }
 
-static struct completion *create_completion( struct object *root, const struct unicode_str *name,
-                                             unsigned int attr, unsigned int concurrent,
-                                             const struct security_descriptor *sd )
+static struct completion *create_completion( const struct object_params *params, unsigned int concurrent )
 {
     struct completion *completion;
 
-    if ((completion = create_named_object( root, &completion_ops, name, attr, sd )))
+    if ((completion = create_named_object( params )))
     {
         if (get_error() != STATUS_OBJECT_NAME_EXISTS)
         {
@@ -323,33 +292,28 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
 DECL_HANDLER(create_completion)
 {
     struct completion *completion;
-    struct unicode_str name;
-    struct object *root;
-    const struct security_descriptor *sd;
-    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
+    struct object_params params = { .ops = &completion_ops };
 
-    if (!objattr) return;
+    if (!get_req_object_attributes( &params )) return;
 
-    if ((completion = create_completion( root, &name, objattr->attributes, req->concurrent, sd )))
+    if ((completion = create_completion( &params, req->concurrent )))
     {
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
-            reply->handle = alloc_handle( current->process, completion, req->access, objattr->attributes );
+            reply->handle = alloc_handle( current->process, completion, req->access, params.attr );
         else
             reply->handle = alloc_handle_no_access_check( current->process, completion,
-                                                          req->access, objattr->attributes );
+                                                          req->access, params.attr );
         release_object( completion );
     }
 
-    if (root) release_object( root );
+    if (params.root) release_object( params.root );
 }
 
 /* open a completion */
 DECL_HANDLER(open_completion)
 {
-    struct unicode_str name = get_req_unicode_str();
-
     reply->handle = open_object( current->process, req->rootdir, req->access,
-                                 &completion_ops, &name, req->attributes );
+                                 &completion_ops, get_req_unicode_str(), req->attributes );
 }
 
 

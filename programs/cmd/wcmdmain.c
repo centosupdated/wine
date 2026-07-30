@@ -33,9 +33,10 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(cmd);
 
+/* Delimiters for tab-completion support */
 #define BASE_DELIMS             L",=;~!^&()+{}[]"
 #define PATH_SEPARATION_DELIMS  L" " BASE_DELIMS
-#define INTRA_PATH_DELIMS       L"\\" BASE_DELIMS
+#define INTRA_PATH_DELIMS       L"\\:" BASE_DELIMS
 
 typedef struct _SEARCH_CONTEXT
 {
@@ -1164,9 +1165,7 @@ static void handleExpansion(WCHAR *cmd, BOOL atExecute) {
   WCHAR *t;
   int   i;
   BOOL delayed = atExecute ? delayedsubst : FALSE;
-  WCHAR *delayedp = NULL;
   WCHAR  startchar = '%';
-  WCHAR *normalp;
 
   /* Display the FOR variables in effect */
   for (i=0;i<ARRAY_SIZE(forloopcontext->variable);i++) {
@@ -1178,13 +1177,24 @@ static void handleExpansion(WCHAR *cmd, BOOL atExecute) {
 
   for (;;)
   {
-    /* Find the next environment variable delimiter */
-    normalp = wcschr(p, '%');
-    if (delayed) delayedp = wcschr(p, '!');
-    if (!normalp) p = delayedp;
-    else if (!delayedp) p = normalp;
-    else p = min(p,delayedp);
+    /* Find the next variable delimiter or caret escape */
+    if (delayed)
+        p = wcspbrk(p, L"%!^");
+    else
+        p = wcschr(p, '%');
     if (!p) break;
+
+    /* Handle caret escape: if caret precedes ! during delayed expansion,
+     * consume the caret and treat the ! as literal. Other caret sequences
+     * (e.g. ^% in pipe payloads) are left untouched for subprocesses.   */
+    if (*p == L'^')
+    {
+        if (p[1] != L'!') { p++; continue; }
+        p = WCMD_strsubstW(p, p + 1, NULL, 0);  /* remove the caret */
+        p++;  /* skip the now-literal exclamation mark */
+        continue;
+    }
+
     startchar = *p;
 
     WINE_TRACE("Translate command:%s %d (at: %s)\n",
@@ -2512,22 +2522,18 @@ static CMD_FOR_CONTROL *for_control_parse(WCHAR *opts_var)
     CMD_FOR_CONTROL *for_ctrl;
     enum for_control_operator for_op;
     WCHAR mode = L' ', option;
-    WCHAR options[MAXSTRING];
-    WCHAR *arg;
+    WCHAR *arg, *last;
     unsigned flags = 0;
-    int arg_index;
     unsigned varidx;
 
-    options[0] = L'\0';
     /* native allows two options only in the /D /R case, a repetition of the option
      * and prints an error otherwise
      */
-    for (arg_index = 0; ; arg_index++)
+    for (arg = opts_var; *arg != L'\0'; arg++)
     {
-        arg = WCMD_parameter(opts_var, arg_index, NULL, FALSE, FALSE);
-
-        if (!arg || *arg != L'/') break;
-        option = towupper(arg[1]);
+        arg = WCMD_skip_leading_spaces(arg);
+        if (*arg != L'/') break;
+        option = towupper(*++arg);
         if (mode != L' ' && (mode != L'D' || option != 'R') && mode != option)
             break;
         switch (option)
@@ -2578,45 +2584,45 @@ static CMD_FOR_CONTROL *for_control_parse(WCHAR *opts_var)
         FIXME("Unexpected situation\n");
         return NULL;
     }
-
-    if (mode == L'F' || mode == L'R')
+    arg = WCMD_skip_leading_spaces(arg);
+    last = arg + wcslen(arg);
+    while (arg < last && iswspace(last[-1])) last--;
+    /* grab variable at end of string */
+    if (arg + 2 > last || !for_var_is_valid(last[-1]) || last[-2] != L'%' || (last >= arg + 3 && !iswspace(last[-3])))
+        return NULL;
+    varidx = last[-1];
+    /* NOTE: we need to handle commands like:
+     * > FOR /F delim=^  %%i IN...
+     * so we have to be careful about the handling of "^ " (which will be already translated into " " here)
+     * and to discriminate between the delimiter before %<var> and potential trailing spaces before
+     * FIXME: perhaps a better alternative would be to construct the array of words in command
+     * at translation time and not afterwards like here.
+     */
+    last -= min(last - arg, 3);
+    /* skip surrounding double-quotes */
+    if (*arg == L'"')
     {
-        /* Retrieve next parameter to see if is root/options (raw form required
-         * with for /f, or unquoted in for /r)
-         */
-        arg = WCMD_parameter(opts_var, arg_index, NULL, for_op == CMD_FOR_FILE_SET, FALSE);
-
-        /* Next parm is either qualifier, path/options or variable -
-         * only care about it if it is the path/options
-         */
-        if (arg && *arg != L'/' && *arg != L'%')
+        while (arg < last && iswspace(last[-1])) last--;
+        if (last > arg + 1 && last[-1] == L'"')
         {
-            arg_index++;
-            wcscpy(options, arg);
+            arg++;
+            last--;
         }
     }
+    *last = L'\0';
+    if (mode != 'R' && mode != 'F' && last > arg) return NULL;
+    TRACE("var %c\n", varidx);
 
-    /* Ensure line continues with variable */
-    arg = WCMD_parameter(opts_var, arg_index++, NULL, FALSE, FALSE);
-    if (!arg || *arg != L'%' || !for_var_is_valid(arg[1]))
-        goto syntax_error; /* FIXME native prints the offending token "%<whatever>" was unexpected at this time */
-    varidx = arg[1];
     for_ctrl = xalloc(sizeof(*for_ctrl));
     if (for_op == CMD_FOR_FILE_SET)
     {
-        size_t len = wcslen(options);
-        WCHAR *p = options, *end;
+        WCHAR *p, *end;
         WCHAR eol = L'\0';
         int num_lines_to_skip = 0;
         BOOL use_backq = FALSE;
         WCHAR *delims = NULL, *tokens = NULL;
-        /* strip enclosing double-quotes when present */
-        if (len >= 2 && p[0] == L'"' && p[len - 1] == L'"')
-        {
-            p[len - 1] = L'\0';
-            p++;
-        }
-        for ( ; *(p = WCMD_skip_leading_spaces(p)); p = end)
+
+        for (p = arg; *(p = WCMD_skip_leading_spaces(p)); p = end)
         {
             /* Save End of line character (Ignore line if first token (based on delims) starts with it) */
             if ((end = for_fileset_option_split(p, L"eol=")))
@@ -2668,7 +2674,7 @@ static CMD_FOR_CONTROL *for_control_parse(WCHAR *opts_var)
                                    tokens ? tokens : xstrdupW(L"1"), for_ctrl);
     }
     else
-        for_control_create(for_op, flags, options, varidx, for_ctrl);
+        for_control_create(for_op, flags, arg, varidx, for_ctrl);
     return for_ctrl;
 syntax_error:
     WCMD_output_stderr(WCMD_LoadMessage(WCMD_SYNTAXERR));
@@ -3010,6 +3016,7 @@ static BOOL node_builder_parse(struct node_builder *builder, unsigned precedence
                 } while (tkn != TKN_CLOSEPAR);
                 ERROR_IF(!node_builder_expect_token(builder, TKN_DO));
                 ERROR_IF(!node_builder_parse(builder, 0, &do_block));
+                if (!for_ctrl->set) for_control_append_set(for_ctrl, L"");
                 left = node_create_for(for_ctrl, do_block, do_echo);
                 for_ctrl = NULL;
             }
@@ -4352,8 +4359,12 @@ static RETURN_CODE for_control_execute_set(CMD_FOR_CONTROL *for_ctrl, const WCHA
         if (wcspbrk(element, L"?*"))
         {
             WIN32_FIND_DATAW fd;
-            HANDLE hff = FindFirstFileW(buffer, &fd);
-            size_t insert_pos = (wcsrchr(buffer, L'\\') ? wcsrchr(buffer, L'\\') + 1 - buffer : 0);
+            HANDLE hff;
+            size_t insert_pos;
+
+            if (*buffer == L'"') WCMD_strip_quotes(buffer);
+            hff = FindFirstFileW(buffer, &fd);
+            insert_pos = wcsrchr(buffer, L'\\') ? wcsrchr(buffer, L'\\') + 1 - buffer : 0;
 
             if (hff == INVALID_HANDLE_VALUE)
             {
@@ -4426,13 +4437,8 @@ static RETURN_CODE for_control_execute_numbers(CMD_FOR_CONTROL *for_ctrl, CMD_NO
     int numbers[3] = {0, 0, 0}, var;
     int i;
 
-    if (for_ctrl->set)
-    {
-        wcscpy(set, for_ctrl->set);
-        handleExpansion(set, TRUE);
-    }
-    else
-        set[0] = L'\0';
+    wcscpy(set, for_ctrl->set);
+    handleExpansion(set, TRUE);
 
     /* Note: native doesn't check the actual number of parameters, and set
      * them by default to 0.
@@ -4465,7 +4471,7 @@ static RETURN_CODE for_control_execute(CMD_FOR_CONTROL *for_ctrl, CMD_NODE *node
 {
     RETURN_CODE return_code;
 
-    if (!for_ctrl->set && for_ctrl->operator != CMD_FOR_NUMBERS) return NO_ERROR;
+    if (!for_ctrl->set[0] && for_ctrl->operator != CMD_FOR_NUMBERS) return NO_ERROR;
 
     WCMD_save_for_loop_context(FALSE);
 
@@ -4852,7 +4858,7 @@ static void parse_command_line_parameters(struct cmd_parameters *parameters)
         /* opt_s left unflagged if the command starts with and contains exactly
          * one quoted string (exactly two quote characters). The quoted string
          * must be an executable name that has whitespace and must not have the
-         * following characters: &<>()@^|
+         * following characters: &<>@^|
          */
 
         /* 1. Confirm there is at least one quote */
@@ -4870,7 +4876,7 @@ static void parse_command_line_parameters(struct cmd_parameters *parameters)
             opt_s = TRUE;
             for (p = q1; p != q2; p++)
             {
-                if (wcschr(L"&<>()@^'", *p))
+                if (wcschr(L"&<>@^'", *p))
                 {
                     opt_s = TRUE;
                     break;

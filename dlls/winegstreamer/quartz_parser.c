@@ -53,7 +53,8 @@ struct parser
 
     struct parser_source **sources;
     unsigned int source_count;
-    BOOL enum_sink_first;
+    bool enum_sink_first;
+    bool output_compressed;
 
     wg_parser_t wg_parser;
 
@@ -87,6 +88,8 @@ struct parser_source
     IQualityControl IQualityControl_iface;
 
     wg_parser_stream_t wg_stream;
+
+    struct wg_format current_format;
 
     SourceSeeking seek;
 
@@ -742,8 +745,10 @@ static bool amt_from_wg_format_video_mpeg1(AM_MEDIA_TYPE *mt, const struct wg_fo
 {
     MPEG1VIDEOINFO *video_format;
     uint32_t frame_time;
+    DWORD size;
 
-    if (!(video_format = CoTaskMemAlloc(sizeof(*video_format))))
+    size = offsetof(MPEG1VIDEOINFO, bSequenceHeader) + format->u.video.codec_data_len;
+    if (!(video_format = CoTaskMemAlloc(size)))
         return false;
 
     mt->majortype = MEDIATYPE_Video;
@@ -751,10 +756,10 @@ static bool amt_from_wg_format_video_mpeg1(AM_MEDIA_TYPE *mt, const struct wg_fo
     mt->bTemporalCompression = TRUE;
     mt->lSampleSize = 1;
     mt->formattype = FORMAT_MPEGVideo;
-    mt->cbFormat = sizeof(MPEG1VIDEOINFO);
+    mt->cbFormat = size;
     mt->pbFormat = (BYTE *)video_format;
 
-    memset(video_format, 0, sizeof(*video_format));
+    memset(video_format, 0, size);
     if ((frame_time = MulDiv(10000000, format->u.video.fps_d, format->u.video.fps_n)) != -1)
         video_format->hdr.AvgTimePerFrame = frame_time;
     video_format->hdr.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -764,6 +769,30 @@ static bool amt_from_wg_format_video_mpeg1(AM_MEDIA_TYPE *mt, const struct wg_fo
     video_format->hdr.bmiHeader.biBitCount = 12;
     video_format->hdr.bmiHeader.biCompression = mt->subtype.Data1;
     video_format->hdr.bmiHeader.biSizeImage = wg_format_get_max_size(format);
+
+    /* Ignore additional start code units after the sequence header. */
+    size = 12; /* minimum sequence header length */
+    if (format->u.video.codec_data_len >= size
+            && format->u.video.codec_data[0] == 0x00
+            && format->u.video.codec_data[1] == 0x00
+            && format->u.video.codec_data[2] == 0x01
+            && format->u.video.codec_data[3] == 0xb3)
+    {
+        /* has intra quantiser matrix? */
+        if (format->u.video.codec_data[size-1] & 2)
+            size += 64;
+
+        /* has non-intra quantiser matrix? */
+        if (format->u.video.codec_data_len >= size
+                && (format->u.video.codec_data[size-1] & 1))
+            size += 64;
+
+        if (format->u.video.codec_data_len >= size)
+        {
+            video_format->cbSequenceHeader = size;
+            memcpy(video_format->bSequenceHeader, format->u.video.codec_data, size);
+        }
+    }
 
     return true;
 }
@@ -1133,7 +1162,7 @@ static bool amt_to_wg_format_video_mpeg1(const AM_MEDIA_TYPE *mt, struct wg_form
         FIXME("Unknown format type %s.\n", debugstr_guid(&mt->formattype));
         return false;
     }
-    if (mt->cbFormat < sizeof(VIDEOINFOHEADER) || !mt->pbFormat)
+    if (!mt->pbFormat || mt->cbFormat < offsetof(MPEG1VIDEOINFO, bSequenceHeader) + video_format->cbSequenceHeader)
     {
         ERR("Unexpected format size %lu.\n", mt->cbFormat);
         return false;
@@ -1145,6 +1174,13 @@ static bool amt_to_wg_format_video_mpeg1(const AM_MEDIA_TYPE *mt, struct wg_form
     format->u.video.fps_n = 10000000;
     format->u.video.fps_d = video_format->hdr.AvgTimePerFrame;
 
+    format->u.video.codec_data_len = video_format->cbSequenceHeader;
+    if (format->u.video.codec_data_len > sizeof(format->u.video.codec_data))
+    {
+        ERR("Too big codec_data value (%u).\n", format->u.video.codec_data_len);
+        format->u.video.codec_data_len = 0;
+    }
+    memcpy(format->u.video.codec_data, video_format->bSequenceHeader, format->u.video.codec_data_len);
     return true;
 }
 
@@ -1311,10 +1347,11 @@ static HRESULT send_sample(struct parser_source *pin, IMediaSample *sample,
 
 /* Send a single GStreamer buffer (splitting it into multiple IMediaSamples if
  * necessary). */
-static void send_buffer(struct parser_source *pin, const struct wg_parser_buffer *buffer)
+static void send_buffer(struct parser_source *pin, struct parser *filter, const struct wg_parser_buffer *buffer)
 {
     HRESULT hr;
     IMediaSample *sample;
+    AM_MEDIA_TYPE *mt;
 
     if (pin->need_segment)
     {
@@ -1341,6 +1378,16 @@ static void send_buffer(struct parser_source *pin, const struct wg_parser_buffer
                 break;
             }
 
+            if ((hr = IMediaSample_GetMediaType(sample, &mt)) == S_OK)
+            {
+                FIXME("Dynamic format change.\n");
+                DeleteMediaType(mt);
+            }
+            else if (hr != S_FALSE)
+            {
+                ERR("Failed to get media type, hr %#lx.\n", hr);
+            }
+
             advance = min(IMediaSample_GetSize(sample), buffer->size - offset);
 
             hr = send_sample(pin, sample, buffer, offset, advance, format->nAvgBytesPerSec);
@@ -1361,7 +1408,64 @@ static void send_buffer(struct parser_source *pin, const struct wg_parser_buffer
         }
         else
         {
-            hr = send_sample(pin, sample, buffer, 0, buffer->size, 0);
+            /* Dynamic format change. */
+            if ((hr = IMediaSample_GetMediaType(sample, &mt)) == S_OK)
+            {
+                struct wg_format format;
+
+                if (filter->output_compressed)
+                {
+                    ERR("Ignoring dynamic format change attempt for compressed output.\n");
+                    send_sample(pin, sample, buffer, 0, buffer->size, 0);
+                }
+                else if (amt_to_wg_format(mt, &format))
+                {
+                    if (!memcmp(&format, &pin->current_format, sizeof(format)))
+                    {
+                        send_sample(pin, sample, buffer, 0, buffer->size, 0);
+                    }
+                    else
+                    {
+                        TRACE("Executing dynamic format change. Current format:\n");
+                        strmbase_dump_media_type(&pin->pin.pin.mt);
+                        TRACE("New format:\n");
+                        strmbase_dump_media_type(mt);
+
+                        FreeMediaType(&pin->pin.pin.mt);
+                        CopyMediaType(&pin->pin.pin.mt, mt);
+                        pin->current_format = format;
+                        wg_parser_stream_enable(pin->wg_stream, &format);
+
+                        /* We can't send the wg_parser_buffer we were about to
+                         * send; it's in the old format.
+                         *
+                         * Also, we need to seek to re-decode any further
+                         * queued buffers. This is not reliably seamless.
+                         * See reader_SetOutputProps() in wm_reader.c.
+                         * In practice it's unlikely to matter, since dynamic
+                         * reconnection is usually done only at the beginning
+                         * of a stream. */
+                        wg_parser_stream_seek(pin->wg_stream, pin->seek.dRate, pin->seek.llCurrent, 0,
+                                AM_SEEKING_AbsolutePositioning, AM_SEEKING_NoPositioning);
+                    }
+                }
+                else
+                {
+                    /* This isn't supposed to happen; the downstream filter
+                     * should call QueryAccept() first. */
+                    ERR("Attempt to dynamically set an unsupported format.\n");
+                }
+
+                DeleteMediaType(mt);
+            }
+            else if (hr == S_FALSE)
+            {
+                send_sample(pin, sample, buffer, 0, buffer->size, 0);
+            }
+            else
+            {
+                ERR("Failed to get media type, hr %#lx.\n", hr);
+            }
 
             IMediaSample_Release(sample);
         }
@@ -1405,7 +1509,7 @@ static DWORD CALLBACK stream_thread(void *arg)
 
         if (wg_parser_stream_get_buffer(filter->wg_parser, pin->wg_stream, &buffer))
         {
-            send_buffer(pin, &buffer);
+            send_buffer(pin, filter, &buffer);
         }
         else
         {
@@ -1542,14 +1646,13 @@ static HRESULT parser_init_stream(struct strmbase_filter *iface)
     for (i = 0; i < filter->source_count; ++i)
     {
         struct parser_source *source = filter->sources[i];
-        struct wg_format format;
         bool ret;
 
         if (source->pin.pin.peer)
         {
-            ret = amt_to_wg_format(&source->pin.pin.mt, &format);
+            ret = amt_to_wg_format(&source->pin.pin.mt, &source->current_format);
             assert(ret);
-            wg_parser_stream_enable(source->wg_stream, &format);
+            wg_parser_stream_enable(source->wg_stream, &source->current_format);
         }
         else
         {
@@ -1781,6 +1884,8 @@ static HRESULT parser_create(BOOL output_compressed, struct parser **parser)
 
     if (!(object = calloc(1, sizeof(*object))))
         return E_OUTOFMEMORY;
+
+    object->output_compressed = output_compressed;
 
     if (!(object->wg_parser = wg_parser_create(output_compressed)))
     {
@@ -2198,7 +2303,7 @@ static HRESULT WINAPI GSTOutPin_DecideBufferSize(struct strmbase_source *iface,
     {
         MPEG1VIDEOINFO *format = (MPEG1VIDEOINFO *)pin->pin.pin.mt.pbFormat;
         buffer_size = format->hdr.bmiHeader.biSizeImage;
-        buffer_count = 8;
+        buffer_count = 30;
     }
     else if (IsEqualGUID(&pin->pin.pin.mt.formattype, &FORMAT_WaveFormatEx)
             && (IsEqualGUID(&pin->pin.pin.mt.subtype, &MEDIASUBTYPE_PCM)
@@ -2657,7 +2762,7 @@ HRESULT mpeg_splitter_create(IUnknown *outer, IUnknown **out)
     object->init_gst = mpeg_splitter_filter_init_gst;
     object->source_query_accept = mpeg_splitter_source_query_accept;
     object->source_get_media_type = mpeg_splitter_source_get_media_type;
-    object->enum_sink_first = TRUE;
+    object->enum_sink_first = true;
 
     TRACE("Created MPEG-1 splitter %p.\n", object);
     *out = &object->filter.IUnknown_inner;

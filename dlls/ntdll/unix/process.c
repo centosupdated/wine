@@ -61,7 +61,6 @@
 #endif
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "windef.h"
 #include "winternl.h"
 #include "winioctl.h"
@@ -77,6 +76,7 @@ WINE_DEFAULT_DEBUG_CHANNEL(process);
 static ULONG execute_flags = MEM_EXECUTE_OPTION_DISABLE;
 
 static UINT process_error_mode;
+ULONG process_cookie = 0xdeadbeef;
 
 static char **build_argv( const UNICODE_STRING *cmdline, int reserved )
 {
@@ -146,9 +146,9 @@ static char **build_argv( const UNICODE_STRING *cmdline, int reserved )
 
 
 /***********************************************************************
- *           get_so_file_info
+ *           get_non_pe_file_info
  */
-static BOOL get_so_file_info( int fd, struct pe_image_info *info )
+static NTSTATUS get_non_pe_file_info( int fd, struct pe_image_info *info )
 {
     union
     {
@@ -191,18 +191,18 @@ static BOOL get_so_file_info( int fd, struct pe_image_info *info )
 
     off_t pos;
 
-    if (pread( fd, &header, sizeof(header), 0 ) != sizeof(header)) return FALSE;
+    if (pread( fd, &header, sizeof(header), 0 ) != sizeof(header)) return STATUS_INVALID_IMAGE_NOT_MZ;
 
     if (!memcmp( header.elf.magic, "\177ELF", 4 ))
     {
         unsigned int type;
         unsigned short phnum;
 
-        if (header.elf.version != 1 /* EV_CURRENT */) return FALSE;
+        if (header.elf.version != 1 /* EV_CURRENT */) return STATUS_INVALID_IMAGE_NOT_MZ;
 #ifdef WORDS_BIGENDIAN
-        if (header.elf.data != 2 /* ELFDATA2MSB */) return FALSE;
+        if (header.elf.data != 2 /* ELFDATA2MSB */) return STATUS_INVALID_IMAGE_NOT_MZ;
 #else
-        if (header.elf.data != 1 /* ELFDATA2LSB */) return FALSE;
+        if (header.elf.data != 1 /* ELFDATA2LSB */) return STATUS_INVALID_IMAGE_NOT_MZ;
 #endif
         switch (header.elf.machine)
         {
@@ -211,7 +211,7 @@ static BOOL get_so_file_info( int fd, struct pe_image_info *info )
         case 62:  info->machine = IMAGE_FILE_MACHINE_AMD64; break;
         case 183: info->machine = IMAGE_FILE_MACHINE_ARM64; break;
         }
-        if (header.elf.type != 3 /* ET_DYN */) return FALSE;
+        if (header.elf.type != 3 /* ET_DYN */) return STATUS_INVALID_IMAGE_NOT_MZ;
         if (header.elf.class == 2 /* ELFCLASS64 */)
         {
             pos = header.elf64.phoff;
@@ -224,11 +224,11 @@ static BOOL get_so_file_info( int fd, struct pe_image_info *info )
         }
         while (phnum--)
         {
-            if (pread( fd, &type, sizeof(type), pos ) != sizeof(type)) return FALSE;
-            if (type == 3 /* PT_INTERP */) return FALSE;
+            if (pread( fd, &type, sizeof(type), pos ) != sizeof(type)) return STATUS_INVALID_IMAGE_NOT_MZ;
+            if (type == 3 /* PT_INTERP */) return STATUS_INVALID_IMAGE_NOT_MZ;
             pos += (header.elf.class == 2) ? 56 : 32;
         }
-        return TRUE;
+        return STATUS_SUCCESS;
     }
     else if (header.macho.magic == 0xfeedface || header.macho.magic == 0xfeedfacf)
     {
@@ -239,9 +239,20 @@ static BOOL get_so_file_info( int fd, struct pe_image_info *info )
         case 0x0000000c: info->machine = IMAGE_FILE_MACHINE_ARMNT; break;
         case 0x0100000c: info->machine = IMAGE_FILE_MACHINE_ARM64; break;
         }
-        if (header.macho.filetype == 8) return TRUE;
+        if (header.macho.filetype == 8) return STATUS_SUCCESS;
     }
-    return FALSE;
+    else if (header.mz.e_magic == IMAGE_DOS_SIGNATURE)
+    {
+        IMAGE_OS2_HEADER os2;
+
+        if (pread( fd, &os2, sizeof(os2), header.mz.e_lfanew ) != sizeof(os2))
+            return STATUS_INVALID_IMAGE_PROTECT;
+        if (os2.ne_magic != IMAGE_OS2_SIGNATURE) return STATUS_INVALID_IMAGE_PROTECT;
+        if (os2.ne_exetyp != 2) return STATUS_INVALID_IMAGE_NE_FORMAT;
+        if (os2.ne_flags & 0x8000 /* NE_FFLAGS_LIBMODULE */) return STATUS_INVALID_IMAGE_FORMAT;
+        return STATUS_INVALID_IMAGE_WIN_16;
+    }
+    return STATUS_INVALID_IMAGE_NOT_MZ;
 }
 
 
@@ -264,7 +275,7 @@ static unsigned int get_pe_file_info( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *n
     }
     if (status)
     {
-        if (is_builtin_path( attr->ObjectName, &info->machine ))
+        if (is_prefix_bootstrap && is_system_dir_path( attr->ObjectName, &info->machine ))
         {
             TRACE( "assuming %04x builtin for %s\n", info->machine, debugstr_us(attr->ObjectName));
             return STATUS_SUCCESS;
@@ -287,13 +298,13 @@ static unsigned int get_pe_file_info( OBJECT_ATTRIBUTES *attr, UNICODE_STRING *n
         NtClose( mapping );
         if (info->image_charact & IMAGE_FILE_DLL) return STATUS_INVALID_IMAGE_FORMAT;
     }
-    else if (status == STATUS_INVALID_IMAGE_NOT_MZ)
+    else if (status == STATUS_INVALID_IMAGE_NOT_MZ || status == STATUS_INVALID_IMAGE_WIN_16)
     {
         int unix_fd, needs_close;
 
         if (!server_get_unix_fd( *handle, FILE_READ_DATA, &unix_fd, &needs_close, NULL, NULL ))
         {
-            if (get_so_file_info( unix_fd, info )) status = STATUS_SUCCESS;
+            status = get_non_pe_file_info( unix_fd, info );
             if (needs_close) close( unix_fd );
         }
     }
@@ -686,7 +697,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
     ULONG startup_info_size, env_size;
     int unixdir, socketfd[2] = { -1, -1 };
     struct pe_image_info pe_info;
-    CLIENT_ID id;
+    ULONG process_id, thread_id;
     USHORT machine = 0;
     HANDLE parent = 0, debug = 0, token = 0;
     UNICODE_STRING nt_name, path = {0};
@@ -826,7 +837,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         if (!(status = wine_server_call( req )))
         {
             process_handle = wine_server_ptr_handle( reply->handle );
-            id.UniqueProcess = ULongToHandle( reply->pid );
+            process_id     = reply->pid;
         }
         process_info = wine_server_ptr_handle( reply->info );
     }
@@ -863,7 +874,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         if (!(status = wine_server_call( req )))
         {
             thread_handle = wine_server_ptr_handle( reply->handle );
-            id.UniqueThread = ULongToHandle( reply->tid );
+            thread_id     = reply->tid;
         }
     }
     SERVER_END_REQ;
@@ -896,8 +907,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
     }
 
     TRACE( "%s pid %04x tid %04x handles %p/%p\n", debugstr_us(&path),
-           HandleToULong(id.UniqueProcess), HandleToULong(id.UniqueThread),
-           process_handle, thread_handle );
+           process_id, thread_id, process_handle, thread_handle );
 
     /* update output attributes */
 
@@ -907,6 +917,7 @@ NTSTATUS WINAPI NtCreateUserProcess( HANDLE *process_handle_ptr, HANDLE *thread_
         {
         case PS_ATTRIBUTE_CLIENT_ID:
         {
+            CLIENT_ID id = make_client_id( process_id, thread_id );
             SIZE_T size = min( ps_attr->Attributes[i].Size, sizeof(id) );
             memcpy( ps_attr->Attributes[i].ValuePtr, &id, size );
             if (ps_attr->Attributes[i].ReturnLength) *ps_attr->Attributes[i].ReturnLength = size;
@@ -1495,11 +1506,10 @@ NTSTATUS WINAPI NtQueryInformationProcess( HANDLE handle, PROCESSINFOCLASS class
         break;
 
     case ProcessCookie:
-        FIXME( "ProcessCookie (%p,%p,0x%08x,%p) stub\n", handle, info, size, ret_len );
         if (handle == NtCurrentProcess())
         {
             len = sizeof(ULONG);
-            if (size == len) *(ULONG *)info = 0;
+            if (size == len) *(ULONG *)info = process_cookie;
             else ret = STATUS_INFO_LENGTH_MISMATCH;
         }
         else ret = STATUS_INVALID_PARAMETER;

@@ -131,6 +131,7 @@ enum wined3d_gl_extension
     ARB_TEXTURE_ENV_COMBINE,
     ARB_TEXTURE_ENV_DOT3,
     ARB_TEXTURE_FILTER_ANISOTROPIC,
+    ARB_TEXTURE_FILTER_MINMAX,
     ARB_TEXTURE_FLOAT,
     ARB_TEXTURE_GATHER,
     ARB_TEXTURE_MIRRORED_REPEAT,
@@ -404,6 +405,7 @@ static inline GLenum wined3d_gl_min_mip_filter(enum wined3d_texture_filter_type 
 }
 
 GLenum wined3d_gl_compare_func(enum wined3d_cmp_func f);
+GLenum wined3d_gl_filter_reduction_mode(enum wined3d_filter_reduction_mode m);
 
 const char *debug_fboattachment(GLenum attachment);
 const char *debug_fbostatus(GLenum status);
@@ -644,8 +646,6 @@ struct wined3d_context_gl
     unsigned int level;
     HGLRC restore_ctx;
     HDC restore_dc;
-    int restore_pf;
-    HWND restore_pf_win;
     HGLRC gl_ctx;
     HDC dc;
     int pixel_format;
@@ -815,6 +815,7 @@ struct wined3d_adapter_gl
 
     struct wined3d_gl_info gl_info;
 
+    /* Indexed by the WGL pixel format index minus 1. */
     struct wined3d_pixel_format *pixel_formats;
     unsigned int pixel_format_count;
 };
@@ -920,6 +921,7 @@ void wined3d_device_gl_create_primary_opengl_context_cs(void *object);
 void wined3d_device_gl_delete_opengl_contexts_cs(void *object);
 HDC wined3d_device_gl_get_backup_dc(struct wined3d_device_gl *device_gl);
 GLbitfield wined3d_device_gl_get_memory_type_flags(unsigned int memory_type_idx);
+GLenum wined3d_device_gl_get_memory_type_binding(unsigned int memory_type_idx);
 
 GLbitfield wined3d_resource_gl_map_flags(const struct wined3d_bo_gl *bo, DWORD d3d_flags);
 GLenum wined3d_resource_gl_legacy_map_flags(DWORD d3d_flags);

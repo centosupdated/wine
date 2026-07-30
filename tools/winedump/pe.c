@@ -653,6 +653,24 @@ static void dump_section_apiset(void)
     }
 }
 
+static UINT get_export_rva( const char *name )
+{
+    UINT i;
+    const UINT *funcs;
+    const UINT *names;
+    const WORD *ordinals;
+    const IMAGE_EXPORT_DIRECTORY *dir;
+
+    if (!(dir = get_dir( IMAGE_FILE_EXPORT_DIRECTORY ))) return 0;
+    if (!(funcs = RVA( dir->AddressOfFunctions, dir->NumberOfFunctions * sizeof(DWORD) ))) return 0;
+    names = RVA( dir->AddressOfNames, dir->NumberOfNames * sizeof(DWORD) );
+    ordinals = RVA( dir->AddressOfNameOrdinals, dir->NumberOfNames * sizeof(WORD) );
+    for (i = 0; i < dir->NumberOfNames; i++)
+        if (!strcmp( name, RVA( names[i], 1 )))
+            return funcs[ordinals[i]];
+    return 0;
+}
+
 static const char *find_export_from_rva( UINT rva )
 {
     UINT i, *func_names;
@@ -2116,12 +2134,19 @@ static void dump_arm64_codes( const BYTE *ptr, unsigned int count )
 static void dump_arm64_packed_info( const struct runtime_function_arm64 *func )
 {
     int i, pos = 0, intsz = func->RegI * 8, fpsz = func->RegF * 8, savesz, locsz;
+    int homing = func->H;
 
     if (func->CR == 1) intsz += 8;
     if (func->RegF) fpsz += 8;
 
     savesz = ((intsz + fpsz + 8 * 8 * func->H) + 0xf) & ~0xf;
     locsz = func->FrameSize * 16 - savesz;
+
+    if (func->H && func->RegI == 0 && func->RegF == 0 && func->CR != 1)
+    {
+        locsz += savesz;
+        homing = 0;
+    }
 
     switch (func->CR)
     {
@@ -2148,7 +2173,7 @@ static void dump_arm64_packed_info( const struct runtime_function_arm64 *func )
         break;
     }
 
-    if (func->H)
+    if (homing)
     {
         printf( "    %04x:  stp x6,x7,[sp,#%#x]\n", pos++, intsz + fpsz + 48 );
         printf( "    %04x:  stp x4,x5,[sp,#%#x]\n", pos++, intsz + fpsz + 32 );
@@ -2176,9 +2201,10 @@ static void dump_arm64_packed_info( const struct runtime_function_arm64 *func )
             printf( "    %04x:  str lr,[sp,-#%#x]!\n", pos++, savesz );
         break;
     case 1:
-        if (func->CR == 1)
-            printf( "    %04x:  stp x19,lr,[sp,-#%#x]!\n", pos++, savesz );
-        else
+        if (func->CR == 1) {
+            printf( "    %04x:  sub sp, sp, %#x\n", pos++, savesz );
+            printf( "    %04x:  stp x19,lr,[sp]\n", pos++ );
+        } else
             printf( "    %04x:  str x19,[sp,-#%#x]!\n", pos++, savesz );
         break;
     default:
@@ -2884,7 +2910,6 @@ static void print_clr( const char *str )
 static void print_clr_strings( const BYTE *data, UINT data_size )
 {
     const char *beg = (const char *)data, *end;
-    UINT count = 0;
 
     if (!data_size) return;
     clr_indent += 4;
@@ -2892,9 +2917,8 @@ static void print_clr_strings( const BYTE *data, UINT data_size )
     {
         if (!(end = memchr( beg, '\0', data_size - (beg - (const char *)data) ))) break;
         print_clr_indent();
-        printf( "%-10u\"%s\"\n", count, beg );
+        printf( "%-10u\"%s\"\n", (UINT)(beg - (const char *)data), beg );
         beg = end + 1;
-        count++;
     }
     clr_indent -= 4;
 }
@@ -5086,6 +5110,19 @@ static void dump_symbol_table(void)
     dump_coff_symbol_table(sym, numsym, IMAGE_FIRST_SECTION(PE_nt_headers));
 }
 
+static void dump_embedded_ne_module( UINT rva )
+{
+    const void *ne_module = RVA( rva, 1 );
+    void *new_base;
+
+    dump_total_len -= (char *)ne_module - (char *)dump_base;
+    new_base = xmalloc( dump_total_len );
+    memcpy( new_base, ne_module, dump_total_len );
+    free( dump_base );
+    dump_base = new_base;
+    ne_dump();
+}
+
 enum FileSig get_kind_exec(void)
 {
     const WORD*                pw;
@@ -5115,6 +5152,7 @@ enum FileSig get_kind_exec(void)
 void pe_dump(void)
 {
     int alt = 0;
+    UINT rva;
 
     PE_nt_headers = get_nt_header();
     print_fake_dll();
@@ -5171,6 +5209,13 @@ void pe_dump(void)
             dump_symbol_table();
         if (globals.do_debug)
             dump_debug();
+        if (PE_nt_headers->FileHeader.Machine == IMAGE_FILE_MACHINE_I386 &&
+            (rva = get_export_rva( "__wine_spec_dos_header" )))
+        {
+            printf( "\n*** 16-bit Wine dll, dumping embedded NE module ***\n\n" );
+            dump_embedded_ne_module( rva );
+            break;
+        }
         if (alt++) break;
         if (!get_alt_header()) break;
     }

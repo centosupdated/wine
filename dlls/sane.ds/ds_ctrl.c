@@ -186,6 +186,10 @@ TW_UINT16 SANE_ProcessEvent (pTW_IDENTITY pOrigin,
         twRC = TWRC_FAILURE;
         activeDS.twCC = TWCC_SEQERROR;
     }
+    else if (UI_IsDialogMessage(pMsg))
+    {
+        twRC = TWRC_DSEVENT;
+    }
 
     return twRC;
 }
@@ -218,8 +222,6 @@ TW_UINT16 SANE_PendingXfersEndXfer (pTW_IDENTITY pOrigin,
             pPendingXfers->Count = 0;
             activeDS.currentState = 5;
             SANE_Cancel();
-            /* Notify the application that it can close the data source */
-            SANE_Notify(MSG_CLOSEDSREQ);
         }
         else
         {
@@ -235,10 +237,9 @@ TW_UINT16 SANE_PendingXfersEndXfer (pTW_IDENTITY pOrigin,
                 pPendingXfers->Count = 0;
                 activeDS.currentState = 5;
                 SANE_Cancel();
-                /* Notify the application that it can close the data source */
-                SANE_Notify(MSG_CLOSEDSREQ);
             }
         }
+        TRACE("Count %d, currentState %d\n", pPendingXfers->Count, activeDS.currentState);
         twRC = TWRC_SUCCESS;
         activeDS.twCC = TWCC_SUCCESS;
     }
@@ -291,7 +292,6 @@ TW_UINT16 SANE_PendingXfersGet (pTW_IDENTITY pOrigin,
             pPendingXfers->Count = 0;
             activeDS.currentState = 5;
             SANE_Cancel();
-            SANE_Notify(MSG_CLOSEDSREQ);
         }
         twRC = TWRC_SUCCESS;
         activeDS.twCC = TWCC_SUCCESS;
@@ -356,7 +356,7 @@ TW_UINT16 SANE_GetDSStatus (pTW_IDENTITY pOrigin,
 {
     pTW_STATUS pSourceStatus = (pTW_STATUS) pData;
 
-    TRACE ("DG_CONTROL/DAT_STATUS/MSG_GET\n");
+    TRACE ("DG_CONTROL/DAT_STATUS/MSG_GET => %u\n", activeDS.twCC);
     pSourceStatus->ConditionCode = activeDS.twCC;
     /* Reset the condition code */
     activeDS.twCC = TWCC_SUCCESS;
@@ -371,13 +371,15 @@ TW_UINT16 SANE_DisableDSUserInterface (pTW_IDENTITY pOrigin,
 
     TRACE ("DG_CONTROL/DAT_USERINTERFACE/MSG_DISABLEDS\n");
 
-    if (activeDS.currentState != 5)
+    if (activeDS.currentState != 5 && activeDS.currentState != 6)
     {
         twRC = TWRC_FAILURE;
         activeDS.twCC = TWCC_SEQERROR;
     }
     else
     {
+        UI_Destroy();
+
         activeDS.currentState = 4;
         twRC = TWRC_SUCCESS;
         activeDS.twCC = TWCC_SUCCESS;
@@ -405,19 +407,28 @@ TW_UINT16 SANE_EnableDSUserInterface (pTW_IDENTITY pOrigin,
     {
         activeDS.hwndOwner = pUserInterface->hParent;
         activeDS.ShowUI = pUserInterface->ShowUI;
+        activeDS.ModalUI = FALSE;
         if (pUserInterface->ShowUI)
         {
-            BOOL rc;
             activeDS.currentState = 5; /* Transitions to state 5 */
-            rc = DoScannerUI();
-            pUserInterface->ModalUI = TRUE;
-            if (!rc)
+            if (!DoScannerUI())
             {
-                SANE_Notify(MSG_CLOSEDSREQ);
+                twRC = TWRC_FAILURE;
+                activeDS.twCC = TWCC_BUMMER;
             }
-            else
+
+            /* Since Twain 1.9, the ModalUI value set by the application has a meaning,
+             * before that, that struct member was only used for DS -> App. */
+            activeDS.ModalUI = pUserInterface->ModalUI
+              && activeDS.hwndOwner
+              && (pOrigin->ProtocolMajor * 100 + pOrigin->ProtocolMinor)>=109
+              && IsWindowEnabled(activeDS.hwndOwner);
+
+            pUserInterface->ModalUI = activeDS.ModalUI;
+
+            if (activeDS.ModalUI)
             {
-                get_sane_params( &activeDS.frame_params );
+                EnableWindow(activeDS.hwndOwner, FALSE);
             }
         }
         else

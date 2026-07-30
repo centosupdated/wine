@@ -85,6 +85,12 @@ static TW_UINT16 SANE_OpenDS( pTW_IDENTITY pOrigin, pTW_IDENTITY self)
         activeDS.capIndicators = TRUE;
         activeDS.ShowUI = FALSE;
 
+        /* Sane does not support a concept of 'default' resolution, so we have to
+         *   cache the resolution the very first time we load the scanner, and use that
+         *   as the default */
+        sane_option_get_resolution("x-resolution", &activeDS.defaultXResolution);
+        sane_option_get_resolution("y-resolution", &activeDS.defaultYResolution);
+
         SANE_LoadOptions();
 
         return TWRC_SUCCESS;
@@ -94,6 +100,21 @@ static TW_UINT16 SANE_OpenDS( pTW_IDENTITY pOrigin, pTW_IDENTITY self)
 }
 
 static TW_UINT16 SANE_SetEntryPoint (pTW_IDENTITY pOrigin, TW_MEMREF pData);
+
+
+/** @brief Close the data source.
+ *  Closes all associated windows and frees memory.
+ */
+static void SANE_CloseDS(void)
+{
+    if(activeDS.progressWnd)
+    {
+        ScanningDialogBox(activeDS.progressWnd, -1);
+    }
+    SANE_CALL( close_ds, NULL );
+    UI_Destroy();
+}
+
 
 static TW_UINT16 SANE_SourceControlHandler (
            pTW_IDENTITY pOrigin,
@@ -109,7 +130,7 @@ static TW_UINT16 SANE_SourceControlHandler (
 	    switch (MSG)
 	    {
 		case MSG_CLOSEDS:
-                    SANE_CALL( close_ds, NULL );
+                    SANE_CloseDS();
                     break;
 		case MSG_OPENDS:
 		     twRC = SANE_OpenDS( pOrigin, (pTW_IDENTITY)pData);
@@ -366,6 +387,7 @@ DS_Entry ( pTW_IDENTITY pOrigin,
 
 void SANE_Notify (TW_UINT16 message)
 {
+    TRACE("%04x\n", message);
     SANE_dsmentry (&activeDS.identity, &activeDS.appIdentity, DG_CONTROL, DAT_NULL, message, NULL);
 }
 
@@ -393,6 +415,9 @@ SANE_XferReady(void)
       sane_option_get_str ("source", current_source, sizeof(current_source)) == TWCC_SUCCESS &&
       (current_source[0]=='A' || current_source[0]=='a');
     activeDS.userCancelled = FALSE;
+
+    sane_option_get_resolution("x-resolution", &activeDS.XResolution);
+    sane_option_get_resolution("y-resolution", &activeDS.YResolution);
 
     SANE_Notify(MSG_XFERREADY);
 }

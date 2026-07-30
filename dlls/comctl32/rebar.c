@@ -465,7 +465,7 @@ static int round_child_height(const REBAR_BAND *lpBand, int cyHeight)
 {
     int cy = 0;
     if (lpBand->cyIntegral == 0)
-        return cyHeight;
+        return min(cyHeight, lpBand->cyMaxChild);
     cy = max(cyHeight - (int)lpBand->cyMinChild, 0);
     cy = lpBand->cyMinChild + (cy/lpBand->cyIntegral) * lpBand->cyIntegral;
     cy = min(cy, lpBand->cyMaxChild);
@@ -3782,11 +3782,4 @@ REBAR_Register (void)
     mindragx = GetSystemMetrics (SM_CXDRAG);
     mindragy = GetSystemMetrics (SM_CYDRAG);
 
-}
-
-
-VOID
-REBAR_Unregister (void)
-{
-    UnregisterClassW (REBARCLASSNAMEW, NULL);
 }

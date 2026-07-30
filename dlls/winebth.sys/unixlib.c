@@ -23,7 +23,7 @@
 #pragma makedep unix
 #endif
 
-#include <config.h>
+#include "config.h"
 
 #include <stdlib.h>
 #include <stdarg.h>
@@ -31,7 +31,6 @@
 #include <pthread.h>
 
 #include <ntstatus.h>
-#define WIN32_NO_STATUS
 #include <winternl.h>
 #include <winbase.h>
 #include <windef.h>
@@ -177,6 +176,13 @@ static NTSTATUS bluetooth_adapter_free( void *args )
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS bluetooth_adapter_dup( void *args )
+{
+    struct bluetooth_adapter_dup_params *params = args;
+    unix_name_dup( params->adapter );
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS bluetooth_adapter_set_prop( void *arg )
 {
     struct bluetooth_adapter_set_prop_params *params = arg;
@@ -189,6 +195,13 @@ static NTSTATUS bluetooth_device_free( void *args )
 {
     struct bluetooth_device_free_params *params = args;
     unix_name_free( params->device );
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS bluetooth_device_dup( void *args )
+{
+    struct bluetooth_device_dup_params *params = args;
+    unix_name_dup( params->device );
     return STATUS_SUCCESS;
 }
 
@@ -262,6 +275,28 @@ static NTSTATUS bluetooth_gatt_characteristic_free( void *args )
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS bluetooth_gatt_characteristic_read( void *args )
+{
+    struct bluetooth_gatt_characteristic_read_params *params = args;
+    if (!dbus_connection) return STATUS_NOT_SUPPORTED;
+    return bluez_gatt_characteristic_read( dbus_connection, bluetooth_watcher, params->chrc, params->irp );
+}
+
+static NTSTATUS bluetooth_gatt_characteristic_value_move( void *args )
+{
+    struct bluetooth_gatt_characteristic_value_move_params *params = args;
+    if (!dbus_connection) return STATUS_NOT_SUPPORTED;
+    bluez_gatt_characteristic_value_move( params->val, params->buf );
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS bluetooth_gatt_characteristic_value_free( void *args )
+{
+    struct bluetooth_gatt_characteristic_value_free_params *params = args;
+    if (!dbus_connection) return STATUS_NOT_SUPPORTED;
+    bluez_gatt_characteristic_value_free( (void *)params->handle );
+    return STATUS_SUCCESS;
+}
 
 static NTSTATUS bluetooth_get_event( void *args )
 {
@@ -282,8 +317,10 @@ const unixlib_entry_t __wine_unix_call_funcs[] = {
     bluetooth_adapter_stop_discovery,
     bluetooth_adapter_remove_device,
     bluetooth_adapter_free,
+    bluetooth_adapter_dup,
 
     bluetooth_device_free,
+    bluetooth_device_dup,
     bluetooth_device_disconnect,
     bluetooth_device_start_pairing,
 
@@ -293,6 +330,10 @@ const unixlib_entry_t __wine_unix_call_funcs[] = {
     bluetooth_gatt_service_free,
 
     bluetooth_gatt_characteristic_free,
+    bluetooth_gatt_characteristic_read,
+
+    bluetooth_gatt_characteristic_value_move,
+    bluetooth_gatt_characteristic_value_free,
 
     bluetooth_get_event,
 };

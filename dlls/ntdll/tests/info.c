@@ -25,6 +25,7 @@
 #define WIN32_NO_STATUS
 #include "windef.h"
 #include "winbase.h"
+#include "winreg.h"
 #include "winternl.h"
 #include "winnls.h"
 #include "ddk/ntddk.h"
@@ -57,6 +58,7 @@ static NTSTATUS (WINAPI * pDbgUiConvertStateChangeStructure)(DBGUI_WAIT_STATE_CH
 static HANDLE   (WINAPI * pDbgUiGetThreadDebugObject)(void);
 static void     (WINAPI * pDbgUiSetThreadDebugObject)(HANDLE);
 static NTSTATUS (WINAPI * pNtSystemDebugControl)(SYSDBG_COMMAND,PVOID,ULONG,PVOID,ULONG,PULONG);
+static BOOLEAN  (WINAPI * pRtlIsProcessorFeaturePresent)(UINT);
 
 static BOOL is_wow64;
 static BOOL old_wow64;
@@ -114,6 +116,7 @@ static void InitFunctionPtrs(void)
     NTDLL_GET_PROC(DbgUiGetThreadDebugObject);
     NTDLL_GET_PROC(DbgUiSetThreadDebugObject);
     NTDLL_GET_PROC(NtSystemDebugControl);
+    NTDLL_GET_PROC(RtlIsProcessorFeaturePresent);
 
     if (!IsWow64Process( GetCurrentProcess(), &is_wow64 )) is_wow64 = FALSE;
 
@@ -424,9 +427,9 @@ static void test_query_cpu(void)
         ok( len == sizeof(bits), "wrong len %lu\n", len );
 
         for (int i = 0; i < len * 8; i++)
-            ok( !!(bits[i / 64] & (1ull << (i % 64))) == RtlIsProcessorFeaturePresent( i + PROCESSOR_FEATURE_MAX ),
+            ok( !!(bits[i / 64] & (1ull << (i % 64))) == pRtlIsProcessorFeaturePresent( i + PROCESSOR_FEATURE_MAX ),
                 "wrong feature %u: should be %u\n", i + PROCESSOR_FEATURE_MAX,
-                RtlIsProcessorFeaturePresent( i + PROCESSOR_FEATURE_MAX ) );
+                pRtlIsProcessorFeaturePresent( i + PROCESSOR_FEATURE_MAX ) );
 
         status = pNtQuerySystemInformation( SystemProcessorFeaturesBitMapInformation,
                                             bits, sizeof(bits) - 1, &len );
@@ -665,10 +668,6 @@ static void test_query_process( BOOL extended )
 
             if (extended)
             {
-                todo_wine ok( !!ti->StackBase, "Got NULL StackBase.\n" );
-                todo_wine ok( !!ti->StackLimit, "Got NULL StackLimit.\n" );
-                ok( !!ti->Win32StartAddress, "Got NULL Win32StartAddress.\n" );
-
                 cid.UniqueProcess = 0;
                 cid.UniqueThread = ti->ThreadInfo.ClientId.UniqueThread;
 
@@ -779,6 +778,8 @@ static void test_query_procperf(void)
     ok (sppi->KernelTime.QuadPart != 0xdeaddead, "KernelTime unchanged\n");
     ok (sppi->UserTime.QuadPart != 0xdeaddead, "UserTime unchanged\n");
     ok (sppi->IdleTime.QuadPart != 0xdeaddead, "IdleTime unchanged\n");
+    ok (sppi->KernelTime.QuadPart > sppi->IdleTime.QuadPart,
+        "Expected %I64u > %I64u\n", sppi->KernelTime.QuadPart, sppi->IdleTime.QuadPart);
 
     /* Try it for all processors */
     sppi->KernelTime.QuadPart = 0xdeaddead;
@@ -790,6 +791,8 @@ static void test_query_procperf(void)
     ok (sppi->KernelTime.QuadPart != 0xdeaddead, "KernelTime unchanged\n");
     ok (sppi->UserTime.QuadPart != 0xdeaddead, "UserTime unchanged\n");
     ok (sppi->IdleTime.QuadPart != 0xdeaddead, "IdleTime unchanged\n");
+    ok (sppi->KernelTime.QuadPart > sppi->IdleTime.QuadPart,
+        "Expected %I64u > %I64u\n", sppi->KernelTime.QuadPart, sppi->IdleTime.QuadPart);
 
     /* A too large given buffer size */
     sppi = HeapReAlloc(GetProcessHeap(), 0, sppi , NeededLength + 2);
@@ -839,7 +842,7 @@ static void test_query_module(void)
         RTL_PROCESS_MODULE_INFORMATION *module = &info->Modules[i];
 
         ok(module->LoadOrderIndex == i, "%lu: got index %u\n", i, module->LoadOrderIndex);
-        ok(module->ImageBaseAddress || is_wow64, "%lu: got NULL address for %s\n", i, module->Name);
+        /* module->ImageBaseAddress is not set on wow64 or arm64 */
         ok(module->ImageSize, "%lu: got 0 size\n", i);
         ok(module->LoadCount, "%lu: got 0 load count\n", i);
     }
@@ -865,7 +868,7 @@ static void test_query_module(void)
         const RTL_PROCESS_MODULE_INFORMATION *module = &infoex->BaseInfo;
 
         ok(module->LoadOrderIndex == i, "%lu: got index %u\n", i, module->LoadOrderIndex);
-        ok(module->ImageBaseAddress || is_wow64, "%lu: got NULL address for %s\n", i, module->Name);
+        /* module->ImageBaseAddress is not set on wow64 or arm64 */
         ok(module->ImageSize, "%lu: got 0 size\n", i);
         ok(module->LoadCount, "%lu: got 0 load count\n", i);
 
@@ -2874,12 +2877,9 @@ static void test_readvirtualmemory(void)
     ok( strcmp(teststring, buffer) == 0, "Expected read memory to be the same as original memory\n");
 
     /* illegal remote address */
-    todo_wine{
     status = pNtReadVirtualMemory(process, (void *) 0x1234, buffer, 12, &readcount);
     ok( status == STATUS_PARTIAL_COPY, "Expected STATUS_PARTIAL_COPY, got %08lx\n", status);
-    if (status == STATUS_PARTIAL_COPY)
-        ok( readcount == 0, "Expected to read 0 bytes, got %Id\n",readcount);
-    }
+    ok( readcount == 0, "Expected to read 0 bytes, got %Id\n",readcount);
 
     /* 0 handle */
     status = pNtReadVirtualMemory(0, teststring, buffer, 12, &readcount);
@@ -4379,6 +4379,117 @@ static void test_processor_idle_cycle_time(void)
     ok( size == cpu_count * sizeof(*buffer), "got %#lx.\n", size );
 }
 
+static ULONG get_process_parameters_flags( HANDLE process )
+{
+    RTL_USER_PROCESS_PARAMETERS *params;
+    PROCESS_BASIC_INFORMATION pbi;
+    ULONG flags = 0xdeadbeef;
+    NTSTATUS status;
+    SIZE_T len;
+    BOOL ret;
+
+    status = pNtQueryInformationProcess( process, ProcessBasicInformation, &pbi, sizeof(pbi), NULL );
+    ok( !status, "got %#lx.\n", status );
+    ret = ReadProcessMemory( process, (char *)pbi.PebBaseAddress + offsetof(PEB, ProcessParameters), &params, sizeof(params), &len );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    ret = ReadProcessMemory( process, &params->Flags, &flags, sizeof(flags), &len );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    return flags;
+}
+
+static void test_debuggee_process_parameters_flags(int argc, char **argv)
+{
+    PEB *peb = NtCurrentTeb()->Peb;
+
+    ok( peb->ProcessParameters->Flags & PROCESS_PARAMS_IMAGE_KEY_MISSING, "got %#lx.\n", peb->ProcessParameters->Flags );
+    while (!IsDebuggerPresent())
+        Sleep( 10 );
+    ok( peb->ProcessParameters->Flags & PROCESS_PARAMS_IMAGE_KEY_MISSING, "got %#lx.\n", peb->ProcessParameters->Flags );
+}
+
+static void test_process_parameters_flags( int argc, char **argv )
+{
+    SECURITY_ATTRIBUTES sa = { .nLength = sizeof(sa), .bInheritHandle = TRUE };
+    PEB *peb = NtCurrentTeb()->Peb;
+    STARTUPINFOA si = { 0 };
+    char cmdline[MAX_PATH];
+    PROCESS_INFORMATION pi;
+    char keyname[MAX_PATH];
+    const char *basename;
+    ULONG flags;
+    DWORD err;
+    HKEY hkey;
+    BOOL ret;
+
+    if ((basename = strrchr( argv[0], '\\' ))) basename++;
+    else basename = argv[0];
+
+    sprintf( keyname, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\%s", basename );
+    if (!strcmp( keyname + strlen(keyname) - 3, ".so" )) keyname[strlen(keyname) - 3] = 0;
+    ok( peb->ProcessParameters->Flags & PROCESS_PARAMS_IMAGE_KEY_MISSING, "got %#lx.\n", peb->ProcessParameters->Flags );
+    sprintf( cmdline, "%s %s %s", argv[0], argv[1], "check_pp_flags" );
+
+    si.cb = sizeof(si);
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, DEBUG_PROCESS | CREATE_SUSPENDED, NULL, NULL, &si, &pi );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    flags = get_process_parameters_flags( pi.hProcess );
+    ok( !(flags & PROCESS_PARAMS_IMAGE_KEY_MISSING), "got %#lx.\n", peb->ProcessParameters->Flags );
+    TerminateProcess( pi.hProcess, 0 );
+    CloseHandle( pi.hThread );
+    CloseHandle( pi.hProcess );
+
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    flags = get_process_parameters_flags( pi.hProcess );
+    ok( flags & PROCESS_PARAMS_IMAGE_KEY_MISSING, "got %#lx.\n", peb->ProcessParameters->Flags );
+    TerminateProcess( pi.hProcess, 0 );
+    CloseHandle( pi.hThread );
+    CloseHandle( pi.hProcess );
+
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    flags = get_process_parameters_flags( pi.hProcess );
+    ok( flags & PROCESS_PARAMS_IMAGE_KEY_MISSING, "got %#lx.\n", peb->ProcessParameters->Flags );
+    ResumeThread( pi.hThread );
+    ret = DebugActiveProcess( pi.dwProcessId );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    flags = get_process_parameters_flags( pi.hProcess );
+    ok( flags & PROCESS_PARAMS_IMAGE_KEY_MISSING, "got %#lx.\n", peb->ProcessParameters->Flags );
+    for (;;)
+    {
+        DEBUG_EVENT ev;
+
+        ret = WaitForDebugEvent( &ev, INFINITE );
+        ok( ret, "got error %ld.\n", GetLastError() );
+        if (!ret) break;
+        if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT && ev.dwProcessId == pi.dwProcessId) break;
+        ret = ContinueDebugEvent( ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE );
+        ok( ret, "got error %ld.\n", GetLastError() );
+        if (!ret) break;
+    }
+    DebugActiveProcessStop( pi.dwProcessId );
+    wait_child_process( &pi );
+
+    err = RegCreateKeyA( HKEY_LOCAL_MACHINE, keyname, &hkey );
+    if (err == ERROR_ACCESS_DENIED)
+    {
+        skip( "Not authorized to change the image file execution options.\n" );
+        return;
+    }
+    ok( !err, "got %#lx.\n", err );
+
+    ret = CreateProcessA( NULL, cmdline, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &si, &pi );
+    ok( ret, "got error %ld.\n", GetLastError() );
+    flags = get_process_parameters_flags( pi.hProcess );
+    ok( !(flags & PROCESS_PARAMS_IMAGE_KEY_MISSING), "got %#lx.\n", peb->ProcessParameters->Flags );
+    TerminateProcess( pi.hProcess, 0 );
+    CloseHandle( pi.hThread );
+    CloseHandle( pi.hProcess );
+
+    RegCloseKey( hkey );
+    RegDeleteKeyA( HKEY_LOCAL_MACHINE, keyname );
+}
+
 START_TEST(info)
 {
     char **argv;
@@ -4390,6 +4501,7 @@ START_TEST(info)
     if (argc >= 3)
     {
         if (strcmp(argv[2], "debuggee:dbgport") == 0) test_debuggee_dbgport(argc - 2, argv + 2);
+        else if (!strcmp(argv[2], "check_pp_flags"))  test_debuggee_process_parameters_flags(argc - 2, argv + 2);
         return; /* Child */
     }
 
@@ -4460,4 +4572,5 @@ START_TEST(info)
     test_process_token(argc, argv);
     test_process_id();
     test_processor_idle_cycle_time();
+    test_process_parameters_flags(argc, argv);
 }

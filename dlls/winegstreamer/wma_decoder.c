@@ -552,7 +552,7 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
         return MF_E_TRANSFORM_NEED_MORE_INPUT;
     }
 
-    if (SUCCEEDED(hr = wg_transform_read_mf(decoder->wg_transform, samples->pSample, &samples->dwStatus, NULL)))
+    if (SUCCEEDED(hr = wg_transform_read_mf(decoder->wg_transform, samples->pSample, 0, &samples->dwStatus, NULL)))
         wg_sample_queue_flush(decoder->wg_sample_queue, false);
 
     return hr;
@@ -798,8 +798,14 @@ static HRESULT WINAPI media_object_SetOutputType(IMediaObject *iface, DWORD inde
     if (IsEqualGUID(&decoder->input_type.majortype, &GUID_NULL))
         return DMO_E_TYPE_NOT_SET;
 
-    if (FAILED(hr = wg_transform_create_quartz(&decoder->input_type, &decoder->output_type,
-            &attrs, &new_transform)))
+    if (!IsEqualGUID(&type->formattype, &FORMAT_WaveFormatEx))
+        return DMO_E_TYPE_NOT_ACCEPTED;
+
+    if (((WAVEFORMATEX *)decoder->input_type.pbFormat)->nChannels !=
+            ((WAVEFORMATEX *)type->pbFormat)->nChannels)
+        return DMO_E_TYPE_NOT_ACCEPTED;
+
+    if (FAILED(hr = wg_transform_create_quartz(&decoder->input_type, type, &attrs, &new_transform)))
         return hr;
 
     if (flags & DMO_SET_TYPEF_TEST_ONLY)
@@ -968,7 +974,10 @@ static HRESULT WINAPI media_object_ProcessOutput(IMediaObject *iface, DWORD flag
         wg_sample_queue_flush(decoder->wg_sample_queue, false);
     }
     else if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+    {
+        buffers[0].dwStatus = 0;
         hr = S_FALSE;
+    }
 
 
     return hr;

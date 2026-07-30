@@ -28,7 +28,6 @@
 #include <sys/types.h>
 
 #include "ntstatus.h"
-#define WIN32_NO_STATUS
 #include "winternl.h"
 #include "ddk/wdm.h"
 
@@ -65,27 +64,11 @@ static void symlink_destroy( struct object *obj );
 
 static const struct object_ops symlink_ops =
 {
-    sizeof(struct symlink),       /* size */
-    &symlink_type,                /* type */
-    symlink_dump,                 /* dump */
-    no_add_queue,                 /* add_queue */
-    NULL,                         /* remove_queue */
-    NULL,                         /* signaled */
-    NULL,                         /* satisfied */
-    no_signal,                    /* signal */
-    no_get_fd,                    /* get_fd */
-    default_get_sync,             /* get_sync */
-    default_map_access,           /* map_access */
-    default_get_sd,               /* get_sd */
-    default_set_sd,               /* set_sd */
-    default_get_full_name,        /* get_full_name */
-    symlink_lookup_name,          /* lookup_name */
-    directory_link_name,          /* link_name */
-    default_unlink_name,          /* unlink_name */
-    no_open_file,                 /* open_file */
-    no_kernel_obj_list,           /* get_kernel_obj_list */
-    no_close_handle,              /* close_handle */
-    symlink_destroy               /* destroy */
+    .size        = sizeof(struct symlink),
+    .type        = &symlink_type,
+    .dump        = symlink_dump,
+    .lookup_name = symlink_lookup_name,
+    .destroy     = symlink_destroy,
 };
 
 static void symlink_dump( struct object *obj, int verbose )
@@ -115,7 +98,7 @@ static struct object *symlink_lookup_name( struct object *obj, struct unicode_st
 
     target_str.str = symlink->target;
     target_str.len = symlink->len;
-    if ((target = lookup_named_object( NULL, &target_str, attr, &name_left )))
+    if ((target = lookup_named_object( NULL, target_str, attr, &name_left )))
     {
         if (name_left.len)
         {
@@ -134,33 +117,38 @@ static void symlink_destroy( struct object *obj )
     free( symlink->target );
 }
 
-struct object *create_root_symlink( struct object *root, const struct unicode_str *name,
+struct object *create_root_symlink( struct object *root, struct unicode_str name,
                                     unsigned int attr, const struct security_descriptor *sd )
 {
     struct symlink *symlink;
+    struct object_params params = { .ops = &symlink_ops, .root = root,
+                                    .name = name, .attr = attr, .sd = sd };
 
-    if (!(symlink = create_named_object( root, &symlink_ops, name, attr, sd ))) return NULL;
+    if (!(symlink = create_named_object( &params ))) return NULL;
     symlink->target = NULL;
     symlink->len = 0;
     return &symlink->obj;
 }
 
-struct object *create_symlink( struct object *root, const struct unicode_str *name,
-                               unsigned int attr, const struct unicode_str *target,
+struct object *create_symlink( struct object *root, struct unicode_str name,
+                               unsigned int attr, struct unicode_str target,
                                const struct security_descriptor *sd )
 {
     struct symlink *symlink;
+    struct object_params params = { .ops = &symlink_ops, .root = root, .name = name,
+                                    .attr = attr, .sd = sd };
 
-    if (!target->len)
+    if (!target.len)
     {
         set_error( STATUS_INVALID_PARAMETER );
         return NULL;
     }
-    if (!(symlink = create_named_object( root, &symlink_ops, name, attr | OBJ_OPENLINK, sd ))) return NULL;
+    params.attr |= OBJ_OPENLINK;
+    if (!(symlink = create_named_object( &params ))) return NULL;
     if (get_error() != STATUS_OBJECT_NAME_EXISTS)
     {
-        symlink->len = target->len;
-        if (!(symlink->target = memdup( target->str, target->len )))
+        symlink->len = target.len;
+        if (!(symlink->target = memdup( target.str, target.len )))
         {
             release_object( symlink );
             return NULL;
@@ -170,20 +158,25 @@ struct object *create_symlink( struct object *root, const struct unicode_str *na
 }
 
 /* create a symlink pointing to an existing object */
-struct object *create_obj_symlink( struct object *root, const struct unicode_str *name,
+struct object *create_obj_symlink( struct object *root, struct unicode_str name,
                                     unsigned int attr, struct object *target,
                                     const struct security_descriptor *sd )
 {
     struct symlink *symlink;
     data_size_t len;
     WCHAR *target_name;
+    struct object_params params = { .ops = &symlink_ops, .root = root, .name = name,
+                                    .attr = attr, .sd = sd };
 
-    if (!(target_name = target->ops->get_full_name( target, ~0u, &len )))
+    if (target->ops->get_full_name) target_name = target->ops->get_full_name( target, ~0u, &len );
+    else target_name = default_get_full_name( target, ~0u, &len );
+
+    if (!target_name)
     {
         set_error( STATUS_INVALID_PARAMETER );
         return NULL;
     }
-    if ((symlink = create_named_object( root, &symlink_ops, name, attr, sd )) &&
+    if ((symlink = create_named_object( &params )) &&
         (get_error() != STATUS_OBJECT_NAME_EXISTS))
     {
         symlink->target = target_name;
@@ -199,39 +192,35 @@ struct object *create_obj_symlink( struct object *root, const struct unicode_str
 DECL_HANDLER(create_symlink)
 {
     struct object *symlink;
-    struct unicode_str name, target;
-    struct object *root;
-    const struct security_descriptor *sd;
-    const struct object_attributes *objattr = get_req_object_attributes( &sd, &name, &root );
+    struct unicode_str target;
+    struct object_params params;
 
-    if (!objattr) return;
+    if (!get_req_object_attributes( &params )) return;
 
-    target.str = get_req_data_after_objattr( objattr, &target.len );
+    target.str = get_req_data_after_objattr( &params, &target.len );
     target.len = (target.len / sizeof(WCHAR)) * sizeof(WCHAR);
 
-    if ((symlink = create_symlink( root, &name, objattr->attributes, &target, sd )))
+    if ((symlink = create_symlink( params.root, params.name, params.attr, target, params.sd )))
     {
         if (get_error() == STATUS_OBJECT_NAME_EXISTS)
         {
             clear_error();
-            reply->handle = alloc_handle( current->process, symlink, req->access, objattr->attributes );
+            reply->handle = alloc_handle( current->process, symlink, req->access, params.attr );
         }
         else
             reply->handle = alloc_handle_no_access_check( current->process, symlink,
-                                                          req->access, objattr->attributes );
+                                                          req->access, params.attr );
         release_object( symlink );
     }
 
-    if (root) release_object( root );
+    if (params.root) release_object( params.root );
 }
 
 /* open a symbolic link object */
 DECL_HANDLER(open_symlink)
 {
-    struct unicode_str name = get_req_unicode_str();
-
     reply->handle = open_object( current->process, req->rootdir, req->access,
-                                 &symlink_ops, &name, req->attributes | OBJ_OPENLINK );
+                                 &symlink_ops, get_req_unicode_str(), req->attributes | OBJ_OPENLINK );
 }
 
 /* query a symbolic link object */
