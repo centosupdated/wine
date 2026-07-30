@@ -766,7 +766,9 @@ int WINAPI WSAStartup( WORD version, WSADATA *data )
 
     if (!data) return WSAEFAULT;
 
+    EnterCriticalSection(&cs_socket_list);
     num_startup++;
+    LeaveCriticalSection(&cs_socket_list);
     TRACE( "increasing startup count to %d\n", num_startup );
     return 0;
 }
@@ -778,6 +780,8 @@ int WINAPI WSAStartup( WORD version, WSADATA *data )
 INT WINAPI WSACleanup(void)
 {
     TRACE("decreasing startup count from %d\n", num_startup);
+
+    EnterCriticalSection(&cs_socket_list);
     if (num_startup)
     {
         if (!--num_startup)
@@ -788,8 +792,10 @@ INT WINAPI WSACleanup(void)
                 CloseHandle(SOCKET2HANDLE(socket_list[i]));
             memset(socket_list, 0, socket_list_size * sizeof(*socket_list));
         }
+        LeaveCriticalSection(&cs_socket_list);
         return 0;
     }
+    LeaveCriticalSection(&cs_socket_list);
     SetLastError(WSANOTINITIALISED);
     return SOCKET_ERROR;
 }
