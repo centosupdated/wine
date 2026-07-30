@@ -665,7 +665,7 @@ static void destroy_hash(OBJECTHDR *pObject)
     free_data_blob(&pCryptHash->tpPRFParams.blobSeed);
     if (pCryptHash->aiAlgid == CALG_MAC)
         free_key_impl(pCryptHash->key_alg_id, &pCryptHash->key_context);
-    free(pCryptHash);
+    _aligned_free(pCryptHash);
 }
 
 /******************************************************************************
@@ -857,7 +857,7 @@ static void destroy_key(OBJECTHDR *pObject)
     free_data_blob(&pCryptKey->siSChannelInfo.blobClientRandom);
     free_data_blob(&pCryptKey->siSChannelInfo.blobServerRandom);
     free_data_blob(&pCryptKey->blobHmacKey);
-    free(pCryptKey);
+    _aligned_free(pCryptKey);
 }
 
 /******************************************************************************
@@ -1371,7 +1371,7 @@ static void destroy_key_container(OBJECTHDR *pObjectHdr)
     }
     else
         release_key_container_keys(pKeyContainer);
-    free( pKeyContainer );
+    _aligned_free( pKeyContainer );
 }
 
 /******************************************************************************
