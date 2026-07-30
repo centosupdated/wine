@@ -760,11 +760,9 @@ static DWORD test_one_pseudo_variable(const WCHAR *pseudo, WCHAR *value, UINT va
     value_string.MaximumLength = value_len * sizeof(WCHAR);
 
     status = RtlQueryEnvironmentVariable_U(small_env, &var_string, &value_string);
-    todo_wine
     ok(!status, "Should have found %ls env var in small_env (%#lx)\n", pseudo, status);
 
     status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value_string);
-    todo_wine
     ok(!status && value_string.Length >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
     ok(value_string.Length == wcslen(value_string.Buffer) * sizeof(WCHAR),
        "Expecting length of %u but got %u\n",
@@ -775,7 +773,6 @@ static DWORD test_one_pseudo_variable(const WCHAR *pseudo, WCHAR *value, UINT va
         SIZE_T ret_len;
         status = pRtlQueryEnvironmentVariable(NULL, (WCHAR *)pseudo, wcslen(pseudo),
                                               value, value_len / sizeof(WCHAR), &ret_len);
-        todo_wine
         ok(!status && ret_len >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
     }
     ret = check_pseudo_in_env_strings(pseudo, NULL);
@@ -789,7 +786,6 @@ static DWORD test_one_pseudo_variable(const WCHAR *pseudo, WCHAR *value, UINT va
 
     status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value2_string);
     ok(!status && value2_string.Length >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
-    todo_wine
     ok(!wcscmp(value2_string.Buffer, value_string.Buffer),
        "Expecting %ls but got %ls for env variable %ls\n",
        value_string.Buffer, value2_string.Buffer, pseudo);
@@ -801,9 +797,7 @@ static DWORD test_one_pseudo_variable(const WCHAR *pseudo, WCHAR *value, UINT va
     ok(!status, "Should be able to remove value for set %ls\n", pseudo);
 
     status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value2_string);
-    todo_wine
     ok(!status && value2_string.Length >= sizeof(WCHAR), "Couldn't find %ls env var\n", pseudo);
-    todo_wine
     ok(!wcscmp(value, value2_string.Buffer), "Should get back pseudo value for %ls\n", pseudo);
 
     ret = check_pseudo_in_env_strings(pseudo, NULL);
@@ -814,10 +808,8 @@ static DWORD test_one_pseudo_variable(const WCHAR *pseudo, WCHAR *value, UINT va
     memset(value2_buffer, 0xa5, sizeof(value2_buffer));
 
     status = RtlQueryEnvironmentVariable_U(NULL, &var_string, &value2_string);
-    todo_wine
     ok(status == STATUS_BUFFER_TOO_SMALL && value2_string.Length >= sizeof(WCHAR),
        "Couldn't find %ls env var\n", pseudo);
-    todo_wine
     ok(!value2_string.Buffer[0], "Expecting empty buffer for env variable %ls\n", pseudo);
     ok(value2_string.Length == value_string.Length, "Expecting length of %u but got %u\n",
        value_string.Length, value2_string.Length);
@@ -835,19 +827,15 @@ static void test_pseudo_env_variables(void)
     size2 = GetModuleFileNameW(NULL, value2, ARRAY_SIZE(value2));
     ok(size2 && size2 + 1 < ARRAY_SIZE(value2), "couldn't get app module filename\n");
     ok(size + 1 < size2, "Mismatch in sizes (%lu / %lu)\n", size, size2);
-    todo_wine
     ok(size && !memcmp(value, value2, size * sizeof(WCHAR)) && value[size - 1] == L'\\',
        "__APPDIR__: got %ls while expecting %ls\\\n", value, value2);
-    todo_wine
     ok(!wcschr(&value2[size], L'/') && !wcschr(&value2[size], L'\\'),
        "expecting %ls not to include directories\n", &value2[size]);
 
     size = test_one_pseudo_variable(L"__CD__", value, ARRAY_SIZE(value));
     size2 = GetCurrentDirectoryW(ARRAY_SIZE(value2), value2);
     ok(size2 && size2 + 1 < ARRAY_SIZE(value2), "couldn't get current directory\n");
-    todo_wine
     ok(size2 + 1 == size, "Mismatch in sizes (%lu / %lu)\n", size, size2);
-    todo_wine
     ok(!memcmp(value, value2, size2 * sizeof(WCHAR)) && value[size2] == L'\\',
        "__CD__: got %ls while expecting %ls\\\n", value, value2);
     /* FIXME could check changing directories
