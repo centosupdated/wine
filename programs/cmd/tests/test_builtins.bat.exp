@@ -93,11 +93,11 @@ SUCCESS 0
 a@space@
 --- success/failure for MOVE command
 FAILURE 1
-@todo_wine@SUCCESS 0
+SUCCESS 0
 ok
-@todo_wine@SUCCESS 0
+SUCCESS 0
 ok
-@todo_wine@SUCCESS 0
+SUCCESS 0
 ok
 SUCCESS 0
 FAILURE 1
