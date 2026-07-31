@@ -1579,6 +1579,7 @@ static void test_D3DKMTQueryAdapterInfo(void)
     {
         {KMTQAITYPE_CHECKDRIVERUPDATESTATUS, sizeof(BOOL)},
         {KMTQAITYPE_DRIVERVERSION, sizeof(D3DKMT_DRIVERVERSION)},
+        {KMTQAITYPE_ADAPTERTYPE, sizeof(D3DKMT_ADAPTERTYPE)},
     };
 
     ret = get_primary_adapter_name( open_adapter_desc.DeviceName );
@@ -1629,6 +1630,15 @@ static void test_D3DKMTQueryAdapterInfo(void)
             D3DKMT_DRIVERVERSION *value = query_adapter_info.pPrivateDriverData;
             ok( *value >= KMT_DRIVERVERSION_WDDM_3_1 || broken( *value >= KMT_DRIVERVERSION_WDDM_1_3 ),
                 "Expected %d >= %d.\n", *value, KMT_DRIVERVERSION_WDDM_3_1 );
+            break;
+        }
+        case KMTQAITYPE_ADAPTERTYPE:
+        {
+            D3DKMT_ADAPTERTYPE *value = query_adapter_info.pPrivateDriverData;
+            ok( !(value->RenderSupported && value->ComputeOnly), "got %d, %d\n", value->RenderSupported, value->ComputeOnly );
+            ok( !(value->SoftwareDevice && value->HybridDiscrete), "got %d, %d\n", value->SoftwareDevice, value->HybridDiscrete );
+            ok( !(value->SoftwareDevice && value->HybridIntegrated), "got %d, %d\n", value->SoftwareDevice, value->HybridIntegrated );
+            ok( !(value->HybridDiscrete && value->HybridIntegrated), "got %d, %d\n", value->HybridDiscrete, value->HybridIntegrated );
             break;
         }
         default:

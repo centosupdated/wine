@@ -196,6 +196,34 @@ typedef enum _QAI_DRIVERVERSION
     KMT_DRIVERVERSION_WDDM_3_1 = 3100
 } D3DKMT_DRIVERVERSION;
 
+typedef struct _D3DKMT_ADAPTERTYPE
+{
+    union
+    {
+        struct
+        {
+            UINT RenderSupported : 1;
+            UINT DisplaySupported : 1;
+            UINT SoftwareDevice : 1;
+            UINT PostDevice : 1;
+            UINT HybridDiscrete : 1;
+            UINT HybridIntegrated : 1;
+            UINT IndirectDisplayDevice : 1;
+            UINT Paravirtualized : 1;
+            UINT ACGSupported : 1;
+            UINT SupportSetTimingsFromVidPn : 1;
+            UINT Detachable : 1;
+            UINT ComputeOnly : 1;
+            UINT Prototype : 1;
+            UINT RuntimePowerManagement : 1;
+            UINT TestOnly : 1;
+            UINT SingleAdapterHybridMode : 1;
+            UINT Reserved : 16;
+        };
+        UINT Value;
+    };
+} D3DKMT_ADAPTERTYPE;
+
 typedef enum _KMTQUERYADAPTERINFOTYPE
 {
     KMTQAITYPE_UMDRIVERPRIVATE,
