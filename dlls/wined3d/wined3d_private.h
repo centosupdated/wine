@@ -3978,6 +3978,7 @@ struct wined3d_rendertarget_view
     unsigned int height;
 
     struct wined3d_view_desc desc;
+    struct list entry;
 };
 
 void wined3d_rendertarget_view_cleanup(struct wined3d_rendertarget_view *view);
@@ -4103,6 +4104,7 @@ struct wined3d_swapchain
 
     struct wined3d_texture **back_buffers;
     struct wined3d_texture *front_buffer;
+    struct list back_buffer_rendertarget_views;
     struct wined3d_gamma_ramp orig_gamma;
     bool reapply_mode;
     const struct wined3d_format *ds_format;

@@ -421,6 +421,20 @@ ULONG CDECL wined3d_rendertarget_view_decref(struct wined3d_rendertarget_view *v
         /* Release the resource after destroying the view.
          * See wined3d_shader_resource_view_decref(). */
         wined3d_mutex_lock();
+
+        if (resource->type == WINED3D_RTYPE_TEXTURE_2D && texture_from_resource(resource)->swapchain)
+        {
+            struct wined3d_rendertarget_view *swap_view;
+            LIST_FOR_EACH_ENTRY(swap_view, &texture_from_resource(resource)->swapchain->back_buffer_rendertarget_views, struct wined3d_rendertarget_view, entry)
+            {
+                if (swap_view != view)
+                    continue;
+
+                list_remove(&swap_view->entry);
+                break;
+            }
+        }
+
         resource->device->adapter->adapter_ops->adapter_destroy_rendertarget_view(view);
         wined3d_mutex_unlock();
         wined3d_resource_decref(resource);
@@ -644,9 +658,11 @@ static HRESULT wined3d_rendertarget_view_init(struct wined3d_rendertarget_view *
     if (resource->type != WINED3D_RTYPE_BUFFER)
     {
         struct wined3d_texture *texture = texture_from_resource(resource);
-
         if (texture->swapchain)
+        {
             allow_srgb_toggle = TRUE;
+            list_add_head(&texture->swapchain->back_buffer_rendertarget_views, &view->entry);
+        }
     }
     if (!(view->format = validate_resource_view(desc, resource, TRUE, allow_srgb_toggle)))
         return E_INVALIDARG;

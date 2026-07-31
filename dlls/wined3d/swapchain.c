@@ -1813,6 +1813,7 @@ HRESULT wined3d_swapchain_gl_init(struct wined3d_swapchain_gl *swapchain_gl, str
     TRACE("swapchain_gl %p, device %p, desc %p, state_parent %p, parent %p, parent_ops %p.\n",
             swapchain_gl, device, desc, state_parent, parent, parent_ops);
 
+    list_init(&swapchain_gl->s.back_buffer_rendertarget_views);
     return wined3d_swapchain_init(&swapchain_gl->s, device, desc, state_parent, parent,
             parent_ops, &swapchain_gl_ops);
 }
@@ -1826,6 +1827,7 @@ HRESULT wined3d_swapchain_vk_init(struct wined3d_swapchain_vk *swapchain_vk, str
     TRACE("swapchain_vk %p, device %p, desc %p, parent %p, parent_ops %p.\n",
             swapchain_vk, device, desc, parent, parent_ops);
 
+    list_init(&swapchain_vk->s.back_buffer_rendertarget_views);
     if (FAILED(hr = wined3d_swapchain_init(&swapchain_vk->s, device, desc, state_parent, parent,
             parent_ops, &swapchain_vk_ops)))
         return hr;
