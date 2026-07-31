@@ -913,6 +913,12 @@ static void texture2d_blt_fbo(struct wined3d_device *device, struct wined3d_cont
     gl_info->gl_ops.gl.p_glDisable(GL_SCISSOR_TEST);
     context_invalidate_state(context, STATE_RASTERIZER);
 
+    if (gl_info->supported[ARB_FRAMEBUFFER_SRGB] && (dst_location == WINED3D_LOCATION_DRAWABLE || src_location == WINED3D_LOCATION_DRAWABLE))
+    {
+        gl_info->gl_ops.gl.p_glDisable(GL_FRAMEBUFFER_SRGB);
+        context_invalidate_state(context, STATE_SHADER(WINED3D_SHADER_TYPE_PIXEL));
+    }
+
     gl_info->fbo_ops.glBlitFramebuffer(src_rect->left, src_rect->top, src_rect->right, src_rect->bottom,
             dst_rect->left, dst_rect->top, dst_rect->right, dst_rect->bottom, GL_COLOR_BUFFER_BIT, gl_filter);
     checkGLcall("glBlitFramebuffer()");
