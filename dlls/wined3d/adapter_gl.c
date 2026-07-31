@@ -4564,12 +4564,16 @@ static HRESULT adapter_gl_create_rendertarget_view(const struct wined3d_view_des
         struct wined3d_rendertarget_view **view)
 {
     struct wined3d_rendertarget_view_gl *view_gl;
+    unsigned int count = 1;
     HRESULT hr;
 
     TRACE("desc %s, resource %p, parent %p, parent_ops %p, view %p.\n",
             wined3d_debug_view_desc(desc, resource), resource, parent, parent_ops, view);
 
-    if (!(view_gl = calloc(1, sizeof(*view_gl))))
+    if (resource->type == WINED3D_RTYPE_TEXTURE_2D && texture_from_resource(resource)->swapchain)
+        count = texture_from_resource(resource)->swapchain->state.desc.backbuffer_count;;
+
+    if (!(view_gl = calloc(1, offsetof(struct wined3d_rendertarget_view_gl, gl_view[count]))))
         return E_OUTOFMEMORY;
 
     if (FAILED(hr = wined3d_rendertarget_view_gl_init(view_gl, desc, resource, parent, parent_ops)))
@@ -4588,7 +4592,7 @@ static HRESULT adapter_gl_create_rendertarget_view(const struct wined3d_view_des
 struct wined3d_view_gl_destroy_ctx
 {
     struct wined3d_device *device;
-    const struct wined3d_gl_view *gl_view;
+    GLuint name;
     struct wined3d_bo_user *bo_user;
     struct wined3d_bo_gl *counter_bo;
     void *object;
@@ -4608,14 +4612,14 @@ static void wined3d_view_gl_destroy_object(void *object)
     device = ctx->device;
 
     counter_id = ctx->counter_bo ? ctx->counter_bo->id : 0;
-    if (ctx->gl_view->name || counter_id)
+    if (ctx->name || counter_id)
     {
         context = context_acquire(device, NULL, 0);
         gl_info = wined3d_context_gl(context)->gl_info;
-        if (ctx->gl_view->name)
+        if (ctx->name)
         {
-            context_gl_resource_released(device, ctx->gl_view->name, FALSE);
-            gl_info->gl_ops.gl.p_glDeleteTextures(1, &ctx->gl_view->name);
+            context_gl_resource_released(device, ctx->name, FALSE);
+            gl_info->gl_ops.gl.p_glDeleteTextures(1, &ctx->name);
         }
         if (counter_id)
             wined3d_context_gl_destroy_bo(wined3d_context_gl(context), ctx->counter_bo);
@@ -4629,7 +4633,7 @@ static void wined3d_view_gl_destroy_object(void *object)
     free(ctx->free);
 }
 
-static void wined3d_view_gl_destroy(struct wined3d_device *device, const struct wined3d_gl_view *gl_view,
+static void wined3d_view_gl_destroy(struct wined3d_device *device, GLuint name,
         struct wined3d_bo_user *bo_user, struct wined3d_bo_gl *counter_bo, void *object)
 {
     struct wined3d_view_gl_destroy_ctx *ctx, c;
@@ -4637,7 +4641,7 @@ static void wined3d_view_gl_destroy(struct wined3d_device *device, const struct 
     if (!(ctx = malloc(sizeof(*ctx))))
         ctx = &c;
     ctx->device = device;
-    ctx->gl_view = gl_view;
+    ctx->name = name;
     ctx->bo_user = bo_user;
     ctx->counter_bo = counter_bo;
     ctx->object = object;
@@ -4656,7 +4660,14 @@ static void adapter_gl_destroy_rendertarget_view(struct wined3d_rendertarget_vie
     TRACE("view_gl %p.\n", view_gl);
 
     wined3d_rendertarget_view_cleanup(&view_gl->v);
-    wined3d_view_gl_destroy(resource->device, &view_gl->gl_view, NULL, NULL, view_gl);
+    if (resource->type == WINED3D_RTYPE_TEXTURE_2D && texture_from_resource(resource)->swapchain)
+    {
+        unsigned int i;
+        for (i = 1; i < texture_from_resource(resource)->swapchain->state.desc.backbuffer_count; i++)
+            wined3d_view_gl_destroy(resource->device, view_gl->gl_view[i].name, NULL, NULL, NULL);
+    }
+
+    wined3d_view_gl_destroy(resource->device, view_gl->gl_view[0].name, NULL, NULL, view_gl);
 }
 
 static HRESULT adapter_gl_create_shader_resource_view(const struct wined3d_view_desc *desc,
@@ -4693,7 +4704,7 @@ static void adapter_gl_destroy_shader_resource_view(struct wined3d_shader_resour
     TRACE("view_gl %p.\n", view_gl);
 
     wined3d_shader_resource_view_cleanup(&view_gl->v);
-    wined3d_view_gl_destroy(resource->device, &view_gl->gl_view, &view_gl->bo_user, NULL, view_gl);
+    wined3d_view_gl_destroy(resource->device, view_gl->gl_view.name, &view_gl->bo_user, NULL, view_gl);
 }
 
 static HRESULT adapter_gl_create_unordered_access_view(const struct wined3d_view_desc *desc,
@@ -4730,7 +4741,7 @@ static void adapter_gl_destroy_unordered_access_view(struct wined3d_unordered_ac
     TRACE("view_gl %p.\n", view_gl);
 
     wined3d_unordered_access_view_cleanup(&view_gl->v);
-    wined3d_view_gl_destroy(resource->device, &view_gl->gl_view, &view_gl->bo_user, &view_gl->counter_bo, view_gl);
+    wined3d_view_gl_destroy(resource->device, view_gl->gl_view.name, &view_gl->bo_user, &view_gl->counter_bo, view_gl);
 }
 
 static HRESULT adapter_gl_create_video_decoder_output_view(const struct wined3d_view_desc *desc,

@@ -3235,7 +3235,7 @@ BOOL wined3d_context_gl_apply_clear_state(struct wined3d_context_gl *context_gl,
                 if (rts[i])
                 {
                     struct wined3d_rendertarget_view_gl *rtv_gl = wined3d_rendertarget_view_gl(rts[i]);
-                    context_gl->blit_targets[i].gl_view = rtv_gl->gl_view;
+                    context_gl->blit_targets[i].gl_view = rtv_gl->gl_view[0];
                     context_gl->blit_targets[i].resource = rtv_gl->v.resource;
                     context_gl->blit_targets[i].sub_resource_idx = rtv_gl->v.sub_resource_idx;
                     context_gl->blit_targets[i].layer_count = rtv_gl->v.layer_count;
@@ -3247,7 +3247,7 @@ BOOL wined3d_context_gl_apply_clear_state(struct wined3d_context_gl *context_gl,
             if (dsv)
             {
                 struct wined3d_rendertarget_view_gl *dsv_gl = wined3d_rendertarget_view_gl(dsv);
-                ds_info.gl_view = dsv_gl->gl_view;
+                ds_info.gl_view = dsv_gl->gl_view[0];
                 ds_info.resource = dsv_gl->v.resource;
                 ds_info.sub_resource_idx = dsv_gl->v.sub_resource_idx;
                 ds_info.layer_count = dsv_gl->v.layer_count;
@@ -3400,7 +3400,7 @@ void context_state_fb(struct wined3d_context *context, const struct wined3d_stat
             continue;
 
         view_gl = wined3d_rendertarget_view_gl(fb->render_targets[i]);
-        context_gl->blit_targets[i].gl_view = view_gl->gl_view;
+        context_gl->blit_targets[i].gl_view = view_gl->gl_view[0];
         context_gl->blit_targets[i].resource = view_gl->v.resource;
         context_gl->blit_targets[i].sub_resource_idx = view_gl->v.sub_resource_idx;
         context_gl->blit_targets[i].layer_count = view_gl->v.layer_count;
@@ -3412,7 +3412,7 @@ void context_state_fb(struct wined3d_context *context, const struct wined3d_stat
     if (fb->depth_stencil)
     {
         view_gl = wined3d_rendertarget_view_gl(fb->depth_stencil);
-        ds_info.gl_view = view_gl->gl_view;
+        ds_info.gl_view = view_gl->gl_view[0];
         ds_info.resource = view_gl->v.resource;
         ds_info.sub_resource_idx = view_gl->v.sub_resource_idx;
         ds_info.layer_count = view_gl->v.layer_count;
