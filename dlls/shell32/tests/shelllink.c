@@ -1877,9 +1877,7 @@ static void test_shortcut_overlay(void)
         }
     }
 done1:
-    todo_wine {
-        ok(success, "Varying-alpha icon with overlay applied doesn't match overlay in opaque regions and/or original icon in transparent regions!\n");
-    }
+    ok(success, "Varying-alpha icon with overlay applied doesn't match overlay in opaque regions and/or original icon in transparent regions!\n");
     dump_blank = dump_blank || !success;
     dump_alpha = !success;
 
@@ -1922,9 +1920,7 @@ done1:
         }
     }
 done2:
-    todo_wine {
-        ok(success, "Varying-mask icon with overlay applied doesn't match overlay in opaque regions and/or original icon in transparent regions!\n");
-    }
+    ok(success, "Varying-mask icon with overlay applied doesn't match overlay in opaque regions and/or original icon in transparent regions!\n");
     dump_blank = dump_blank || !success;
     dump_mask = !success;
 

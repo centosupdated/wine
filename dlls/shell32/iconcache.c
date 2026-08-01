@@ -139,6 +139,102 @@ HRESULT SIC_get_location( int list_idx, WCHAR *file, DWORD *size, int *res_idx )
 /* declare SIC_LoadOverlayIcon() */
 static int SIC_LoadOverlayIcon(int icon_idx);
 
+/* Try to check if a bitmap has an alpha channel. There seems to be no more
+ * efficient alternative among the documented Windows APIs, and WINE's
+ * implementation of e.g. DrawIcon ultimately relies on a similar check; see
+ * bmi_has_alpha() in dlls/user32/cursoricon.c.
+ */
+static BOOL has_alpha(HDC dc, HBITMAP bitmap)
+{
+	struct {
+		BITMAPINFOHEADER header;
+		DWORD color_masks[3];
+	} bi;
+	void *bits;
+	UINT line_count;
+	BOOL has_alpha;
+	size_t i;
+	DWORD alpha_mask;
+
+	bi.header.biSize = sizeof(BITMAPINFOHEADER);
+	bi.header.biBitCount = 0;
+
+	if (!GetDIBits(dc, bitmap, 0, 0, NULL, (BITMAPINFO*)&bi, DIB_RGB_COLORS) ||
+	    bi.header.biBitCount != 32 ||
+	    bi.header.biCompression != BI_BITFIELDS)
+		return FALSE;
+
+	/* height can be negative for a top-down bitmap */
+	line_count = abs(bi.header.biHeight);
+
+	bits = malloc(bi.header.biWidth * line_count * 4);
+	if (!bits || line_count > INT_MAX)
+		return FALSE;
+	if (GetDIBits(dc, bitmap, 0, (UINT)line_count, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS) != line_count)
+	{
+		free(bits);
+		return FALSE;
+	}
+
+	has_alpha = FALSE;
+	alpha_mask = ~(bi.color_masks[0] | bi.color_masks[1] | bi.color_masks[2]);
+	for (i = 0; i < bi.header.biWidth * line_count; i++)
+		if ((has_alpha = ((((UINT*)bits)[i] & alpha_mask) != 0)))
+			break;
+
+	free(bits);
+
+	return has_alpha;
+}
+
+/* Converts a 1-bit mask bitmap into the DI bits of a 32-bit bitmap with an
+ * alpha channel corresponding to the mask, and blits it to the DC.
+ */
+static void apply_mask_as_alpha(HDC dc, HBITMAP mask_bitmap)
+{
+	BITMAPINFO bi;
+	void *bits;
+	UINT line_count;
+	size_t i;
+
+	bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bi.bmiHeader.biBitCount = 0;
+
+	if (!GetDIBits(dc, mask_bitmap, 0, 0, NULL, &bi, DIB_RGB_COLORS))
+		return;
+
+	bi.bmiHeader.biPlanes = 1;
+	bi.bmiHeader.biBitCount = 32;
+	bi.bmiHeader.biCompression = BI_RGB;
+	bi.bmiHeader.biSizeImage = 0;
+
+	/* height can be negative for a top-down bitmap */
+	line_count = abs(bi.bmiHeader.biHeight);
+
+	bits = malloc(bi.bmiHeader.biWidth * line_count * 4);
+	if (!bits || line_count > INT_MAX)
+		return;
+	if (GetDIBits(dc, mask_bitmap, 0, (UINT)line_count, bits, &bi, DIB_RGB_COLORS) != line_count)
+	{
+		free(bits);
+		return;
+	}
+
+	for (i = 0; i < bi.bmiHeader.biWidth * line_count; i++)
+	{
+		UINT *pixel = &((UINT*)bits)[i];
+		*pixel = (*pixel ? 0 : 0xFF000000);
+	}
+
+	StretchDIBits(dc,
+	              /* Using abs() for only one height makes bottom-up work */
+	              0, 0, bi.bmiHeader.biWidth, bi.bmiHeader.biHeight,
+	              0, 0, bi.bmiHeader.biWidth, abs(bi.bmiHeader.biHeight),
+	              bits, &bi, DIB_RGB_COLORS, SRCCOPY);
+
+	free(bits);
+}
+
 /*****************************************************************************
  * SIC_OverlayShortcutImage			[internal]
  *
@@ -158,6 +254,8 @@ static HICON SIC_OverlayShortcutImage(HICON SourceIcon, int type)
 	HBITMAP OldSourceBitmap = NULL,
 	  OldShortcutBitmap = NULL,
 	  OldTargetBitmap = NULL;
+	BOOL SourceHasAlpha, ShortcutHasAlpha;
+	BLENDFUNCTION bf = {AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
 
 	static int s_imgListIdx = -1;
 
@@ -193,11 +291,13 @@ static HICON SIC_OverlayShortcutImage(HICON SourceIcon, int type)
 	/* Setup the source, shortcut and target masks */
 	SourceDC = CreateCompatibleDC(NULL);
 	if (NULL == SourceDC) goto fail;
+	SourceHasAlpha = has_alpha(SourceDC, SourceIconInfo.hbmColor);
 	OldSourceBitmap = SelectObject(SourceDC, SourceIconInfo.hbmMask);
 	if (NULL == OldSourceBitmap) goto fail;
 
 	ShortcutDC = CreateCompatibleDC(NULL);
 	if (NULL == ShortcutDC) goto fail;
+	ShortcutHasAlpha = has_alpha(ShortcutDC, ShortcutIconInfo.hbmColor);
 	OldShortcutBitmap = SelectObject(ShortcutDC, ShortcutIconInfo.hbmMask);
 	if (NULL == OldShortcutBitmap) goto fail;
 
@@ -232,25 +332,81 @@ static HICON SIC_OverlayShortcutImage(HICON SourceIcon, int type)
 	  goto fail;
 	}
 
-	/* Copy the source xor bitmap to the target and clear out part of it by using
-	   the shortcut mask */
-	if (! BitBlt(TargetDC, 0, 0, SourceBitmapInfo.bmWidth, SourceBitmapInfo.bmHeight,
-	             SourceDC, 0, 0, SRCCOPY) ||
-	    ! BitBlt(TargetDC, 0, SourceBitmapInfo.bmHeight - ShortcutBitmapInfo.bmHeight,
-	             ShortcutBitmapInfo.bmWidth, ShortcutBitmapInfo.bmHeight,
-	             ShortcutDC, 0, 0, SRCAND))
+	if (!SourceHasAlpha && ShortcutHasAlpha)
 	{
-	  goto fail;
+		/* Most GDI functions are not aware of alpha, and the reserved/alpha
+		 * channel of a bitmap is generally all zeroes. Therefore, DrawIcon()
+		 * uses a heuristic: the color bitmap's alpha channel is used for
+		 * transparency if it has non-zero alpha values, otherwise the mask
+		 * bitmap is used.
+		 *
+		 * This creates a problem when applying an overlay with alpha to an icon
+		 * without alpha. When the overlay is alpha-blended on top of the icon,
+		 * it introduces non-zero alpha values to the image, so the all-zeroes
+		 * alpha of the icon is no longer ignored, and it vanishes.
+		 *
+		 * The workaround is to convert the source mask into an alpha channel
+		 * and SRCCOPY it. The subsequent blit of the source color is done with
+		 * SRCPAINT to avoid destroying the alpha.
+		 */
+
+		apply_mask_as_alpha(TargetDC, SourceIconInfo.hbmMask);
+
+		if (!BitBlt(TargetDC, 0, 0, SourceBitmapInfo.bmWidth, SourceBitmapInfo.bmHeight,
+		            SourceDC, 0, 0, SRCPAINT))
+		{
+		  goto fail;
+		}
+	}
+	else
+	{
+		if (SourceHasAlpha && !ShortcutHasAlpha)
+		{
+			/* WINE's current shortcut overlay has alpha-transparency so this
+			 * won't happen unless you replace the overlay.
+			 */
+			FIXME("Blending of shortcut overlay without alpha onto icon with alpha is broken\n");
+		}
+
+		/* Copy the source bitmap to the target */
+		if (!BitBlt(TargetDC, 0, 0, SourceBitmapInfo.bmWidth, SourceBitmapInfo.bmHeight,
+		            SourceDC, 0, 0, SRCCOPY))
+		{
+		  goto fail;
+		}
+
+		/* Clear out part of it by using the shortcut mask (where applicable) */
+		if (!ShortcutHasAlpha &&
+		    !BitBlt(TargetDC, 0, SourceBitmapInfo.bmHeight - ShortcutBitmapInfo.bmHeight,
+		             ShortcutBitmapInfo.bmWidth, ShortcutBitmapInfo.bmHeight,
+		             ShortcutDC, 0, 0, SRCAND))
+		{
+		  goto fail;
+		}
 	}
 
 	if (NULL == SelectObject(ShortcutDC, ShortcutIconInfo.hbmColor)) goto fail;
 
-	/* Now put in the shortcut xor mask */
-	if (! BitBlt(TargetDC, 0, SourceBitmapInfo.bmHeight - ShortcutBitmapInfo.bmHeight,
-	             ShortcutBitmapInfo.bmWidth, ShortcutBitmapInfo.bmHeight,
-	             ShortcutDC, 0, 0, SRCINVERT))
+	if (ShortcutHasAlpha)
 	{
-	  goto fail;
+		if (!GdiAlphaBlend(TargetDC, 0, SourceBitmapInfo.bmHeight - ShortcutBitmapInfo.bmHeight,
+		                   ShortcutBitmapInfo.bmWidth, ShortcutBitmapInfo.bmHeight,
+		                   ShortcutDC, 0, 0,
+		                   ShortcutBitmapInfo.bmWidth, ShortcutBitmapInfo.bmHeight,
+		                   bf))
+		{
+		  goto fail;
+		}
+	}
+	else
+	{
+		/* Now put in the shortcut xor mask */
+		if (!BitBlt(TargetDC, 0, SourceBitmapInfo.bmHeight - ShortcutBitmapInfo.bmHeight,
+		            ShortcutBitmapInfo.bmWidth, ShortcutBitmapInfo.bmHeight,
+		            ShortcutDC, 0, 0, SRCINVERT))
+		{
+		  goto fail;
+		}
 	}
 
 	/* Clean up, we're not goto'ing to 'fail' after this so we can be lazy and not set
