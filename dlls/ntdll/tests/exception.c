@@ -1580,7 +1580,7 @@ static DWORD simd_fault_handler( EXCEPTION_RECORD *rec, EXCEPTION_REGISTRATION_R
             ok( rec->ExceptionCode ==  STATUS_FLOAT_MULTIPLE_TRAPS,
                 "exception code: %#lx, should be %#lx\n",
                 rec->ExceptionCode,  STATUS_FLOAT_MULTIPLE_TRAPS);
-            ok( rec->NumberParameters == is_wow64 ? 2 : 1, "# of params: %li\n", rec->NumberParameters);
+            ok( rec->NumberParameters == (is_wow64 ? 2 : 1), "# of params: %li\n", rec->NumberParameters);
             ok( rec->ExceptionInformation[0] == 0, "param #1: %Ix, should be 0\n", rec->ExceptionInformation[0]);
             if (rec->NumberParameters == 2)
                 ok( rec->ExceptionInformation[1] == ((XSAVE_FORMAT *)context->ExtendedRegisters)->MxCsr,
@@ -4681,7 +4681,7 @@ static void test_wow64_context(void)
     context.ContextFlags = CONTEXT_ALL;
     ret = pNtGetContextThread( pi.hThread, &context );
     ok(ret == STATUS_SUCCESS, "got %#lx\n", ret);
-    ok( context.ContextFlags == is_arm64ec ? CONTEXT_FULL : CONTEXT_ALL,
+    ok( context.ContextFlags == (is_arm64ec ? CONTEXT_FULL : CONTEXT_ALL),
         "got context flags %#lx\n", context.ContextFlags );
     ok( !context.Rsi, "rsi is not zero %Ix\n", context.Rsi );
     ok( !context.Rdi, "rdi is not zero %Ix\n", context.Rdi );
@@ -11394,10 +11394,10 @@ static void test_extended_context(void)
         context_flags = *(DWORD *)(context_buffer + context_arch[test].flags_offset);
         ok(context_flags == (bret ? flags_fpx : flags),
                 "Got unexpected ContextFlags %#lx, flags %#lx.\n", context_flags, flags);
-        ok(xs->Mask == bret ? 4 : 0xdeadbeef, "Got unexpected Mask %s.\n", wine_dbgstr_longlong(xs->Mask));
+        ok(xs->Mask == (bret ? 4 : 0xdeadbeef), "Got unexpected Mask %s.\n", wine_dbgstr_longlong(xs->Mask));
         mask = pRtlGetExtendedFeaturesMask(context_ex);
         ok(mask == (xs->Mask & ~(ULONG64)3), "Got unexpected mask %s.\n", wine_dbgstr_longlong(mask));
-        ok(xs->CompactionMask == bret ? expected_compaction : 0xdeadbeef, "Got unexpected CompactionMask %s.\n",
+        ok(xs->CompactionMask == (bret ? expected_compaction : 0xdeadbeef), "Got unexpected CompactionMask %s.\n",
                 wine_dbgstr_longlong(xs->CompactionMask));
 
         mask = 0xdeadbeef;
@@ -11439,7 +11439,7 @@ static void test_extended_context(void)
 
             length2 = 0xdeadbeef;
             p = pLocateXStateFeature(context, 2, &length2);
-            ok(!p && length2 == (flags & CONTEXT_NATIVE) ? sizeof(YMMCONTEXT) : 0xdeadbeef,
+            ok(!p && length2 == ((flags & CONTEXT_NATIVE) ? sizeof(YMMCONTEXT) : 0xdeadbeef),
                     "Got unexpected p %p, length %#lx, flags %#lx.\n", p, length2, flags);
 
             context_flags = *(DWORD *)(context_buffer + context_arch[test].flags_offset);
