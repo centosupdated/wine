@@ -545,7 +545,7 @@ static void test_unix_program(void)
     run_cmd("unix_test.cmd", script, sizeof(script) - 1);
 
     size = map_file("unix_out.txt", &data);
-    todo_wine ok(size != 0, "unix_out.txt missing\n");
+    ok(size != 0, "unix_out.txt missing\n");
     if (size)
     {
         test_output(data, size, exp_out, sizeof(exp_out) - 1);

@@ -2126,6 +2126,26 @@ static RETURN_CODE search_command(WCHAR *command, struct search_command *sc, BOO
             return NO_ERROR;
         }
     }
+    /* Not found as a Windows executable, but the command may be a native Unix
+     * program given as a Unix path (e.g. /bin/grep).  Try running it through
+     * the \??\unix namespace. */
+    if (firstParam[0] == L'/' &&
+        wcslen(firstParam) + ARRAY_SIZE(L"\\\\?\\unix") <= ARRAY_SIZE(sc->path))
+    {
+        DWORD attribs;
+
+        wcscpy(sc->path, L"\\\\?\\unix");
+        wcscat(sc->path, firstParam);
+        attribs = GetFileAttributesW(sc->path);
+        if (attribs != INVALID_FILE_ATTRIBUTES && !(attribs & FILE_ATTRIBUTE_DIRECTORY))
+        {
+            sc->has_path = TRUE;
+            sc->has_extension = TRUE;
+            sc->is_command_file = FALSE;
+            return NO_ERROR;
+        }
+    }
+
     return RETURN_CODE_CANT_LAUNCH;
 }
 
