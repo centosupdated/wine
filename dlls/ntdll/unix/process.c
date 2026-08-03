@@ -404,7 +404,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
                                int unixdir, char *winedebug, const struct pe_image_info *pe_info )
 {
     NTSTATUS status = STATUS_SUCCESS;
-    int stdin_fd = -1, stdout_fd = -1;
+    int stdin_fd = -1, stdout_fd = -1, stderr_fd = -1;
     pid_t pid;
     char **argv;
 
@@ -415,6 +415,10 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
     if (wine_server_handle_to_fd( params->hStdOutput, FILE_WRITE_DATA, &stdout_fd, NULL ) &&
         isatty(1) && is_unix_console_handle( params->hStdOutput ))
         stdout_fd = 1;
+
+    if (wine_server_handle_to_fd( params->hStdError, FILE_WRITE_DATA, &stderr_fd, NULL ) &&
+        isatty(2) && is_unix_console_handle( params->hStdError ))
+        stderr_fd = 2;
 
     if (!(pid = fork()))  /* child */
     {
@@ -430,8 +434,11 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
             }
             else set_stdio_fd( stdin_fd, stdout_fd );
 
+            if (stderr_fd != -1 && stderr_fd != 2) dup2( stderr_fd, 2 );
+
             if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
             if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
+            if (stderr_fd != -1 && stderr_fd != 2) close( stderr_fd );
 
             if (winedebug) putenv( winedebug );
             if (unixdir != -1)
@@ -460,6 +467,7 @@ static NTSTATUS spawn_process( const RTL_USER_PROCESS_PARAMETERS *params, int so
 
     if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
     if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
+    if (stderr_fd != -1 && stderr_fd != 2) close( stderr_fd );
     return status;
 }
 
@@ -564,7 +572,7 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
                                const RTL_USER_PROCESS_PARAMETERS *params )
 {
     pid_t pid;
-    int fd[2], stdin_fd = -1, stdout_fd = -1;
+    int fd[2], stdin_fd = -1, stdout_fd = -1, stderr_fd = -1;
     char **argv;
     NTSTATUS status = STATUS_SUCCESS;
 
@@ -585,6 +593,10 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
         isatty(1) && is_unix_console_handle( params->hStdOutput ))
         stdout_fd = 1;
 
+    if (wine_server_handle_to_fd( params->hStdError, FILE_WRITE_DATA, &stderr_fd, NULL ) &&
+        isatty(2) && is_unix_console_handle( params->hStdError ))
+        stderr_fd = 2;
+
     if (!(pid = fork()))  /* child */
     {
         if (!(pid = fork()))  /* grandchild */
@@ -601,8 +613,11 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
             }
             else set_stdio_fd( stdin_fd, stdout_fd );
 
+            if (stderr_fd != -1 && stderr_fd != 2) dup2( stderr_fd, 2 );
+
             if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
             if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
+            if (stderr_fd != -1 && stderr_fd != 2) close( stderr_fd );
 
             /* Reset signals that we previously set to SIG_IGN */
             signal( SIGPIPE, SIG_DFL );
@@ -650,6 +665,7 @@ static NTSTATUS fork_and_exec( OBJECT_ATTRIBUTES *attr, const char *unix_name, i
     close( fd[0] );
     if (stdin_fd != -1 && stdin_fd != 0) close( stdin_fd );
     if (stdout_fd != -1 && stdout_fd != 1) close( stdout_fd );
+    if (stderr_fd != -1 && stderr_fd != 2) close( stderr_fd );
     return status;
 }
 

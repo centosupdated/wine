@@ -553,7 +553,7 @@ static void test_unix_program(void)
     }
 
     size = map_file("unix_err.txt", &data);
-    todo_wine ok(size != 0, "unix_err.txt missing\n");
+    ok(size != 0, "unix_err.txt missing\n");
     if (size)
     {
         test_output(data, size, exp_err, sizeof(exp_err) - 1);
