@@ -524,6 +524,48 @@ static int cmd_available(void)
     return FALSE;
 }
 
+static void test_unix_program(void)
+{
+    static const char script[] = "@echo off\r\n"
+                                 "/bin/sh -c \"echo stdout-test\" > unix_out.txt\r\n"
+                                 "/bin/sh -c \"echo stderr-test 1>&2\" 2>unix_err.txt\r\n";
+    static const char exp_out[] = "stdout-test\r\n";
+    static const char exp_err[] = "stderr-test\r\n";
+    const char *data;
+    DWORD size;
+
+    if (GetFileAttributesW(L"\\??\\unix/bin/sh") == INVALID_FILE_ATTRIBUTES)
+    {
+        win_skip("no unix /bin/sh, skipping unix program tests\n");
+        return;
+    }
+
+    DeleteFileA("unix_out.txt");
+    DeleteFileA("unix_err.txt");
+    run_cmd("unix_test.cmd", script, sizeof(script) - 1);
+
+    size = map_file("unix_out.txt", &data);
+    todo_wine ok(size != 0, "unix_out.txt missing\n");
+    if (size)
+    {
+        test_output(data, size, exp_out, sizeof(exp_out) - 1);
+        UnmapViewOfFile(data);
+    }
+
+    size = map_file("unix_err.txt", &data);
+    todo_wine ok(size != 0, "unix_err.txt missing\n");
+    if (size)
+    {
+        test_output(data, size, exp_err, sizeof(exp_err) - 1);
+        UnmapViewOfFile(data);
+    }
+
+    DeleteFileA("unix_out.txt");
+    DeleteFileA("unix_err.txt");
+    DeleteFileA("test.out");
+    DeleteFileA("test.err");
+}
+
 START_TEST(batch)
 {
     int argc;
@@ -553,4 +595,6 @@ START_TEST(batch)
         run_from_file(argv[2]);
     else
         EnumResourceNamesA(NULL, "TESTCMD", test_enum_proc, 0);
+
+    test_unix_program();
 }
