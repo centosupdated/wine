@@ -39,6 +39,7 @@ typedef struct _CMD_REDIRECTION
 {
     enum CMD_REDIRECTION_KIND {REDIR_READ_FROM, REDIR_WRITE_TO, REDIR_WRITE_APPEND, REDIR_WRITE_CLONE} kind;
     unsigned short fd;
+    BOOL overridden;
     struct _CMD_REDIRECTION *next;
     union
     {

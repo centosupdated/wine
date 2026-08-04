@@ -1347,6 +1347,7 @@ static CMD_REDIRECTION *redirection_create_file(enum CMD_REDIRECTION_KIND kind, 
 
     redir->kind = kind;
     redir->fd = fd;
+    redir->overridden = FALSE;
     memcpy(redir->file, file, len * sizeof(WCHAR));
     redir->next = NULL;
 
@@ -1359,6 +1360,7 @@ static CMD_REDIRECTION *redirection_create_clone(unsigned fd, unsigned fd_clone)
 
     redir->kind = REDIR_WRITE_CLONE;
     redir->fd = fd;
+    redir->overridden = FALSE;
     redir->clone = fd_clone;
     redir->next = NULL;
 
@@ -2159,12 +2161,7 @@ static BOOL push_std_redirections(CMD_REDIRECTION *redir, HANDLE saved[3])
         saved[i] = GetStdHandle(std_index[i]);
     for (; redir; redir = redir->next)
     {
-        CMD_REDIRECTION *next;
-
-        /* if we have several elements changing same std stream, only use last one */
-        for (next = redir->next; next; next = next->next)
-            if (redir->fd == next->fd) break;
-        if (next) continue;
+        if (redir->overridden) continue;
         switch (redir->kind)
         {
         case REDIR_READ_FROM:
@@ -2806,11 +2803,21 @@ static enum builder_token node_builder_top(const struct node_builder *builder, u
 
 static void redirection_list_append(CMD_REDIRECTION **redir, CMD_REDIRECTION *last)
 {
-    if (last)
+    CMD_REDIRECTION *iter, *head = last;
+
+    if (!last) return;
+
+    /* mark any existing redirection on the same fd as overridden */
+    for (; last; last = last->next)
     {
-        for ( ; *redir; redir = &(*redir)->next) {}
-        *redir = last;
+        for (iter = *redir; iter; iter = iter->next)
+        {
+            if (iter->fd == last->fd) iter->overridden = TRUE;
+        }
     }
+    /* walk to end and append */
+    for ( ; *redir; redir = &(*redir)->next) {}
+    *redir = head;
 }
 
 static BOOL node_builder_parse(struct node_builder *builder, unsigned precedence, CMD_NODE **result)
@@ -3347,6 +3354,7 @@ static BOOL rebuild_append_all_redirections(struct command_rebuild *rb, const CM
 
     for (redir = node->redirects; ret && redir != NULL; redir = redir->next)
     {
+        if (redir->overridden) continue;
         if (rb->pos && !iswspace(rb->buffer[rb->pos - 1]))
             ret = ret && rebuild_append(rb, L" ");
         ret = ret && rebuild_append_redirection(rb, redir, expand);
