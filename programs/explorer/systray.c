@@ -128,6 +128,11 @@ static POINT balloon_pos;
 #define TASKBAR_MARGIN_BOTTOM 2
 #define TASKBAR_MARGIN_LEFT 2
 #define TASKBAR_MARGIN_RIGHT 2
+/* These include the inner 3D border */
+#define TRAY_MARGIN_TOP (TASKBAR_MARGIN_TOP + 3)
+#define TRAY_MARGIN_BOTTOM (TASKBAR_MARGIN_BOTTOM + 3)
+#define TRAY_MARGIN_RIGHT (TASKBAR_MARGIN_RIGHT + 1)
+#define TRAY_MARGIN_LEFT 2
 
 #define MIN_DISPLAYED 8
 #define ICON_BORDER  2
@@ -349,8 +354,8 @@ static POINT get_icon_pos( struct icon *icon )
 
     if (enable_taskbar)
     {
-        pos.x = tray_width - icon_cx * (icon->display + 1);
-        pos.y = (tray_height - icon_cy) / 2;
+        pos.x = tray_width - TRAY_MARGIN_RIGHT - icon_cx * (icon->display + 1);
+        pos.y = TASKBAR_MARGIN_TOP + (tray_height - TASKBAR_MARGIN_TOP - TASKBAR_MARGIN_BOTTOM - icon_cy) / 2;
     }
     else
     {
@@ -608,6 +613,7 @@ static void systray_add_icon( struct icon *icon )
     SetWindowPos( icon->window, 0, pos.x, pos.y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW );
 
     if (nb_displayed == 1 && show_systray) do_show_systray();
+    if (enable_taskbar) InvalidateRect( tray_window, NULL, TRUE );
     TRACE( "added %u now %d icons\n", icon->id, nb_displayed );
 }
 
@@ -631,6 +637,7 @@ static void systray_remove_icon( struct icon *icon )
     }
 
     if (!--nb_displayed && !enable_taskbar) do_hide_systray();
+    if (enable_taskbar) InvalidateRect( tray_window, NULL, TRUE );
     TRACE( "removed %u now %d icons\n", icon->id, nb_displayed );
 
     icon->display = ICON_DISPLAY_HIDDEN;
@@ -813,7 +820,7 @@ static void sync_taskbar_buttons(void)
     int pos = TASKBAR_MARGIN_LEFT, count = 0;
     int width = taskbar_button_width;
     int height = tray_height - TASKBAR_MARGIN_TOP - TASKBAR_MARGIN_BOTTOM;
-    int right = tray_width - nb_displayed * icon_cx - TASKBAR_MARGIN_RIGHT;
+    int right = tray_width - nb_displayed * icon_cx - TRAY_MARGIN_RIGHT - TRAY_MARGIN_RIGHT - TRAY_MARGIN_LEFT;
     HWND foreground = GetAncestor( GetForegroundWindow(), GA_ROOTOWNER );
 
     if (!enable_taskbar) return;
@@ -1094,7 +1101,7 @@ static void do_show_systray(void)
     GetTextExtentPointW( hdc, start_label, lstrlenW(start_label), &size );
     /* add some margins (FIXME) */
     size.cx += 12 + GetSystemMetrics( SM_CXSMICON );
-    size.cy += 4 + TASKBAR_MARGIN_TOP + TASKBAR_MARGIN_BOTTOM;
+    size.cy += TRAY_MARGIN_TOP + TRAY_MARGIN_BOTTOM;
     ReleaseDC( 0, hdc );
     DeleteObject( font );
 
@@ -1178,10 +1185,18 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
     case WM_PAINT:
         if (enable_taskbar)
         {
-            RECT rc = {0, 0, tray_width, tray_height};
+            RECT taskbar_rect = {0, 0, tray_width, tray_height};
+            RECT tray_rect = {
+               tray_width - nb_displayed * icon_cx - TRAY_MARGIN_LEFT - TRAY_MARGIN_RIGHT,
+               TASKBAR_MARGIN_TOP,
+               tray_width - TASKBAR_MARGIN_RIGHT,
+               tray_height - TASKBAR_MARGIN_BOTTOM,
+            };
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint( hwnd, &ps );
-            DrawEdge( hdc, &rc, EDGE_RAISED, BF_TOP | BF_MIDDLE );
+            DrawEdge( hdc, &taskbar_rect, EDGE_RAISED, BF_TOP | BF_MIDDLE );
+            if (nb_displayed > 0)
+                DrawEdge( hdc, &tray_rect, BDR_SUNKENOUTER, BF_RECT );
             EndPaint( hwnd, &ps );
         }
         else
