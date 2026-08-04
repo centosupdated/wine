@@ -36,6 +36,13 @@ WINE_DEFAULT_DEBUG_CHANNEL(process);
 
 static STARTUPINFOA startup_infoA;
 
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+extern void * __cdecl __wine_get_user_shared_data(void);
+struct _KUSER_SHARED_DATA *user_shared_data;
+#else
+const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
+#endif
+
 /***********************************************************************
  *           set_entry_point
  */
@@ -129,6 +136,10 @@ static void copy_startup_info(void)
 static BOOL process_attach( HMODULE module )
 {
     RtlSetUnhandledExceptionFilter( UnhandledExceptionFilter );
+
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+    user_shared_data = __wine_get_user_shared_data();
+#endif
 
     NtQuerySystemInformation( SystemBasicInformation, &system_info, sizeof(system_info), NULL );
     kernelbase_global_data = KernelBaseGetGlobalData();

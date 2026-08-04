@@ -1005,6 +1005,23 @@ static NTSTATUS unwind_builtin_dll( void *args )
 
 #endif /* SO_DLLS_SUPPORTED */
 
+struct _TEB * volatile *current_teb_ptr;
+
+NTSTATUS unixcall_register_teb_ptr( void *args )
+{
+    struct register_teb_ptr_params *params = args;
+    current_teb_ptr = params->teb_ptr;
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS unixcall_get_current_teb( void *args )
+{
+    struct get_current_teb_params *params = args;
+    struct thread_data *data = get_thread_data();
+    *params->teb = data ? data->teb : NULL;
+    return STATUS_SUCCESS;
+}
+
 
 static const unixlib_entry_t unix_call_funcs[] =
 {
@@ -1016,6 +1033,9 @@ static const unixlib_entry_t unix_call_funcs[] =
     unixcall_wine_server_handle_to_fd,
     unixcall_wine_spawnvp,
     system_time_precise,
+    unixcall_get_shared_user_data,
+    unixcall_register_teb_ptr,
+    unixcall_get_current_teb,
 };
 
 

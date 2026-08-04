@@ -4453,9 +4453,27 @@ void loader_init( CONTEXT *context, void **entry )
     ULONG_PTR cookie, port = 0;
     WINE_MODREF *wm;
 
+#if defined(WINE_APPLE_SILICON) && defined(__aarch64__) && !defined(__arm64ec__)
+    __asm__ volatile( "msr tpidr_el0, %0" :: "r"(context->X18) );
+#endif
+
     if (process_detaching) NtTerminateThread( GetCurrentThread(), 0 );
 
     if (NtCurrentTeb()->SkipLoaderInit) return;
+
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+    /* fetch the address of the shared user data page chosen by the unix side */
+    {
+        struct get_shared_user_data_params params;
+
+        if (!user_shared_data || user_shared_data == (void *)0x7ffe0000)
+        {
+            WINE_UNIX_CALL( unix_get_shared_user_data, &params );
+            if (*params.data) user_shared_data = *params.data;
+            else ERR( "failed to get the shared user data address\n" );
+        }
+    }
+#endif
 
     RtlEnterCriticalSection( &loader_section );
 

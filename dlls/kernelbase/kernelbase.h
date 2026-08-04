@@ -39,6 +39,12 @@ extern void init_locale( HMODULE module );
 extern void init_console(void);
 extern BOOL is_console_handle( HANDLE );
 
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+extern struct _KUSER_SHARED_DATA *user_shared_data;
+#else
+extern const struct _KUSER_SHARED_DATA *user_shared_data;
+#endif
+
 extern const WCHAR windows_dir[];
 extern const WCHAR system_dir[];
 

@@ -68,6 +68,11 @@ static DWORD client_tid;
 
 static HANDLE ntoskrnl_heap;
 
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+extern void * __cdecl __wine_get_user_shared_data(void);
+BYTE *wine_user_shared_data;
+#endif
+
 static void *ldr_notify_cookie;
 
 static PLOAD_IMAGE_NOTIFY_ROUTINE load_image_notify_routines[8];
@@ -4847,7 +4852,15 @@ BOOL WINAPI DllMain( HINSTANCE inst, DWORD reason, LPVOID reserved )
 #endif
         KeQueryTickCount( &count );  /* initialize the global KeTickCount */
         NtBuildNumber = NtCurrentTeb()->Peb->OSBuildNumber;
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+        wine_user_shared_data = __wine_get_user_shared_data();
+#endif
+#ifdef WINE_APPLE_SILICON
+        /* keep the kernel heap non-executable on Apple Silicon (W^X enforcement) */
+        ntoskrnl_heap = HeapCreate( 0, 0, 0 );
+#else
         ntoskrnl_heap = HeapCreate( HEAP_CREATE_ENABLE_EXECUTE, 0, 0 );
+#endif
         dpc_call_tls_index = TlsAlloc();
         LdrRegisterDllNotification( 0, ldr_notify_callback, NULL, &ldr_notify_cookie );
         break;
