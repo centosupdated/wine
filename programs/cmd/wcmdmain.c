@@ -3574,9 +3574,13 @@ static BOOL rebuild_append_command(struct command_rebuild *rb, const CMD_NODE *n
     case CMD_BLOCK:
         {
             struct rebuild_flags new_rbflags = {.depth = rbflags.depth = 1, .in_echo = rbflags.in_echo};
-            ret = rebuild_append(rb, L"( ") &&
+            const WCHAR *open  = rbflags.in_echo ? L"("  : L"( ";
+            const WCHAR *close = rbflags.in_echo ? L")"  : L" ) ";
+            ret = rebuild_append(rb, open) &&
                 rebuild_append_command(rb, node->block, new_rbflags) &&
-                rebuild_append(rb, L" ) ");
+                rebuild_append(rb, close);
+            if (rbflags.in_echo)
+                ret = ret && rebuild_append(rb, L" ");
         }
         break;
     default:
