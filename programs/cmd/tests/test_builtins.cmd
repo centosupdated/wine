@@ -1565,6 +1565,18 @@ rd subdir /s /q
 del a.a b.b
 cd .. & rd foobar /s /q
 
+echo ------------ Testing OUT ------------
+md foobar & cd foobar
+echo > bar
+echo foo > OUT
+dir /b /a-d
+echo foo > OUT:
+dir /b /a-d
+echo foo > out
+dir /b /a-d
+del bar
+cd .. & rd foobar /s /q
+
 echo ------------ Testing if/else ------------
 echo --- if/else should work with blocks
 if 0 == 0 (

@@ -2148,6 +2148,13 @@ static void pop_std_redirections(HANDLE saved[3])
     }
 }
 
+/* OUT: is a legacy device name, redirecting to the default output device (NUL) */
+static void redirect_out_device(WCHAR *filename)
+{
+    if (!wcsicmp(filename, L"OUT") || !wcsicmp(filename, L"OUT:"))
+        wcscpy(filename, L"NUL");
+}
+
 static BOOL push_std_redirections(CMD_REDIRECTION *redir, HANDLE saved[3])
 {
     static SECURITY_ATTRIBUTES sa = {.nLength = sizeof(sa), .lpSecurityDescriptor = NULL, .bInheritHandle = TRUE};
@@ -2170,6 +2177,7 @@ static BOOL push_std_redirections(CMD_REDIRECTION *redir, HANDLE saved[3])
         case REDIR_READ_FROM:
             wcscpy(expanded_filename, redir->file);
             handleExpansion(expanded_filename, TRUE);
+            redirect_out_device(expanded_filename);
             h = CreateFileW(expanded_filename, GENERIC_READ, FILE_SHARE_READ,
                             &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
             if (h == INVALID_HANDLE_VALUE)
@@ -2185,6 +2193,7 @@ static BOOL push_std_redirections(CMD_REDIRECTION *redir, HANDLE saved[3])
                 DWORD disposition = redir->kind == REDIR_WRITE_TO ? CREATE_ALWAYS : OPEN_ALWAYS;
                 wcscpy(expanded_filename, redir->file);
                 handleExpansion(expanded_filename, TRUE);
+                redirect_out_device(expanded_filename);
                 h = CreateFileW(expanded_filename, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE,
                                 &sa, disposition, FILE_ATTRIBUTE_NORMAL, NULL);
                 if (h == INVALID_HANDLE_VALUE)
