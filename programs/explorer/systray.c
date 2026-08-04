@@ -122,6 +122,13 @@ static struct icon *balloon_icon;
 static HWND balloon_window;
 static POINT balloon_pos;
 
+#define TASKBAR_MARGIN_TOP 4 /* including 3D border */
+#define START_BUTTON_MARGIN_RIGHT 4
+#define TASKBAR_BUTTON_MARGIN_RIGHT 3
+#define TASKBAR_MARGIN_BOTTOM 2
+#define TASKBAR_MARGIN_LEFT 2
+#define TASKBAR_MARGIN_RIGHT 2
+
 #define MIN_DISPLAYED 8
 #define ICON_BORDER  2
 
@@ -803,9 +810,10 @@ static void cleanup_systray_window( HWND hwnd )
 static void sync_taskbar_buttons(void)
 {
     struct taskbar_button *win;
-    int pos = 0, count = 0;
+    int pos = TASKBAR_MARGIN_LEFT, count = 0;
     int width = taskbar_button_width;
-    int right = tray_width - nb_displayed * icon_cx;
+    int height = tray_height - TASKBAR_MARGIN_TOP - TASKBAR_MARGIN_BOTTOM;
+    int right = tray_width - nb_displayed * icon_cx - TASKBAR_MARGIN_RIGHT;
     HWND foreground = GetAncestor( GetForegroundWindow(), GA_ROOTOWNER );
 
     if (!enable_taskbar) return;
@@ -815,9 +823,9 @@ static void sync_taskbar_buttons(void)
     {
         if (!win->hwnd)  /* start button */
         {
-            SetWindowPos( win->button, 0, pos, 0, start_button_width, tray_height,
+            SetWindowPos( win->button, 0, pos, TASKBAR_MARGIN_TOP, start_button_width, height,
                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
-            pos += start_button_width;
+            pos += start_button_width + START_BUTTON_MARGIN_RIGHT;
             continue;
         }
         win->active = (win->hwnd == foreground);
@@ -828,16 +836,17 @@ static void sync_taskbar_buttons(void)
     /* shrink buttons if space is tight */
     if (count && (count * width > right - pos))
         width = max( taskbar_button_width / 4, (right - pos) / count );
+    width -= TASKBAR_BUTTON_MARGIN_RIGHT;
 
     LIST_FOR_EACH_ENTRY( win, &taskbar_buttons, struct taskbar_button, entry )
     {
         if (!win->hwnd) continue;  /* start button */
         if (win->visible && right - pos >= width)
         {
-            SetWindowPos( win->button, 0, pos, 0, width, tray_height,
+            SetWindowPos( win->button, 0, pos, TASKBAR_MARGIN_TOP, width, height,
                           SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW );
             InvalidateRect( win->button, NULL, TRUE );
-            pos += width;
+            pos += width + TASKBAR_BUTTON_MARGIN_RIGHT;
         }
         else SetWindowPos( win->button, 0, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW );
     }
@@ -1013,7 +1022,7 @@ static void click_taskbar_button( HWND button )
 
     if (!hwnd)  /* start button */
     {
-        do_startmenu( tray_window );
+        do_startmenu( tray_window, TASKBAR_MARGIN_LEFT, TASKBAR_MARGIN_TOP );
         return;
     }
 
@@ -1085,7 +1094,7 @@ static void do_show_systray(void)
     GetTextExtentPointW( hdc, start_label, lstrlenW(start_label), &size );
     /* add some margins (FIXME) */
     size.cx += 12 + GetSystemMetrics( SM_CXSMICON );
-    size.cy += 4;
+    size.cy += 4 + TASKBAR_MARGIN_TOP + TASKBAR_MARGIN_BOTTOM;
     ReleaseDC( 0, hdc );
     DeleteObject( font );
 
@@ -1165,6 +1174,19 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
     case WM_INITMENUPOPUP:
     case WM_MENUCOMMAND:
         return menu_wndproc(hwnd, msg, wparam, lparam);
+
+    case WM_PAINT:
+        if (enable_taskbar)
+        {
+            RECT rc = {0, 0, tray_width, tray_height};
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint( hwnd, &ps );
+            DrawEdge( hdc, &rc, EDGE_RAISED, BF_TOP | BF_MIDDLE );
+            EndPaint( hwnd, &ps );
+        }
+        else
+            return DefWindowProcW( hwnd, msg, wparam, lparam );
+        break;
 
     case WM_USER + 0:
         update_systray_balloon_position();
