@@ -3281,7 +3281,7 @@ static void test_SetWindowPos(HWND hwnd, HWND hwnd2)
     ret = SetWindowPos(hwnd_child, HWND_TOPMOST, 1, 2, 3, 4, 0);
     ok(ret, "Got %d.\n", ret);
     GetWindowRect(hwnd_child, &rc2);
-    todo_wine ok(EqualRect(&rc1, &rc2), "%s != %s.\n", wine_dbgstr_rect(&rc1), wine_dbgstr_rect(&rc2));
+    ok(EqualRect(&rc1, &rc2), "%s != %s.\n", wine_dbgstr_rect(&rc1), wine_dbgstr_rect(&rc2));
     check_active_state(hwnd2, hwnd2, hwnd2);
     SetWindowPos(hwnd_child, HWND_TOPMOST, 0, 0, rc1.right - rc1.left, rc1.bottom - rc1.top, 0);
 
