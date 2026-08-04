@@ -1009,20 +1009,36 @@ static void remove_taskbar_button( HWND hwnd )
 static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
 {
     RECT rect;
-    UINT flags = DC_TEXT;
     struct taskbar_button *win = find_taskbar_button( LongToHandle( dis->CtlID ));
 
     if (!win) return;
     GetClientRect( dis->hwndItem, &rect );
-    DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_ADJUSTRECT |
-                      ((dis->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0 ));
+    DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_HOT | DFCS_ADJUSTRECT |
+                      (((win->hwnd && win->active) || dis->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0 ));
     if (win->hwnd)
     {
-        flags |= win->active ? DC_ACTIVE : DC_INBUTTON;
-        DrawCaptionTempW( win->hwnd, dis->hDC, &rect, 0, 0, NULL, flags );
+        WCHAR window_caption[64] = {0};
+        if (win->active)
+        {
+            HBRUSH hbrush = NtUserGetSysColorBrush( COLOR_55AA_BRUSH );
+            HBRUSH hbrush_old = SelectObject( dis->hDC, hbrush );
+            COLORREF textcolor_old = SetTextColor( dis->hDC, GetSysColor(COLOR_3DFACE) );
+            COLORREF bkcolor_old = SetBkColor( dis->hDC, GetSysColor(COLOR_3DHIGHLIGHT) );
+            FillRect( dis->hDC, &rect, hbrush );
+            SelectObject( dis->hDC, hbrush_old );
+            SetTextColor( dis->hDC, textcolor_old );
+            SetBkColor( dis->hDC, bkcolor_old );
+        }
+        rect.left += 2;
+        rect.right -= 2;
+        rect.top += 1;
+        GetWindowTextW( win->hwnd, window_caption, ARRAY_SIZE(window_caption) );
+        SelectObject( dis->hDC, font );
+        SetBkMode( dis->hDC, TRANSPARENT );
+        DrawTextW( dis->hDC, window_caption, -1, &rect, 0 );
     }
     else  /* start button */
-        DrawCaptionTempW( 0, dis->hDC, &rect, 0, 0, start_label, flags | DC_INBUTTON | DC_ICON );
+        DrawCaptionTempW( 0, dis->hDC, &rect, 0, 0, start_label, DC_TEXT | DC_INBUTTON | DC_ICON );
 }
 
 static void click_taskbar_button( HWND button )
