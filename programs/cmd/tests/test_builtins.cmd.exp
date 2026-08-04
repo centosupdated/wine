@@ -91,6 +91,8 @@ word
 
 @todo_wine@@pwd@>echo a 1>nul@space@
 
+@todo_wine@@pwd@>echo a 1>y@space@
+
 @pwd@>if 1 == 2 then @echo a@space@
 
 @todo_wine@@pwd@>IF 1 == 2 ThEn @EchO a@space@
@@ -113,6 +115,9 @@ foo1
 
 @todo_wine@@pwd@>echo a  1>nul  &&@space@
 foo2
+
+@todo_wine@@pwd@>echo a   | echo b@space@
+b
 ---
 noecho1
 noecho2

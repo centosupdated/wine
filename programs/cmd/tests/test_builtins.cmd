@@ -32,6 +32,7 @@ echo  @tab@word
 echo@tab@@tab@word
 echo @tab@ on @space@
 > nul echo a
+> x > y echo a
 if@tab@1    ==           2 then @echo a
 @rem native stores the keyword (and preserve the case) :-(
 IF@tab@1    ==           2 ThEn @EchO a
@@ -50,6 +51,7 @@ echo hidden
 @set V=@
 %V%echo foo1
 > nul echo a && @echo foo2
+echo a | echo b
 @echo ---
 @echo off
 echo off@tab@@space@
