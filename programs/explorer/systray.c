@@ -115,8 +115,9 @@ static BOOL enable_dock; /* allow systray icons to be docked in the host systray
 static BOOL no_tray_items; /* hide the systray and all systray icons */
 
 static int icon_cx, icon_cy, tray_width, tray_height;
-static int start_button_width, taskbar_button_width;
+static int start_button_width, taskbar_button_width, clock_width;
 static WCHAR start_label[50];
+static HFONT font;
 
 static struct icon *balloon_icon;
 static HWND balloon_window;
@@ -133,6 +134,8 @@ static POINT balloon_pos;
 #define TRAY_MARGIN_BOTTOM (TASKBAR_MARGIN_BOTTOM + 3)
 #define TRAY_MARGIN_RIGHT (TASKBAR_MARGIN_RIGHT + 1)
 #define TRAY_MARGIN_LEFT 2
+
+#define CLOCK_TIMER 1
 
 #define MIN_DISPLAYED 8
 #define ICON_BORDER  2
@@ -354,7 +357,7 @@ static POINT get_icon_pos( struct icon *icon )
 
     if (enable_taskbar)
     {
-        pos.x = tray_width - TRAY_MARGIN_RIGHT - icon_cx * (icon->display + 1);
+        pos.x = tray_width - TRAY_MARGIN_RIGHT - clock_width - icon_cx * (icon->display + 1);
         pos.y = TASKBAR_MARGIN_TOP + (tray_height - TASKBAR_MARGIN_TOP - TASKBAR_MARGIN_BOTTOM - icon_cy) / 2;
     }
     else
@@ -820,7 +823,7 @@ static void sync_taskbar_buttons(void)
     int pos = TASKBAR_MARGIN_LEFT, count = 0;
     int width = taskbar_button_width;
     int height = tray_height - TASKBAR_MARGIN_TOP - TASKBAR_MARGIN_BOTTOM;
-    int right = tray_width - nb_displayed * icon_cx - TRAY_MARGIN_RIGHT - TRAY_MARGIN_RIGHT - TRAY_MARGIN_LEFT;
+    int right = tray_width - nb_displayed * icon_cx - TRAY_MARGIN_RIGHT - TRAY_MARGIN_RIGHT - TRAY_MARGIN_LEFT - clock_width;
     HWND foreground = GetAncestor( GetForegroundWindow(), GA_ROOTOWNER );
 
     if (!enable_taskbar) return;
@@ -1078,8 +1081,9 @@ static void do_hide_systray(void)
 static void do_show_systray(void)
 {
     SIZE size;
+    SYSTEMTIME placeholder_time = { 2000, 1, 6, 1, 23, 59, 59, 0 };
+    WCHAR placeholder_time_string[64] = { 0 };
     NONCLIENTMETRICSW ncm;
-    HFONT font;
     HDC hdc;
 
     if (!enable_taskbar)
@@ -1098,12 +1102,22 @@ static void do_show_systray(void)
     SelectObject( hdc, font );
     GetTextExtentPointA( hdc, "abcdefghijklmnopqrstuvwxyz", 26, &size );
     taskbar_button_width = size.cx;
+    GetTimeFormatEx(
+        LOCALE_NAME_USER_DEFAULT,
+        TIME_NOSECONDS,
+        &placeholder_time,
+        NULL,
+        placeholder_time_string,
+        ARRAY_SIZE(placeholder_time_string)
+    );
+    GetTextExtentPointW( hdc, placeholder_time_string, lstrlenW(placeholder_time_string), &size );
+    clock_width = size.cx + 12; /* margin of error */
     GetTextExtentPointW( hdc, start_label, lstrlenW(start_label), &size );
     /* add some margins (FIXME) */
     size.cx += 12 + GetSystemMetrics( SM_CXSMICON );
     size.cy += TRAY_MARGIN_TOP + TRAY_MARGIN_BOTTOM;
+
     ReleaseDC( 0, hdc );
-    DeleteObject( font );
 
     tray_width = GetSystemMetrics( SM_CXSCREEN );
     tray_height = max( icon_cy, size.cy );
@@ -1187,21 +1201,48 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
         {
             RECT taskbar_rect = {0, 0, tray_width, tray_height};
             RECT tray_rect = {
-               tray_width - nb_displayed * icon_cx - TRAY_MARGIN_LEFT - TRAY_MARGIN_RIGHT,
+               tray_width - nb_displayed * icon_cx - TRAY_MARGIN_LEFT - TRAY_MARGIN_RIGHT - clock_width,
                TASKBAR_MARGIN_TOP,
                tray_width - TASKBAR_MARGIN_RIGHT,
                tray_height - TASKBAR_MARGIN_BOTTOM,
             };
+            RECT clock_rect = {
+                tray_width - TRAY_MARGIN_RIGHT - clock_width,
+                TRAY_MARGIN_TOP,
+                tray_width - TRAY_MARGIN_RIGHT,
+                tray_height - TRAY_MARGIN_BOTTOM,
+            };
             PAINTSTRUCT ps;
+            SYSTEMTIME time;
+            WCHAR time_string[64] = {0};
             HDC hdc = BeginPaint( hwnd, &ps );
             DrawEdge( hdc, &taskbar_rect, EDGE_RAISED, BF_TOP | BF_MIDDLE );
-            if (nb_displayed > 0)
-                DrawEdge( hdc, &tray_rect, BDR_SUNKENOUTER, BF_RECT );
+            DrawEdge( hdc, &tray_rect, BDR_SUNKENOUTER, BF_RECT );
+            SelectObject( hdc, font );
+            SetBkMode( hdc, TRANSPARENT );
+            GetLocalTime(&time);
+            GetTimeFormatEx(
+                LOCALE_NAME_USER_DEFAULT,
+                TIME_NOSECONDS,
+                &time,
+                NULL,
+                time_string,
+                ARRAY_SIZE(time_string)
+            );
+            DrawTextW( hdc, time_string, -1, &clock_rect, DT_CENTER );
             EndPaint( hwnd, &ps );
+            SetTimer( hwnd, CLOCK_TIMER, (59 - time.wSecond) * 1000 + (1000 - time.wMilliseconds) + 10, NULL );
         }
         else
             return DefWindowProcW( hwnd, msg, wparam, lparam );
         break;
+
+    case WM_TIMER:
+        if (wparam == CLOCK_TIMER)
+        {
+            InvalidateRect( hwnd, NULL, TRUE );
+        }
+        return 0;
 
     case WM_USER + 0:
         update_systray_balloon_position();
