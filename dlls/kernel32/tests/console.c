@@ -5717,6 +5717,93 @@ static void test_FreeConsoleStd(void)
     }
 }
 
+static void test_ANSI_escape_sequences(void)
+{
+    CONSOLE_SCREEN_BUFFER_INFO sb_info;
+    HANDLE hConOut;
+    BOOL ret;
+    DWORD mode, dw;
+    COORD c = {};
+
+    FreeConsole();
+    AllocConsole();
+    hConOut = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, 0);
+
+    ret = SetConsoleMode(hConOut, ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    ok(ret, "SetConsoleMode failed: %lu\n", GetLastError());
+
+    ret = GetConsoleMode(hConOut, &mode);
+    ok(ret, "GetConsoleMode failed: %lu\n", GetLastError());
+    ok(mode == (ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING),
+       "Unexpected mode: %lx\n", mode);
+
+    /* Test SGR foreground color */
+    ret = SetConsoleCursorPosition(hConOut, c);
+    ok(ret, "SetConsoleCursorPosition failed: %lu\n", GetLastError());
+    ret = SetConsoleTextAttribute(hConOut, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+    ok(ret, "SetConsoleTextAttribute failed: %lu\n", GetLastError());
+
+    ret = WriteConsoleW(hConOut, L"GREEN\x1b[91mBRIGHT RED", 5 + 5 + 10, &dw, NULL);
+    ok(dw == 5 + 5 + 10, "Wrong count: %lu\n", dw);
+    ok(ret, "WriteConsole failed: %lu\n", GetLastError());
+
+    ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
+    ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
+    todo_wine ok(sb_info.dwCursorPosition.X == 5 + 10,
+                 "Incorrect X cursor position: got %d, expected %d\n",
+                 sb_info.dwCursorPosition.X, 5 + 10);
+    todo_wine ok(sb_info.wAttributes == (FOREGROUND_RED | FOREGROUND_INTENSITY),
+                 "Unexpected attributes: got %x, expected %x\n",
+                 sb_info.wAttributes, FOREGROUND_RED | FOREGROUND_INTENSITY);
+
+    /* Test SGR reset to default */
+    ret = SetConsoleTextAttribute(hConOut, FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+    ok(ret, "SetConsoleTextAttribute failed: %lu\n", GetLastError());
+
+    ret = WriteConsoleW(hConOut, L"BLUE\x1b[m", 4 + 3, &dw, NULL);
+    ok(dw == 4 + 3, "Wrong count: %lu\n", dw);
+    ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
+    ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
+    todo_wine ok(sb_info.wAttributes == (FOREGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN),
+                 "Unexpected attributes: got %x, expected %x\n",
+                 sb_info.wAttributes, FOREGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN);
+
+    /* Test SGR foreground and background */
+    ret = WriteConsoleW(hConOut, L"\n\x1b[31mRED", 1 + 5 + 3, &dw, NULL);
+    ok(dw == 1 + 5 + 3, "Wrong count: %lu\n", dw);
+    ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
+    ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
+    todo_wine ok(sb_info.dwCursorPosition.X == 3,
+                 "Incorrect X cursor position: got %d, expected %d\n",
+                 sb_info.dwCursorPosition.X, 3);
+    todo_wine ok(sb_info.wAttributes == FOREGROUND_RED,
+                 "Unexpected attributes: got %x, expected %x\n",
+                 sb_info.wAttributes, FOREGROUND_RED);
+
+    ret = WriteConsoleW(hConOut, L"\x1b[31;44mRED on BLUE", 5 + 14, &dw, NULL);
+    ok(dw == 5 + 14, "Wrong count: %lu\n", dw);
+    ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
+    ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
+    todo_wine ok(sb_info.wAttributes == (FOREGROUND_RED | BACKGROUND_BLUE),
+                 "Unexpected attributes: got %x, expected %x\n",
+                 sb_info.wAttributes, FOREGROUND_RED | BACKGROUND_BLUE);
+
+    /* Test CUP cursor positioning */
+    ret = WriteConsoleW(hConOut, L"\x1b[1;1H", 6, &dw, NULL);
+    ok(dw == 6, "Wrong count: %lu\n", dw);
+    ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
+    ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
+    todo_wine ok(sb_info.dwCursorPosition.X == 0,
+                 "Incorrect X cursor position: got %d, expected %d\n",
+                 sb_info.dwCursorPosition.X, 0);
+    todo_wine ok(sb_info.dwCursorPosition.Y == 0,
+                 "Incorrect Y cursor position: got %d, expected %d\n",
+                 sb_info.dwCursorPosition.Y, 0);
+
+    CloseHandle(hConOut);
+    FreeConsole();
+}
+
 START_TEST(console)
 {
     HANDLE hConIn, hConOut, revert_output = NULL, unbound_output;
@@ -6018,6 +6105,7 @@ START_TEST(console)
         test_AttachConsole(hConOut);
         test_AllocConsole();
         test_FreeConsole(hConIn, hConOut);
+        test_ANSI_escape_sequences();
         test_condrv_server_as_root_directory();
         test_CreateProcessCUI();
         test_CtrlHandlerSubsystem();
