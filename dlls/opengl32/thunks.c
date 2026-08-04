@@ -2829,6 +2829,14 @@ static void WINAPI glActiveVaryingNV( GLuint program, const GLchar *name )
     if ((status = UNIX_CALL( glActiveVaryingNV, &args ))) WARN( "glActiveVaryingNV returned %#lx\n", status );
 }
 
+static void WINAPI glAddClientPointerRangeMESA( GLvoid * addr, GLsizeiptr size )
+{
+    struct glAddClientPointerRangeMESA_params args = { .teb = NtCurrentTeb(), .addr = addr, .size = size };
+    NTSTATUS status;
+    TRACE( "addr %p, size %Id\n", addr, size );
+    if ((status = UNIX_CALL( glAddClientPointerRangeMESA, &args ))) WARN( "glAddClientPointerRangeMESA returned %#lx\n", status );
+}
+
 static void WINAPI glAlphaFragmentOp1ATI( GLenum op, GLuint dst, GLuint dstMod, GLuint arg1, GLuint arg1Rep, GLuint arg1Mod )
 {
     struct glAlphaFragmentOp1ATI_params args = { .teb = NtCurrentTeb(), .op = op, .dst = dst, .dstMod = dstMod, .arg1 = arg1, .arg1Rep = arg1Rep, .arg1Mod = arg1Mod };
@@ -18422,6 +18430,15 @@ static void WINAPI glReferencePlaneSGIX( const GLdouble *equation )
     if ((status = UNIX_CALL( glReferencePlaneSGIX, &args ))) WARN( "glReferencePlaneSGIX returned %#lx\n", status );
 }
 
+static void* WINAPI glReleaseClientPointerRangeMESA( GLbitfield flags, GLsizeiptr * size )
+{
+    struct glReleaseClientPointerRangeMESA_params args = { .teb = NtCurrentTeb(), .flags = flags, .size = size };
+    NTSTATUS status;
+    TRACE( "flags %d, size %p\n", flags, size );
+    if ((status = UNIX_CALL( glReleaseClientPointerRangeMESA, &args ))) WARN( "glReleaseClientPointerRangeMESA returned %#lx\n", status );
+    return args.ret;
+}
+
 static GLboolean WINAPI glReleaseKeyedMutexWin32EXT( GLuint memory, GLuint64 key )
 {
     struct glReleaseKeyedMutexWin32EXT_params args = { .teb = NtCurrentTeb(), .key = key };
@@ -26098,6 +26115,7 @@ const void *extension_procs[] =
     glActiveTexture,
     glActiveTextureARB,
     glActiveVaryingNV,
+    glAddClientPointerRangeMESA,
     glAlphaFragmentOp1ATI,
     glAlphaFragmentOp2ATI,
     glAlphaFragmentOp3ATI,
@@ -27910,6 +27928,7 @@ const void *extension_procs[] =
     glRectxOES,
     glRectxvOES,
     glReferencePlaneSGIX,
+    glReleaseClientPointerRangeMESA,
     glReleaseKeyedMutexWin32EXT,
     glReleaseShaderCompiler,
     glRenderGpuMaskNV,
@@ -28857,6 +28876,7 @@ const struct registry_entry extension_registry[] =
     { "glActiveTexture", glActiveTexture, 1, 3, { GL_EXTENSION_COUNT }},
     { "glActiveTextureARB", glActiveTextureARB, 0, 0, { GL_ARB_multitexture, GL_EXTENSION_COUNT }},
     { "glActiveVaryingNV", glActiveVaryingNV, 0, 0, { GL_NV_transform_feedback, GL_EXTENSION_COUNT }},
+    { "glAddClientPointerRangeMESA", glAddClientPointerRangeMESA, 0, 0, { GL_MESA_map_buffer_client_pointer, GL_EXTENSION_COUNT }},
     { "glAlphaFragmentOp1ATI", glAlphaFragmentOp1ATI, 0, 0, { GL_ATI_fragment_shader, GL_EXTENSION_COUNT }},
     { "glAlphaFragmentOp2ATI", glAlphaFragmentOp2ATI, 0, 0, { GL_ATI_fragment_shader, GL_EXTENSION_COUNT }},
     { "glAlphaFragmentOp3ATI", glAlphaFragmentOp3ATI, 0, 0, { GL_ATI_fragment_shader, GL_EXTENSION_COUNT }},
@@ -30669,6 +30689,7 @@ const struct registry_entry extension_registry[] =
     { "glRectxOES", glRectxOES, 0, 0, { GL_OES_fixed_point, GL_EXTENSION_COUNT }},
     { "glRectxvOES", glRectxvOES, 0, 0, { GL_OES_fixed_point, GL_EXTENSION_COUNT }},
     { "glReferencePlaneSGIX", glReferencePlaneSGIX, 0, 0, { GL_SGIX_reference_plane, GL_EXTENSION_COUNT }},
+    { "glReleaseClientPointerRangeMESA", glReleaseClientPointerRangeMESA, 0, 0, { GL_MESA_map_buffer_client_pointer, GL_EXTENSION_COUNT }},
     { "glReleaseKeyedMutexWin32EXT", glReleaseKeyedMutexWin32EXT, 0, 0, { GL_EXT_win32_keyed_mutex, GL_EXTENSION_COUNT }},
     { "glReleaseShaderCompiler", glReleaseShaderCompiler, 4, 1, { GL_ARB_ES2_compatibility, GL_EXTENSION_COUNT }},
     { "glRenderGpuMaskNV", glRenderGpuMaskNV, 0, 0, { GL_NV_gpu_multicast, GL_EXTENSION_COUNT }},
