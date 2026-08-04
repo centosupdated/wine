@@ -54,7 +54,7 @@ AddService=MountMgr,0x800,MountMgrService
 RegisterDlls=RegisterDllsSection
 WineFakeDlls=FakeDlls
 UpdateInis=SystemIni
-CopyFiles=ColorFiles,EtcFiles,InfFiles,NlsFiles,SortFiles,WinmdFiles
+CopyFiles=ColorFiles,EtcFiles,InfFiles,MidiFiles,NlsFiles,SortFiles,WinmdFiles
 AddReg=\
     Classes,\
     ContentIndex,\
@@ -1239,6 +1239,9 @@ winehid.inf,"@%12%\winehid.sys,-1"
 wineusb.inf,"@%12%\wineusb.sys,-1"
 winexinput.inf,"@%12%\winexinput.sys,-1"
 
+[MidiFiles]
+midimap.cfg,"@%11%\midimap.dll,-1"
+
 [NlsFiles]
 c_037.nls
 c_10000.nls
@@ -1340,6 +1343,7 @@ WinmdFiles = winmd,include
 ColorFiles = 23
 EtcFiles  = 12,etc
 InfFiles  = 17
+MidiFiles = 50
 NlsFiles  = 11
 SortFiles = 10,globalization\sorting
 WinmdFiles = 11,winmetadata
