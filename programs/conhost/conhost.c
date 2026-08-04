@@ -2104,6 +2104,190 @@ static NTSTATUS set_output_info( struct screen_buffer *screen_buffer,
     return STATUS_SUCCESS;
 }
 
+static const unsigned int ansi_colors[] = {0, FOREGROUND_RED, FOREGROUND_GREEN,
+    FOREGROUND_GREEN | FOREGROUND_RED, FOREGROUND_BLUE, FOREGROUND_BLUE | FOREGROUND_RED,
+    FOREGROUND_BLUE | FOREGROUND_GREEN, FOREGROUND_BLUE | FOREGROUND_GREEN | FOREGROUND_RED};
+
+/* parse the next integer argument from a CSI sequence; returns the number of
+ * characters consumed, or 0 if no valid argument was found */
+static size_t next_csi_arg( const WCHAR *seq, size_t len, unsigned int *value )
+{
+    size_t i;
+
+    *value = 0;
+    for (i = 0; i < len; i++)
+    {
+        if (seq[i] == ';' || seq[i] == 'm' || seq[i] == 'H') return i + 1;
+        if (seq[i] < '0' || seq[i] > '9') return 0;
+        *value = *value * 10 + seq[i] - '0';
+    }
+    return 0;
+}
+
+/* process a complete CSI control sequence */
+static void process_csi( struct screen_buffer *screen_buffer, const WCHAR *seq, size_t len )
+{
+    struct condrv_output_info_params info_params;
+    unsigned int arg, r, g, b;
+    BOOL is_bright;
+    size_t pos;
+    int color;
+
+    if (!len) return;
+
+    switch (seq[len - 1])
+    {
+    case 'm': /* SGR - Select Graphic Rendition */
+        info_params.mask = SET_CONSOLE_OUTPUT_INFO_ATTR;
+        info_params.info.attr = screen_buffer->attr;
+
+        pos = 0;
+        while (pos < len)
+        {
+            size_t consumed = next_csi_arg( seq + pos, len - pos, &arg );
+            if (!consumed) break;
+            pos += consumed;
+
+            is_bright = FALSE;
+            if (arg >= 90 && arg <= 97)
+            {
+                is_bright = TRUE;
+                arg -= 60;
+            }
+            else if (arg >= 100 && arg <= 107)
+            {
+                is_bright = TRUE;
+                arg -= 60;
+            }
+
+            if (arg >= 30 && arg <= 37)
+            {
+                info_params.info.attr = (info_params.info.attr & 0xf0) | ansi_colors[arg - 30];
+                if (is_bright) info_params.info.attr |= FOREGROUND_INTENSITY;
+            }
+            else if (arg >= 40 && arg <= 47)
+            {
+                info_params.info.attr = (info_params.info.attr & 0x0f) | (ansi_colors[arg - 40] << 4);
+                if (is_bright) info_params.info.attr |= BACKGROUND_INTENSITY;
+            }
+            else if (arg == 38 || arg == 48)
+            {
+                BOOL is_background = (arg == 48);
+
+                /* 256-color or 24-bit color */
+                consumed = next_csi_arg( seq + pos, len - pos, &arg );
+                if (!consumed) break;
+                pos += consumed;
+
+                if (arg == 5) /* 256-color */
+                {
+                    consumed = next_csi_arg( seq + pos, len - pos, &arg );
+                    if (!consumed) break;
+                    pos += consumed;
+                    color = ansi_colors[arg % 8];
+                    if (arg >= 8) color |= FOREGROUND_INTENSITY;
+                }
+                else if (arg == 2) /* 24-bit RGB */
+                {
+                    consumed = next_csi_arg( seq + pos, len - pos, &r );
+                    if (!consumed) break;
+                    pos += consumed;
+                    consumed = next_csi_arg( seq + pos, len - pos, &g );
+                    if (!consumed) break;
+                    pos += consumed;
+                    consumed = next_csi_arg( seq + pos, len - pos, &b );
+                    if (!consumed) break;
+                    pos += consumed;
+                    color = 0;
+                    if (r > 127) color |= FOREGROUND_RED;
+                    if (g > 127) color |= FOREGROUND_GREEN;
+                    if (b > 127) color |= FOREGROUND_BLUE;
+                }
+                else break;
+
+                if (is_background)
+                    info_params.info.attr = (info_params.info.attr & 0x0f) | (color << 4);
+                else
+                    info_params.info.attr = (info_params.info.attr & 0xf0) | color;
+            }
+            else if (arg == 39)
+            {
+                info_params.info.attr = (info_params.info.attr & 0xf0) | 7; /* default foreground */
+            }
+            else if (arg == 49)
+            {
+                info_params.info.attr = (info_params.info.attr & 0x0f); /* default background */
+            }
+            else if (arg == 0)
+            {
+                info_params.info.attr = 7; /* white on black */
+            }
+        }
+        set_output_info( screen_buffer, &info_params, sizeof(info_params) );
+        break;
+
+    case 'H': /* CUP - Cursor Position */
+        {
+            unsigned int x = 1, y = 1;
+
+            pos = 0;
+            if (pos < len && seq[pos] != ';' && seq[pos] != 'H')
+            {
+                next_csi_arg( seq + pos, len - pos, &y );
+                while (pos < len && seq[pos] != ';' && seq[pos] != 'H') pos++;
+            }
+            if (pos < len && seq[pos] == ';')
+            {
+                pos++;
+                if (pos < len && seq[pos] != 'H')
+                {
+                    next_csi_arg( seq + pos, len - pos, &x );
+                }
+            }
+            if (y > 0) y--;
+            if (x > 0) x--;
+            screen_buffer->cursor_x = min( x, screen_buffer->width - 1 );
+            screen_buffer->cursor_y = min( y, screen_buffer->height - 1 );
+        }
+        break;
+
+    default:
+        WARN( "unhandled CSI sequence final byte %c (0x%02x)\n", seq[len - 1], seq[len - 1] );
+        break;
+    }
+}
+
+/* try to consume a CSI escape sequence at buffer[pos].  returns TRUE if the
+ * sequence was processed, or FALSE if it was not a valid CSI sequence. */
+static BOOL try_consume_csi( struct screen_buffer *screen_buffer,
+                              const WCHAR *buffer, size_t len, size_t *pos )
+{
+    size_t start, i;
+
+    if (*pos + 1 >= len || buffer[*pos] != '\e' || buffer[*pos + 1] != '[')
+        return FALSE;
+
+    start = *pos + 2;  /* after \e[ */
+    i = start;
+
+    /* consume parameter bytes (0x30-0x3f) and intermediate bytes (0x20-0x2f) */
+    while (i < len &&
+           ((buffer[i] >= 0x30 && buffer[i] <= 0x3f) ||
+            (buffer[i] >= 0x20 && buffer[i] <= 0x2f)))
+        i++;
+
+    /* final byte (0x40-0x7e) */
+    if (i < len && buffer[i] >= 0x40 && buffer[i] <= 0x7e)
+    {
+        process_csi( screen_buffer, buffer + start, i - start + 1 );
+        *pos = i;
+        return TRUE;
+    }
+
+    /* incomplete or invalid sequence - not a CSI */
+    return FALSE;
+}
+
 static void play_console_beep( struct console *console )
 {
     if (console->is_unix)
@@ -2129,6 +2313,13 @@ static NTSTATUS write_console( struct screen_buffer *screen_buffer, const WCHAR 
 
     for (i = 0; i < len; i++)
     {
+        /* try to consume a CSI sequence when VT processing is enabled */
+        if ((screen_buffer->mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING) && buffer[i] == '\e'
+            && i + 1 < len && buffer[i + 1] == '[')
+        {
+            if (try_consume_csi( screen_buffer, buffer, len, &i )) continue;
+        }
+
         if (screen_buffer->mode & ENABLE_PROCESSED_OUTPUT)
         {
             switch (buffer[i])

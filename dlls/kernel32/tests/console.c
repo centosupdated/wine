@@ -5749,12 +5749,23 @@ static void test_ANSI_escape_sequences(void)
 
     ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
     ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
-    todo_wine ok(sb_info.dwCursorPosition.X == 5 + 10,
+    ok(sb_info.dwCursorPosition.X == 5 + 10,
                  "Incorrect X cursor position: got %d, expected %d\n",
                  sb_info.dwCursorPosition.X, 5 + 10);
-    todo_wine ok(sb_info.wAttributes == (FOREGROUND_RED | FOREGROUND_INTENSITY),
+    ok(sb_info.wAttributes == (FOREGROUND_RED | FOREGROUND_INTENSITY),
                  "Unexpected attributes: got %x, expected %x\n",
                  sb_info.wAttributes, FOREGROUND_RED | FOREGROUND_INTENSITY);
+    {
+        /* verify color via ReadConsoleOutput */
+        CHAR_INFO ci;
+        COORD buf_size = {1, 1}, buf_coord = {0, 0};
+        SMALL_RECT region = {5, 0, 5, 0};
+        ret = ReadConsoleOutputW( hConOut, &ci, buf_size, buf_coord, &region );
+        ok( ret, "ReadConsoleOutputW failed: %lu\n", GetLastError() );
+        ok( ci.Char.UnicodeChar == 'B' && ci.Attributes == (FOREGROUND_RED | FOREGROUND_INTENSITY),
+            "ReadConsoleOutput: got char %c attr %x, expected B attr %x\n",
+            ci.Char.UnicodeChar, ci.Attributes, FOREGROUND_RED | FOREGROUND_INTENSITY );
+    }
 
     /* Test SGR reset to default */
     ret = SetConsoleTextAttribute(hConOut, FOREGROUND_BLUE | FOREGROUND_INTENSITY);
@@ -5764,7 +5775,7 @@ static void test_ANSI_escape_sequences(void)
     ok(dw == 4 + 3, "Wrong count: %lu\n", dw);
     ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
     ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
-    todo_wine ok(sb_info.wAttributes == (FOREGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN),
+    ok(sb_info.wAttributes == (FOREGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN),
                  "Unexpected attributes: got %x, expected %x\n",
                  sb_info.wAttributes, FOREGROUND_BLUE | FOREGROUND_RED | FOREGROUND_GREEN);
 
@@ -5773,10 +5784,10 @@ static void test_ANSI_escape_sequences(void)
     ok(dw == 1 + 5 + 3, "Wrong count: %lu\n", dw);
     ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
     ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
-    todo_wine ok(sb_info.dwCursorPosition.X == 3,
+    ok(sb_info.dwCursorPosition.X == 3,
                  "Incorrect X cursor position: got %d, expected %d\n",
                  sb_info.dwCursorPosition.X, 3);
-    todo_wine ok(sb_info.wAttributes == FOREGROUND_RED,
+    ok(sb_info.wAttributes == FOREGROUND_RED,
                  "Unexpected attributes: got %x, expected %x\n",
                  sb_info.wAttributes, FOREGROUND_RED);
 
@@ -5784,7 +5795,7 @@ static void test_ANSI_escape_sequences(void)
     ok(dw == 5 + 14, "Wrong count: %lu\n", dw);
     ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
     ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
-    todo_wine ok(sb_info.wAttributes == (FOREGROUND_RED | BACKGROUND_BLUE),
+    ok(sb_info.wAttributes == (FOREGROUND_RED | BACKGROUND_BLUE),
                  "Unexpected attributes: got %x, expected %x\n",
                  sb_info.wAttributes, FOREGROUND_RED | BACKGROUND_BLUE);
 
@@ -5793,10 +5804,10 @@ static void test_ANSI_escape_sequences(void)
     ok(dw == 6, "Wrong count: %lu\n", dw);
     ret = GetConsoleScreenBufferInfo(hConOut, &sb_info);
     ok(ret, "GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
-    todo_wine ok(sb_info.dwCursorPosition.X == 0,
+    ok(sb_info.dwCursorPosition.X == 0,
                  "Incorrect X cursor position: got %d, expected %d\n",
                  sb_info.dwCursorPosition.X, 0);
-    todo_wine ok(sb_info.dwCursorPosition.Y == 0,
+    ok(sb_info.dwCursorPosition.Y == 0,
                  "Incorrect Y cursor position: got %d, expected %d\n",
                  sb_info.dwCursorPosition.Y, 0);
 
