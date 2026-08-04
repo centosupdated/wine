@@ -114,6 +114,8 @@ static BOOL show_systray; /* show a standalone systray window */
 static BOOL enable_dock; /* allow systray icons to be docked in the host systray */
 static BOOL no_tray_items; /* hide the systray and all systray icons */
 
+static BOOL start_menu_open;
+
 static int icon_cx, icon_cy, tray_width, tray_height;
 static int start_button_width, taskbar_button_width, clock_width;
 static WCHAR start_label[50];
@@ -1009,12 +1011,16 @@ static void remove_taskbar_button( HWND hwnd )
 static void paint_taskbar_button( const DRAWITEMSTRUCT *dis )
 {
     RECT rect;
+    BOOL pushed;
     struct taskbar_button *win = find_taskbar_button( LongToHandle( dis->CtlID ));
 
     if (!win) return;
     GetClientRect( dis->hwndItem, &rect );
-    DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_HOT | DFCS_ADJUSTRECT |
-                      (((win->hwnd && win->active) || dis->itemState & ODS_SELECTED) ? DFCS_PUSHED : 0 ));
+    pushed =
+        (win->hwnd && win->active) ||
+        (dis->itemState & ODS_SELECTED) ||
+        (!win->hwnd && start_menu_open);
+    DrawFrameControl( dis->hDC, &rect, DFC_BUTTON, DFCS_BUTTONPUSH | DFCS_HOT | DFCS_ADJUSTRECT | (pushed ? DFCS_PUSHED : 0 ));
     if (win->hwnd)
     {
         WCHAR window_caption[64] = {0};
@@ -1211,6 +1217,16 @@ static LRESULT WINAPI shell_traywnd_proc( HWND hwnd, UINT msg, WPARAM wparam, LP
     case WM_INITMENUPOPUP:
     case WM_MENUCOMMAND:
         return menu_wndproc(hwnd, msg, wparam, lparam);
+
+    case WM_ENTERMENULOOP:
+        start_menu_open = TRUE;
+        InvalidateRect( tray_window, NULL, TRUE );
+        return 0;
+
+    case WM_EXITMENULOOP:
+        start_menu_open = FALSE;
+        InvalidateRect( tray_window, NULL, TRUE );
+        return 0;
 
     case WM_PAINT:
         if (enable_taskbar)
