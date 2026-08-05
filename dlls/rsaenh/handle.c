@@ -28,6 +28,7 @@
 #include "windef.h"
 #include "winbase.h"
 #include "handle.h"
+#include "implglue.h"
 
 #include "wine/debug.h"
 
@@ -357,7 +358,7 @@ HCRYPTKEY new_object(struct handle_table *lpTable, size_t cbSize, DWORD dwType, 
     if (ppObject)
         *ppObject = NULL;
 
-    pObject = malloc(cbSize);
+    pObject = _aligned_malloc(cbSize, SYMCRYPT_ASYM_ALIGN_VALUE);
     if (!pObject)
         return (HCRYPTKEY)INVALID_HANDLE_VALUE;
 
@@ -366,7 +367,7 @@ HCRYPTKEY new_object(struct handle_table *lpTable, size_t cbSize, DWORD dwType, 
     pObject->destructor = destructor;
 
     if (!alloc_handle(lpTable, pObject, &hObject))
-        free(pObject);
+        _aligned_free(pObject);
     else
         if (ppObject)
             *ppObject = pObject;
