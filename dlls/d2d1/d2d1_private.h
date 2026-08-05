@@ -69,6 +69,28 @@ struct d2d_clip_stack
     size_t count;
 };
 
+struct d2d_layer_entry
+{
+    ID2D1Image *previous_target;
+    ID2D1Bitmap1 *bitmap;
+    ID2D1Geometry *geometric_mask;
+    ID2D1Brush *opacity_brush;
+    D2D1_MATRIX_3X2_F mask_transform;
+    D2D1_MATRIX_3X2_F world_transform;
+    D2D1_ANTIALIAS_MODE mask_antialias_mode;
+    float opacity;
+    size_t clip_count;
+    BOOL failed;
+};
+
+struct d2d_layer_stack
+{
+    struct d2d_layer_entry *entries;
+    size_t size;
+    size_t count;
+    size_t cache_count;
+};
+
 struct d2d_error_state
 {
     HRESULT code;
@@ -219,6 +241,7 @@ struct d2d_device_context
     D2D1_RENDER_TARGET_PROPERTIES desc;
     D2D1_SIZE_U pixel_size;
     struct d2d_clip_stack clip_stack;
+    struct d2d_layer_stack layer_stack;
 
     struct d2d_indexed_objects vertex_buffers;
 };

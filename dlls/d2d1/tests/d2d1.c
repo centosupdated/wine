@@ -9789,7 +9789,7 @@ static void test_layer(BOOL d3d11)
 
         get_surface_readback(&ctx, &rb);
         colour = get_readback_colour(&rb, 10, 10);
-        todo_wine ok(compare_colour(colour, 0xffff0000, 1),
+        ok(compare_colour(colour, 0xffff0000, 1),
                 "Got unexpected corner colour 0x%08lx.\n", colour);
         colour = get_readback_colour(&rb, 320, 240);
         ok(compare_colour(colour, 0xff0000ff, 1),

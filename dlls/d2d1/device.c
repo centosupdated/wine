@@ -116,6 +116,32 @@ static void d2d_clip_stack_pop(struct d2d_clip_stack *stack)
     --stack->count;
 }
 
+static void d2d_layer_entry_cleanup(struct d2d_layer_entry *entry, BOOL release_bitmap)
+{
+    ID2D1Bitmap1 *bitmap = entry->bitmap;
+
+    if (entry->opacity_brush)
+        ID2D1Brush_Release(entry->opacity_brush);
+    if (entry->geometric_mask)
+        ID2D1Geometry_Release(entry->geometric_mask);
+    if (release_bitmap && bitmap)
+        ID2D1Bitmap1_Release(bitmap);
+    if (entry->previous_target)
+        ID2D1Image_Release(entry->previous_target);
+    memset(entry, 0, sizeof(*entry));
+    if (!release_bitmap)
+        entry->bitmap = bitmap;
+}
+
+static void d2d_layer_stack_cleanup(struct d2d_layer_stack *stack)
+{
+    size_t i;
+
+    for (i = 0; i < stack->cache_count; ++i)
+        d2d_layer_entry_cleanup(&stack->entries[i], TRUE);
+    free(stack->entries);
+}
+
 static void d2d_device_context_draw(struct d2d_device_context *render_target, enum d2d_shape_type shape_type,
         ID3D11Buffer *ib, unsigned int index_count, ID3D11Buffer *vb, unsigned int vb_stride,
         struct d2d_brush *brush, struct d2d_brush *opacity_brush)
@@ -270,6 +296,7 @@ static ULONG STDMETHODCALLTYPE d2d_device_context_inner_Release(IUnknown *iface)
     {
         unsigned int i, j, k;
 
+        d2d_layer_stack_cleanup(&context->layer_stack);
         d2d_clip_stack_cleanup(&context->clip_stack);
         IDWriteRenderingParams_Release(context->default_text_rendering_params);
         if (context->text_rendering_params)
@@ -1830,20 +1857,258 @@ static void STDMETHODCALLTYPE d2d_device_context_GetTags(ID2D1DeviceContext6 *if
     *tag2 = render_target->drawing_state.tag2;
 }
 
+static float d2d_clip_bound(float value, float min, float max, float fallback)
+{
+    if (isnan(value))
+        return fallback;
+    if (value < min)
+        return min;
+    if (value > max)
+        return max;
+    return value;
+}
+
+static void d2d_device_context_push_clip_rect(struct d2d_device_context *context,
+        const D2D1_RECT_F *clip_rect)
+{
+    float width = context->pixel_size.width, height = context->pixel_size.height;
+    D2D1_RECT_F transformed_rect;
+    float x_scale, y_scale;
+    D2D1_POINT_2F point;
+
+    x_scale = context->desc.dpiX / 96.0f;
+    y_scale = context->desc.dpiY / 96.0f;
+    d2d_point_transform(&point, &context->drawing_state.transform,
+            clip_rect->left * x_scale, clip_rect->top * y_scale);
+    d2d_rect_set(&transformed_rect, point.x, point.y, point.x, point.y);
+    d2d_point_transform(&point, &context->drawing_state.transform,
+            clip_rect->left * x_scale, clip_rect->bottom * y_scale);
+    d2d_rect_expand(&transformed_rect, &point);
+    d2d_point_transform(&point, &context->drawing_state.transform,
+            clip_rect->right * x_scale, clip_rect->top * y_scale);
+    d2d_rect_expand(&transformed_rect, &point);
+    d2d_point_transform(&point, &context->drawing_state.transform,
+            clip_rect->right * x_scale, clip_rect->bottom * y_scale);
+    d2d_rect_expand(&transformed_rect, &point);
+
+    if (width && height)
+    {
+        transformed_rect.left = d2d_clip_bound(transformed_rect.left, 0.0f, width, 0.0f);
+        transformed_rect.top = d2d_clip_bound(transformed_rect.top, 0.0f, height, 0.0f);
+        transformed_rect.right = d2d_clip_bound(transformed_rect.right, 0.0f, width, width);
+        transformed_rect.bottom = d2d_clip_bound(transformed_rect.bottom, 0.0f, height, height);
+    }
+
+    if (!d2d_clip_stack_push(&context->clip_stack, &transformed_rect))
+        WARN("Failed to push clip rect.\n");
+}
+
+static void d2d_device_context_initialize_layer_bitmap(struct d2d_device_context *context,
+        struct d2d_bitmap *bitmap, struct d2d_bitmap *background, D2D1_LAYER_OPTIONS1 options)
+{
+    static const float transparent[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    ID3D11DeviceContext *d3d_context;
+
+    if (context->cs)
+        EnterCriticalSection(context->cs);
+    ID3D11Device1_GetImmediateContext(context->d3d_device, &d3d_context);
+    if (options & D2D1_LAYER_OPTIONS1_INITIALIZE_FROM_BACKGROUND)
+        ID3D11DeviceContext_CopyResource(d3d_context, bitmap->resource, background->resource);
+    else
+        ID3D11DeviceContext_ClearRenderTargetView(d3d_context, bitmap->rtv, transparent);
+    ID3D11DeviceContext_Release(d3d_context);
+    if (context->cs)
+        LeaveCriticalSection(context->cs);
+}
+
+static void d2d_device_context_push_layer(struct d2d_device_context *context,
+        const D2D1_LAYER_PARAMETERS1 *parameters)
+{
+    D2D1_BITMAP_PROPERTIES1 bitmap_desc;
+    struct d2d_layer_entry *entry;
+    struct d2d_bitmap *background;
+    struct d2d_bitmap *bitmap;
+    HRESULT hr;
+
+    if (context->target.type != D2D_TARGET_BITMAP)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
+
+    if (!d2d_array_reserve((void **)&context->layer_stack.entries, &context->layer_stack.size,
+            context->layer_stack.count + 1, sizeof(*context->layer_stack.entries)))
+    {
+        d2d_device_context_set_error(context, E_OUTOFMEMORY);
+        return;
+    }
+
+    background = context->target.bitmap;
+    entry = &context->layer_stack.entries[context->layer_stack.count];
+    if (context->layer_stack.count == context->layer_stack.cache_count)
+    {
+        memset(entry, 0, sizeof(*entry));
+        ++context->layer_stack.cache_count;
+    }
+    ++context->layer_stack.count;
+    entry->mask_transform = parameters->maskTransform;
+    entry->world_transform = context->drawing_state.transform;
+    entry->mask_antialias_mode = parameters->maskAntialiasMode;
+    entry->opacity = parameters->opacity;
+    entry->clip_count = context->clip_stack.count;
+    entry->previous_target = context->target.object;
+    ID2D1Image_AddRef(entry->previous_target);
+    if ((entry->geometric_mask = parameters->geometricMask))
+        ID2D1Geometry_AddRef(entry->geometric_mask);
+    if ((entry->opacity_brush = parameters->opacityBrush))
+        ID2D1Brush_AddRef(entry->opacity_brush);
+
+    memset(&bitmap_desc, 0, sizeof(bitmap_desc));
+    bitmap_desc.pixelFormat.format = context->desc.pixelFormat.format;
+    bitmap_desc.pixelFormat.alphaMode = D2D1_ALPHA_MODE_PREMULTIPLIED;
+    bitmap_desc.dpiX = context->desc.dpiX;
+    bitmap_desc.dpiY = context->desc.dpiY;
+    bitmap_desc.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
+
+    if (entry->bitmap)
+    {
+        bitmap = unsafe_impl_from_ID2D1Bitmap((ID2D1Bitmap *)entry->bitmap);
+        if (bitmap->pixel_size.width != context->pixel_size.width
+                || bitmap->pixel_size.height != context->pixel_size.height
+                || bitmap->format.format != bitmap_desc.pixelFormat.format
+                || bitmap->format.alphaMode != bitmap_desc.pixelFormat.alphaMode
+                || bitmap->dpi_x != bitmap_desc.dpiX || bitmap->dpi_y != bitmap_desc.dpiY)
+        {
+            ID2D1Bitmap1_Release(entry->bitmap);
+            entry->bitmap = NULL;
+        }
+    }
+
+    if (!entry->bitmap && FAILED(hr = d2d_bitmap_create(context, context->pixel_size,
+            NULL, 0, &bitmap_desc, &bitmap)))
+    {
+        WARN("Failed to create intermediate layer bitmap, hr %#lx.\n", hr);
+        entry->failed = TRUE;
+        d2d_device_context_set_error(context, hr);
+        return;
+    }
+
+    if (!entry->bitmap)
+        entry->bitmap = &bitmap->ID2D1Bitmap1_iface;
+    else
+        bitmap = unsafe_impl_from_ID2D1Bitmap((ID2D1Bitmap *)entry->bitmap);
+    d2d_device_context_initialize_layer_bitmap(context, bitmap, background, parameters->layerOptions);
+    ID2D1DeviceContext6_SetTarget(&context->ID2D1DeviceContext6_iface,
+            (ID2D1Image *)&bitmap->ID2D1Bitmap1_iface);
+    d2d_device_context_push_clip_rect(context, &parameters->contentBounds);
+}
+
+static void d2d_device_context_pop_layer(struct d2d_device_context *context)
+{
+    D2D1_BITMAP_BRUSH_PROPERTIES1 bitmap_brush_desc;
+    D2D1_BRUSH_PROPERTIES brush_desc;
+    D2D1_MATRIX_3X2_F current_transform, composite_transform;
+    D2D1_ANTIALIAS_MODE current_antialias_mode;
+    struct d2d_layer_entry *entry;
+    struct d2d_brush *brush = NULL;
+    D2D1_SIZE_F target_size;
+    D2D1_RECT_F target_rect;
+    HRESULT hr;
+
+    if (!context->layer_stack.count)
+    {
+        d2d_device_context_set_error(context, D2DERR_WRONG_STATE);
+        return;
+    }
+
+    entry = &context->layer_stack.entries[context->layer_stack.count - 1];
+    context->clip_stack.count = entry->clip_count;
+
+    if (entry->failed)
+        goto done;
+
+    ID2D1DeviceContext6_SetTarget(&context->ID2D1DeviceContext6_iface, entry->previous_target);
+
+    bitmap_brush_desc.extendModeX = D2D1_EXTEND_MODE_CLAMP;
+    bitmap_brush_desc.extendModeY = D2D1_EXTEND_MODE_CLAMP;
+    bitmap_brush_desc.interpolationMode = D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+    brush_desc.opacity = max(0.0f, min(entry->opacity, 1.0f));
+
+    current_transform = context->drawing_state.transform;
+    current_antialias_mode = context->drawing_state.antialiasMode;
+
+    if (entry->geometric_mask)
+    {
+        composite_transform = entry->mask_transform;
+        d2d_matrix_multiply(&composite_transform, &entry->world_transform);
+        if (!d2d_matrix_invert(&brush_desc.transform, &composite_transform))
+        {
+            WARN("Layer mask transform is not invertible.\n");
+            d2d_device_context_set_error(context, D2DERR_INVALID_CALL);
+            goto restore_state;
+        }
+
+        if (FAILED(hr = d2d_bitmap_brush_create(context->factory, (ID2D1Bitmap *)entry->bitmap,
+                &bitmap_brush_desc, &brush_desc, &brush)))
+        {
+            WARN("Failed to create layer bitmap brush, hr %#lx.\n", hr);
+            d2d_device_context_set_error(context, hr);
+            goto restore_state;
+        }
+
+        context->drawing_state.transform = composite_transform;
+        context->drawing_state.antialiasMode = entry->mask_antialias_mode;
+        d2d_device_context_fill_geometry(context, unsafe_impl_from_ID2D1Geometry(entry->geometric_mask),
+                brush, unsafe_impl_from_ID2D1Brush(entry->opacity_brush));
+    }
+    else
+    {
+        if (entry->opacity_brush)
+            FIXME("Opacity brushes without a geometric layer mask are not implemented.\n");
+
+        target_size = ID2D1Bitmap1_GetSize(entry->bitmap);
+        d2d_rect_set(&target_rect, 0.0f, 0.0f, target_size.width, target_size.height);
+        context->drawing_state.transform = identity;
+        d2d_device_context_draw_bitmap(context, (ID2D1Bitmap *)entry->bitmap, &target_rect,
+                brush_desc.opacity, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, NULL, NULL, NULL);
+    }
+
+restore_state:
+    context->drawing_state.transform = current_transform;
+    context->drawing_state.antialiasMode = current_antialias_mode;
+    if (brush)
+        ID2D1Brush_Release(&brush->ID2D1Brush_iface);
+
+done:
+    d2d_layer_entry_cleanup(entry, FALSE);
+    --context->layer_stack.count;
+}
+
 static void STDMETHODCALLTYPE d2d_device_context_PushLayer(ID2D1DeviceContext6 *iface,
         const D2D1_LAYER_PARAMETERS *layer_parameters, ID2D1Layer *layer)
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
 
-    FIXME("iface %p, layer_parameters %p, layer %p stub!\n", iface, layer_parameters, layer);
+    TRACE("iface %p, layer_parameters %p, layer %p.\n", iface, layer_parameters, layer);
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
     {
         D2D1_LAYER_PARAMETERS1 parameters;
 
         memcpy(&parameters, layer_parameters, sizeof(*layer_parameters));
-        parameters.layerOptions = D2D1_LAYER_OPTIONS1_NONE;
+        parameters.layerOptions = layer_parameters->layerOptions & D2D1_LAYER_OPTIONS_INITIALIZE_FOR_CLEARTYPE
+                ? D2D1_LAYER_OPTIONS1_INITIALIZE_FROM_BACKGROUND : D2D1_LAYER_OPTIONS1_NONE;
         d2d_command_list_push_layer(context->target.command_list, context, &parameters);
+        return;
+    }
+
+    {
+        D2D1_LAYER_PARAMETERS1 parameters;
+
+        memcpy(&parameters, layer_parameters, sizeof(*layer_parameters));
+        parameters.layerOptions = layer_parameters->layerOptions & D2D1_LAYER_OPTIONS_INITIALIZE_FOR_CLEARTYPE
+                ? D2D1_LAYER_OPTIONS1_INITIALIZE_FROM_BACKGROUND : D2D1_LAYER_OPTIONS1_NONE;
+        d2d_device_context_push_layer(context, &parameters);
     }
 }
 
@@ -1851,10 +2116,15 @@ static void STDMETHODCALLTYPE d2d_device_context_PopLayer(ID2D1DeviceContext6 *i
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
 
-    FIXME("iface %p stub!\n", iface);
+    TRACE("iface %p.\n", iface);
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+    {
         d2d_command_list_pop_layer(context->target.command_list);
+        return;
+    }
+
+    d2d_device_context_pop_layer(context);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_device_context_Flush(ID2D1DeviceContext6 *iface, D2D1_TAG *tag1, D2D1_TAG *tag2)
@@ -1921,9 +2191,6 @@ static void STDMETHODCALLTYPE d2d_device_context_PushAxisAlignedClip(ID2D1Device
         const D2D1_RECT_F *clip_rect, D2D1_ANTIALIAS_MODE antialias_mode)
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
-    D2D1_RECT_F transformed_rect;
-    float x_scale, y_scale;
-    D2D1_POINT_2F point;
 
     TRACE("iface %p, clip_rect %s, antialias_mode %#x.\n", iface, debug_d2d_rect_f(clip_rect), antialias_mode);
 
@@ -1933,23 +2200,7 @@ static void STDMETHODCALLTYPE d2d_device_context_PushAxisAlignedClip(ID2D1Device
     if (antialias_mode != D2D1_ANTIALIAS_MODE_ALIASED)
         FIXME("Ignoring antialias_mode %#x.\n", antialias_mode);
 
-    x_scale = context->desc.dpiX / 96.0f;
-    y_scale = context->desc.dpiY / 96.0f;
-    d2d_point_transform(&point, &context->drawing_state.transform,
-            clip_rect->left * x_scale, clip_rect->top * y_scale);
-    d2d_rect_set(&transformed_rect, point.x, point.y, point.x, point.y);
-    d2d_point_transform(&point, &context->drawing_state.transform,
-            clip_rect->left * x_scale, clip_rect->bottom * y_scale);
-    d2d_rect_expand(&transformed_rect, &point);
-    d2d_point_transform(&point, &context->drawing_state.transform,
-            clip_rect->right * x_scale, clip_rect->top * y_scale);
-    d2d_rect_expand(&transformed_rect, &point);
-    d2d_point_transform(&point, &context->drawing_state.transform,
-            clip_rect->right * x_scale, clip_rect->bottom * y_scale);
-    d2d_rect_expand(&transformed_rect, &point);
-
-    if (!d2d_clip_stack_push(&context->clip_stack, &transformed_rect))
-        WARN("Failed to push clip rect.\n");
+    d2d_device_context_push_clip_rect(context, clip_rect);
 }
 
 static void STDMETHODCALLTYPE d2d_device_context_PopAxisAlignedClip(ID2D1DeviceContext6 *iface)
@@ -2798,10 +3049,21 @@ static void STDMETHODCALLTYPE d2d_device_context_ID2D1DeviceContext_PushLayer(ID
 {
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
 
-    FIXME("iface %p, layer_parameters %p, layer %p stub!\n", iface, layer_parameters, layer);
+    TRACE("iface %p, layer_parameters %p, layer %p.\n", iface, layer_parameters, layer);
 
     if (context->target.type == D2D_TARGET_COMMAND_LIST)
+    {
         d2d_command_list_push_layer(context->target.command_list, context, layer_parameters);
+        return;
+    }
+
+    if (layer_parameters->layerOptions & ~(D2D1_LAYER_OPTIONS1_INITIALIZE_FROM_BACKGROUND
+            | D2D1_LAYER_OPTIONS1_IGNORE_ALPHA))
+        FIXME("Ignoring unknown layer options %#x.\n", layer_parameters->layerOptions);
+    if (layer_parameters->layerOptions & D2D1_LAYER_OPTIONS1_IGNORE_ALPHA)
+        FIXME("Ignoring D2D1_LAYER_OPTIONS1_IGNORE_ALPHA.\n");
+
+    d2d_device_context_push_layer(context, layer_parameters);
 }
 
 static HRESULT STDMETHODCALLTYPE d2d_device_context_InvalidateEffectInputRectangle(ID2D1DeviceContext6 *iface,
