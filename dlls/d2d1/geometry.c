@@ -979,6 +979,15 @@ static BOOL d2d_figure_insert_vertex(struct d2d_figure *figure, size_t idx, D2D1
     return TRUE;
 }
 
+static bool d2d_points_near(const D2D1_POINT_2F *a, const D2D1_POINT_2F *b)
+{
+    float scale_x = fmaxf(fmaxf(fabsf(a->x), fabsf(b->x)), 1.0f);
+    float scale_y = fmaxf(fmaxf(fabsf(a->y), fabsf(b->y)), 1.0f);
+
+    return fabsf(a->x - b->x) <= 4.0f * D2D_FP_EPS * scale_x
+            && fabsf(a->y - b->y) <= 4.0f * D2D_FP_EPS * scale_y;
+}
+
 static bool d2d_figure_add_vertex(struct d2d_figure *figure, D2D1_POINT_2F vertex)
 {
     size_t last = figure->vertex_count - 1;
@@ -2343,12 +2352,44 @@ static BOOL d2d_cdt_insert_segment(struct d2d_cdt *cdt, struct d2d_geometry *geo
     }
 }
 
+/* Look up a figure vertex in the deduplicated fill vertex array. Nearly
+ * coincident points were merged there, so a vertex may have no entry of its own.
+ * It is then represented by the entry it was merged into, which is the nearest
+ * preceding one in sort order. */
+static BOOL d2d_cdt_find_vertex(const struct d2d_cdt *cdt, size_t vertex_count,
+        const D2D1_POINT_2F *point, size_t *idx)
+{
+    size_t low = 0, high = vertex_count, mid;
+
+    while (low < high)
+    {
+        mid = low + (high - low) / 2;
+        if (d2d_cdt_compare_vertices(&cdt->vertices[mid], point) < 0)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+
+    if (low < vertex_count && !d2d_cdt_compare_vertices(&cdt->vertices[low], point))
+    {
+        *idx = low;
+        return TRUE;
+    }
+
+    if (low && d2d_points_near(&cdt->vertices[low - 1], point))
+    {
+        *idx = low - 1;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static BOOL d2d_cdt_insert_segments(struct d2d_cdt *cdt, struct d2d_geometry *geometry)
 {
     size_t start_vertex, end_vertex, i, j, k;
     struct d2d_cdt_edge_ref edge, new_edge;
     const struct d2d_figure *figure;
-    const D2D1_POINT_2F *p;
     BOOL found;
 
     for (i = 0; i < geometry->u.path.figure_count; ++i)
@@ -2362,9 +2403,11 @@ static BOOL d2d_cdt_insert_segments(struct d2d_cdt *cdt, struct d2d_geometry *ge
         if (figure->vertex_count < 2)
             continue;
 
-        p = bsearch(&figure->vertices[figure->vertex_count - 1], cdt->vertices,
-                geometry->fill.vertex_count, sizeof(*p), d2d_cdt_compare_vertices);
-        start_vertex = p - cdt->vertices;
+        for (j = figure->vertex_count, found = FALSE; j-- && !found;)
+            found = d2d_cdt_find_vertex(cdt, geometry->fill.vertex_count,
+                    &figure->vertices[j], &start_vertex);
+        if (!found)
+            continue;
 
         for (k = 0, found = FALSE; k < cdt->edge_count; ++k)
         {
@@ -2395,9 +2438,12 @@ static BOOL d2d_cdt_insert_segments(struct d2d_cdt *cdt, struct d2d_geometry *ge
 
         for (j = 0; j < figure->vertex_count; start_vertex = end_vertex, ++j)
         {
-            p = bsearch(&figure->vertices[j], cdt->vertices,
-                    geometry->fill.vertex_count, sizeof(*p), d2d_cdt_compare_vertices);
-            end_vertex = p - cdt->vertices;
+            if (!d2d_cdt_find_vertex(cdt, geometry->fill.vertex_count,
+                    &figure->vertices[j], &end_vertex))
+            {
+                end_vertex = start_vertex;
+                continue;
+            }
 
             if (start_vertex == end_vertex)
                 continue;
@@ -2843,11 +2889,17 @@ static HRESULT d2d_path_geometry_triangulate(struct d2d_geometry *geometry)
         j += geometry->u.path.figures[i].vertex_count;
     }
 
-    /* Sort vertices, eliminate duplicates. */
+    /* Sort vertices, eliminate duplicates. Endpoints submitted by an application
+     * are not necessarily bit-identical where two segments meet: an arc produced
+     * by a layout engine typically misses the start of the segment that follows
+     * it, or the start of the figure it closes, by a couple of ULPs. Keeping both
+     * points here leaves a sliver that the triangulator cannot resolve, so treat
+     * points that close as one. Only this array is affected, and it is used for
+     * filling alone, so stroked outlines keep the geometry as submitted. */
     qsort(vertices, vertex_count, sizeof(*vertices), d2d_cdt_compare_vertices);
     for (i = 1; i < vertex_count; ++i)
     {
-        if (!memcmp(&vertices[i - 1], &vertices[i], sizeof(*vertices)))
+        if (d2d_points_near(&vertices[i - 1], &vertices[i]))
         {
             --vertex_count;
             memmove(&vertices[i], &vertices[i + 1], (vertex_count - i) * sizeof(*vertices));
