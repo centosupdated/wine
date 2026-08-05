@@ -1928,6 +1928,24 @@ static struct region *expose_window( struct window *win, struct rectangle old_wi
 }
 
 
+/* whether rects have changed in any way other than window rect translation */
+static bool rects_changed( struct window_rects old_rects, struct window_rects new_rects )
+{
+    /* assume the bits have been moved to follow the window rect */
+    int dx = new_rects.window.left - old_rects.window.left, dy = new_rects.window.top  - old_rects.window.top;
+    return new_rects.window.right   - old_rects.window.right   != dx ||
+           new_rects.window.bottom  - old_rects.window.bottom  != dy ||
+           new_rects.visible.left   - old_rects.visible.left   != dx ||
+           new_rects.visible.right  - old_rects.visible.right  != dx ||
+           new_rects.visible.top    - old_rects.visible.top    != dy ||
+           new_rects.visible.bottom - old_rects.visible.bottom != dy ||
+           new_rects.client.left    - old_rects.client.left    != dx ||
+           new_rects.client.right   - old_rects.client.right   != dx ||
+           new_rects.client.top     - old_rects.client.top     != dy ||
+           new_rects.client.bottom  - old_rects.client.bottom  != dy;
+}
+
+
 /* set the window and client rectangles, updating the update region if necessary */
 static void set_window_pos( struct window *win, struct window *previous,
                             unsigned int swp_flags, struct rectangle window_rect,
@@ -1935,13 +1953,11 @@ static void set_window_pos( struct window *win, struct window *previous,
                             struct rectangle surface_rect, struct rectangle valid_rect )
 {
     struct region *old_vis_rgn = NULL, *exposed_rgn = NULL;
-    const struct rectangle old_window_rect = win->rects.window;
-    const struct rectangle old_visible_rect = win->rects.visible;
-    const struct rectangle old_client_rect = win->rects.client;
     struct rectangle rect;
-    int client_changed, frame_changed;
     int visible = (win->style & WS_VISIBLE) || (swp_flags & SWP_SHOWWINDOW);
+    struct window_rects old_rects;
     int zorder_changed = 0;
+    bool frame_changed;
 
     if (win->parent && !is_visible( win->parent )) visible = 0;
 
@@ -1949,6 +1965,7 @@ static void set_window_pos( struct window *win, struct window *previous,
 
     /* set the new window info before invalidating anything */
 
+    old_rects = win->rects;
     win->rects.window  = window_rect;
     win->rects.visible = visible_rect;
     win->rects.surface = surface_rect;
@@ -1964,7 +1981,7 @@ static void set_window_pos( struct window *win, struct window *previous,
     if (win->ex_style & WS_EX_LAYOUTRTL)
     {
         struct window *child;
-        int old_size = old_client_rect.right - old_client_rect.left;
+        int old_size = old_rects.client.right - old_rects.client.left;
         int new_size = win->rects.client.right - win->rects.client.left;
 
         if (old_size != new_size) LIST_FOR_EACH_ENTRY( child, &win->children, struct window, entry )
@@ -1985,7 +2002,7 @@ static void set_window_pos( struct window *win, struct window *previous,
     /* expose anything revealed by the change */
 
     if (!(swp_flags & SWP_NOREDRAW))
-        exposed_rgn = expose_window( win, old_window_rect, old_vis_rgn, zorder_changed );
+        exposed_rgn = expose_window( win, old_rects.window, old_vis_rgn, zorder_changed );
 
     if (!(win->style & WS_VISIBLE))
     {
@@ -2029,33 +2046,11 @@ static void set_window_pos( struct window *win, struct window *previous,
 
     /* expose the whole non-client area if it changed in any way */
 
-    if (swp_flags & SWP_NOCOPYBITS)
-    {
-        frame_changed = ((swp_flags & SWP_FRAMECHANGED) ||
-                         memcmp( &window_rect, &old_window_rect, sizeof(old_window_rect) ) ||
-                         memcmp( &visible_rect, &old_visible_rect, sizeof(old_visible_rect) ));
-        client_changed = memcmp( &client_rect, &old_client_rect, sizeof(old_client_rect) );
-    }
-    else
-    {
-        /* assume the bits have been moved to follow the window rect */
-        int x_offset = window_rect.left - old_window_rect.left;
-        int y_offset = window_rect.top - old_window_rect.top;
-        frame_changed = ((swp_flags & SWP_FRAMECHANGED) ||
-                         window_rect.right  - old_window_rect.right != x_offset ||
-                         window_rect.bottom - old_window_rect.bottom != y_offset ||
-                         visible_rect.left   - old_visible_rect.left   != x_offset ||
-                         visible_rect.right  - old_visible_rect.right  != x_offset ||
-                         visible_rect.top    - old_visible_rect.top    != y_offset ||
-                         visible_rect.bottom - old_visible_rect.bottom != y_offset);
-        client_changed = (client_rect.left   - old_client_rect.left   != x_offset ||
-                          client_rect.right  - old_client_rect.right  != x_offset ||
-                          client_rect.top    - old_client_rect.top    != y_offset ||
-                          client_rect.bottom - old_client_rect.bottom != y_offset ||
-                          memcmp( &valid_rect, &client_rect, sizeof(client_rect) ));
-    }
+    if (swp_flags & SWP_FRAMECHANGED) frame_changed = true;
+    else if (swp_flags & SWP_NOCOPYBITS) frame_changed = memcmp( &old_rects, &win->rects, sizeof(old_rects) );
+    else frame_changed = rects_changed( old_rects, win->rects ) || memcmp( &valid_rect, &win->rects.client, sizeof(valid_rect) );
 
-    if (frame_changed || client_changed)
+    if (frame_changed)
     {
         struct region *win_rgn = old_vis_rgn;  /* reuse previous region */
 
