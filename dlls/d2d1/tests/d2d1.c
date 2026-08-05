@@ -909,6 +909,14 @@ static BOOL compare_rect(const D2D1_RECT_F *rect, float left, float top, float r
             && compare_float(rect->bottom, bottom, ulps);
 }
 
+static BOOL compare_rect_u(const D2D1_RECT_U *rect, UINT left, UINT top, UINT right, UINT bottom)
+{
+    return rect->left == left &&
+            rect->top == top &&
+            rect->right == right &&
+            rect->bottom == bottom;
+}
+
 static BOOL compare_bezier_segment(const D2D1_BEZIER_SEGMENT *b, float x1, float y1,
         float x2, float y2, float x3, float y3, unsigned int ulps)
 {
@@ -10668,6 +10676,7 @@ static ID2D1DeviceContext *create_device_context(ID2D1Factory1 *factory, IDXGIDe
 
 static void test_command_list(BOOL d3d11)
 {
+    D2D1_RECT_F test_destination_rect[2] = {{0, 0, 5, 5}, {5, 5, 9, 9}};
     static const DWORD bitmap_data[] =
     {
         0xffff0000, 0xffffff00, 0xff00ff00, 0xff00ffff,
@@ -10686,6 +10695,8 @@ static void test_command_list(BOOL d3d11)
     D2D1_BITMAP_PROPERTIES bitmap_desc;
     ID2D1StrokeStyle *stroke_style;
     ID2D1CommandList *command_list;
+    ID2D1SpriteBatch *sprite_batch;
+    ID2D1DeviceContext3 *context3;
     struct d2d1_test_context ctx;
     D2D1_PIXEL_FORMAT format;
     ID2D1Geometry *geometry;
@@ -10728,6 +10739,9 @@ static void test_command_list(BOOL d3d11)
     ID2D1DeviceContext_BeginDraw(device_context);
 
     hr = ID2D1DeviceContext_QueryInterface(device_context, &IID_ID2D1RenderTarget, (void **)&rt);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1DeviceContext_QueryInterface(device_context, &IID_ID2D1DeviceContext3, (void **)&context3);
     ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
 
     /* Test how resources are referenced by the list. */
@@ -10869,6 +10883,25 @@ static void test_command_list(BOOL d3d11)
 
     refcount = ID2D1StrokeStyle_Release(stroke_style);
     ok(refcount == 1, "Got unexpected refcount %lu.\n", refcount);
+
+    /* Sprite batch. */
+    ID2D1DeviceContext3_SetAntialiasMode(context3, D2D1_ANTIALIAS_MODE_ALIASED);
+    hr = ID2D1RenderTarget_CreateBitmap(rt, size, bitmap_data, 4 * sizeof(*bitmap_data), &bitmap_desc, &bitmap);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1DeviceContext3_CreateSpriteBatch(context3, &sprite_batch);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, NULL, NULL, NULL, sizeof(*test_destination_rect), 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1DeviceContext3_DrawSpriteBatch(context3, sprite_batch, 0, 2, bitmap, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, D2D1_SPRITE_OPTIONS_NONE);
+
+    refcount = ID2D1SpriteBatch_Release(sprite_batch);
+    ok(refcount == 1, "Got unexpected refcount %lu.\n", refcount);
+    refcount = ID2D1Bitmap_Release(bitmap);
+    ok(refcount == 1, "Got unexpected refcount %lu.\n", refcount);
+    ID2D1DeviceContext3_Release(context3);
 
     /* Close on attached list. */
     ID2D1DeviceContext_GetTarget(device_context, &target);
@@ -18004,6 +18037,356 @@ static void test_glyph_run_world_bounds(BOOL d3d11)
     release_test_context(&ctx);
 }
 
+static void test_sprite_batches(BOOL d3d11)
+{
+    ID2D1SpriteBatch *sprite_batch;
+    struct d2d1_test_context ctx;
+    ID2D1DeviceContext3 *device;
+    ID2D1Bitmap *bitmap;
+    UINT32 sprite_count;
+    BOOL check;
+    HRESULT hr;
+
+    static const DWORD bitmap_data[] =
+    {
+        0xffff0000, 0xffffff00, 0xff00ff00, 0xff00ffff,
+        0xff0000ff, 0xffff00ff, 0xff000000, 0xff7f7f7f,
+        0xffffffff, 0xffffffff, 0xffffffff, 0xff000000,
+        0xffffffff, 0xff000000, 0xff000000, 0xff000000,
+    };
+    const D2D1_SIZE_U bitmap_size = {4, 4};
+    const D2D1_BITMAP_PROPERTIES bitmap_desc = {
+        {DXGI_FORMAT_B8G8R8A8_UNORM,
+         D2D1_ALPHA_MODE_IGNORE},
+        96.0f,
+        96.0f
+    };
+
+    static const D2D1_MATRIX_3X2_F identity =
+    {{{
+        1.0f, 0.0f,
+        0.0f, 1.0f,
+        0.0f, 0.0f,
+    }}};
+
+    D2D1_RECT_F test_destination_rect[2] = {{0, 0, bitmap_size.width, bitmap_size.height}, {5, 5, 9, 9}};
+    D2D1_RECT_U test_source_rect[2] = {{0, 0, 4, 4}, {1, 1, 4, 4}};
+    D2D1_COLOR_F test_colors[2] = {{1.0f, 1.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
+    D2D1_MATRIX_3X2_F test_matrixes[2];
+
+    D2D1_RECT_F destination_rects[4];
+    D2D1_RECT_U source_rects[4];
+    D2D1_COLOR_F colors[4];
+    D2D1_MATRIX_3X2_F transforms[4];
+
+    set_matrix_identity(&test_matrixes[0]);
+    set_matrix_identity(&test_matrixes[1]);
+
+    if (!init_test_context(&ctx, d3d11))
+        return;
+
+    hr = ID2D1DeviceContext_QueryInterface(ctx.context, &IID_ID2D1DeviceContext3, (void**)&device);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1DeviceContext3_CreateSpriteBatch(device, &sprite_batch);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+    if (!sprite_batch)
+    {
+        ID2D1DeviceContext3_Release(device);
+        return;
+    }
+
+    check_interface(sprite_batch, &IID_ID2D1Resource, TRUE);
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, NULL, NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, NULL, test_source_rect, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 2, "Expected sprite count of 2 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, destination_rects, source_rects, colors, transforms);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ok(compare_rect(&destination_rects[0], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[0].left, destination_rects[0].top,
+            destination_rects[0].right, destination_rects[0].bottom);
+
+    ok(compare_rect(&destination_rects[1], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[1].left, destination_rects[1].top,
+            destination_rects[1].right, destination_rects[1].bottom);
+
+    ok(compare_rect_u(&source_rects[0], 0, 0, UINT_MAX, UINT_MAX),
+       "Got unexpected rectangle {%u, %u, %u, %u}.\n",
+            source_rects[0].left, source_rects[0].top,
+            source_rects[0].right, source_rects[0].bottom);
+
+    ok(compare_rect_u(&source_rects[1], 0, 0, UINT_MAX, UINT_MAX),
+       "Got unexpected rectangle {%u, %u, %u, %u}.\n",
+            source_rects[1].left, source_rects[1].top,
+            source_rects[1].right, source_rects[1].bottom);
+
+    ok(!memcmp(&transforms[0], &identity, sizeof(identity)), "Expected identity matrix.\n");
+    ok(!memcmp(&transforms[1], &identity, sizeof(identity)), "Expected identity matrix.\n");
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, NULL, NULL, NULL, sizeof(*test_destination_rect), 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 4, "Expected sprite count of 4 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 4, destination_rects, source_rects, colors, transforms);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ok(compare_rect(&destination_rects[0], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[0].left, destination_rects[0].top,
+            destination_rects[0].right, destination_rects[0].bottom);
+
+    ok(compare_rect(&destination_rects[1], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[1].left, destination_rects[1].top,
+            destination_rects[1].right, destination_rects[1].bottom);
+
+    ok(compare_rect(&destination_rects[2], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[2].left, destination_rects[2].top,
+            destination_rects[2].right, destination_rects[2].bottom);
+
+    ok(compare_rect(&destination_rects[3], 5, 5, 9, 9, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[3].left, destination_rects[3].top,
+            destination_rects[3].right, destination_rects[3].bottom);
+
+    hr = ID2D1SpriteBatch_SetSprites(sprite_batch, 0, 0, NULL, NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_SetSprites(sprite_batch, 0, 8, NULL, NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_SetSprites(sprite_batch, 5, 1, NULL, NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_SetSprites(sprite_batch, 0, 1, NULL, NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_SetSprites(sprite_batch, 0, 8, &test_destination_rect[1], NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_SetSprites(sprite_batch, 0, 1, &test_destination_rect[1], NULL, NULL, NULL, 0, 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 1, destination_rects, NULL, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ok(compare_rect(&destination_rects[0], 5, 5, 9, 9, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[0].left, destination_rects[0].top,
+            destination_rects[0].right, destination_rects[0].bottom);
+
+    ID2D1SpriteBatch_Clear(sprite_batch);
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, NULL, NULL, NULL, sizeof(test_destination_rect->top), 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 2, "Expected sprite count of 2 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, destination_rects, source_rects, colors, transforms);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ok(compare_rect(&destination_rects[0], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[0].left, destination_rects[0].top,
+            destination_rects[0].right, destination_rects[0].bottom);
+
+    ok(compare_rect(&destination_rects[1], 0, 4, 4, 5, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[1].left, destination_rects[1].top,
+            destination_rects[1].right, destination_rects[1].bottom);
+
+    ID2D1SpriteBatch_Clear(sprite_batch);
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, NULL, NULL, NULL, sizeof(*test_destination_rect), 0, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 2, "Expected sprite count of 2 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 4, destination_rects, source_rects, colors, transforms);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 3, 1, destination_rects, source_rects, colors, transforms);
+    ok(hr == E_INVALIDARG, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 3, 0, destination_rects, source_rects, colors, transforms);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 0, destination_rects, source_rects, colors, transforms);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, NULL, NULL, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, destination_rects, source_rects, colors, transforms);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, NULL, source_rects, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, destination_rects, NULL, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ok(compare_rect(&destination_rects[0], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[0].left, destination_rects[0].top,
+            destination_rects[0].right, destination_rects[0].bottom);
+
+    ok(compare_rect(&destination_rects[1], 5, 5, 9, 9, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[1].left, destination_rects[1].top,
+            destination_rects[1].right, destination_rects[1].bottom);
+
+    hr = ID2D1RenderTarget_CreateBitmap(ctx.rt, bitmap_size, bitmap_data, bitmap_size.width * sizeof(*bitmap_data), &bitmap_desc, &bitmap);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ID2D1DeviceContext3_SetAntialiasMode(device, D2D1_ANTIALIAS_MODE_ALIASED);
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 1, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    check = compare_surface(&ctx, "5e8144c13d1a71f0b59d54eba7156218693fa7bd");
+    ok(check, "Surface does not match.\n");
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 2, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    check = compare_surface(&ctx, "064e9e8b46799904cab52b14d69a235d4f41409b");
+    ok(check, "Surface does not match.\n");
+
+    ID2D1SpriteBatch_Clear(sprite_batch);
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, test_source_rect, NULL, NULL, sizeof(*test_destination_rect), sizeof(*test_source_rect), 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    hr = ID2D1SpriteBatch_GetSprites(sprite_batch, 0, 2, destination_rects, source_rects, NULL, NULL);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ok(compare_rect(&destination_rects[0], 0, 0, 4, 4, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[0].left, destination_rects[0].top,
+            destination_rects[0].right, destination_rects[0].bottom);
+
+    ok(compare_rect(&destination_rects[1], 5, 5, 9, 9, 0),
+       "Got unexpected rectangle {%f, %f, %f, %f}.\n",
+            destination_rects[1].left, destination_rects[1].top,
+            destination_rects[1].right, destination_rects[1].bottom);
+
+    ok(compare_rect_u(&source_rects[0], 0, 0, 4, 4),
+       "Got unexpected rectangle {%u, %u, %u, %u}.\n",
+            source_rects[0].left, source_rects[0].top,
+            source_rects[0].right, source_rects[0].bottom);
+
+    ok(compare_rect_u(&source_rects[1], 1, 1, 4, 4),
+       "Got unexpected rectangle {%u, %u, %u, %u}.\n",
+            source_rects[1].left, source_rects[1].top,
+            source_rects[1].right, source_rects[1].bottom);
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 2, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    check = compare_surface(&ctx, "9133aab139f4c0ec2edea7e3c63069370ff88083");
+    ok(check, "Surface does not match.\n");
+
+
+    ID2D1SpriteBatch_Clear(sprite_batch);
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+    set_matrix_identity(&test_matrixes[1]);
+    scale_matrix(&test_matrixes[1], 4.0f, 4.0f);
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, test_source_rect, NULL, test_matrixes, sizeof(*test_destination_rect), sizeof(*test_source_rect), 0, sizeof(D2D1_MATRIX_3X2_F));
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 2, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    check = compare_surface(&ctx, "30bf2de6f4f10ae8ebfc61261ad0d0a4abfed094");
+    ok(check, "Surface does not match.\n");
+
+
+    ID2D1SpriteBatch_Clear(sprite_batch);
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, test_source_rect, test_colors, NULL, sizeof(*test_destination_rect), sizeof(*test_source_rect), sizeof(D2D1_COLOR_F), 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 2, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    check = compare_surface(&ctx, "e21f4ac578dcc4ed266959872d243a8ce4f493d7");
+    todo_wine ok(check, "Surface does not match.\n");
+
+
+    ID2D1SpriteBatch_Clear(sprite_batch);
+    sprite_count = ID2D1SpriteBatch_GetSpriteCount(sprite_batch);
+    ok(sprite_count == 0, "Expected sprite count of 0 got %d\n", sprite_count);
+
+    set_matrix_identity(&test_matrixes[1]);
+    skew_matrix(&test_matrixes[1], 0.5f, 0.5f);
+    hr = ID2D1SpriteBatch_AddSprites(sprite_batch, 2, test_destination_rect, test_source_rect, NULL, test_matrixes, sizeof(*test_destination_rect), sizeof(*test_source_rect), 0, sizeof(D2D1_MATRIX_3X2_F));
+    ok(hr == S_OK, "Got unexpected hr %#lx\n", hr);
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 2, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    check = compare_surface(&ctx, "72d4c7723073eabc2d7d1939b6f41040546b21f7");
+    todo_wine ok(check, "Surface does not match.\n");  // FIXME: Anti Aliasing issue? If instead of skewing I just translate or scale the surface matches.
+
+    ID2D1DeviceContext3_SetAntialiasMode(device, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+    ID2D1DeviceContext3_BeginDraw(device);
+    ID2D1DeviceContext3_DrawSpriteBatch(device, sprite_batch, 0, 2, bitmap, 0, D2D1_SPRITE_OPTIONS_NONE);
+    hr = ID2D1DeviceContext3_EndDraw(device, 0, 0);
+    todo_wine ok(hr == D2DERR_WRONG_STATE, "Got unexpected hr %#lx.\n", hr);
+
+    ID2D1Bitmap_Release(bitmap);
+
+    ID2D1DeviceContext3_Release(device);
+    ID2D1SpriteBatch_Release(sprite_batch);
+    release_test_context(&ctx);
+}
+
 START_TEST(d2d1)
 {
     HMODULE d2d1_dll = GetModuleHandleA("d2d1.dll");
@@ -18127,6 +18510,7 @@ START_TEST(d2d1)
     queue_d3d10_test(test_path_geometry_stream);
     queue_d3d10_test(test_transformed_geometry);
     queue_d3d10_test(test_glyph_run_world_bounds);
+    queue_test(test_sprite_batches);
 
     run_queued_tests();
 }
