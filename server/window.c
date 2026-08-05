@@ -1947,10 +1947,8 @@ static bool rects_changed( struct window_rects old_rects, struct window_rects ne
 
 
 /* set the window and client rectangles, updating the update region if necessary */
-static void set_window_pos( struct window *win, struct window *previous,
-                            unsigned int swp_flags, struct rectangle window_rect,
-                            struct rectangle client_rect, struct rectangle visible_rect,
-                            struct rectangle surface_rect, struct rectangle valid_rect )
+static void set_window_pos( struct window *win, struct window *previous, unsigned int swp_flags,
+                            struct window_rects new_rects, struct rectangle valid_rect )
 {
     struct region *old_vis_rgn = NULL, *exposed_rgn = NULL;
     struct rectangle rect;
@@ -1966,10 +1964,8 @@ static void set_window_pos( struct window *win, struct window *previous,
     /* set the new window info before invalidating anything */
 
     old_rects = win->rects;
-    win->rects.window  = window_rect;
-    win->rects.visible = visible_rect;
-    win->rects.surface = surface_rect;
-    win->rects.client  = client_rect;
+    win->rects = new_rects;
+
     if (!(swp_flags & SWP_NOZORDER) && win->parent) zorder_changed |= link_window( win, previous );
     if (swp_flags & SWP_SHOWWINDOW) win->style |= WS_VISIBLE;
     else if (swp_flags & SWP_HIDEWINDOW) win->style &= ~WS_VISIBLE;
@@ -2054,7 +2050,7 @@ static void set_window_pos( struct window *win, struct window *previous,
     {
         struct region *win_rgn = old_vis_rgn;  /* reuse previous region */
 
-        set_region_rect( win_rgn, window_rect );
+        set_region_rect( win_rgn, win->rects.window );
         if (!is_rect_empty( valid_rect ))
         {
             /* subtract the valid portion of client rect from the total region */
@@ -2065,16 +2061,16 @@ static void set_window_pos( struct window *win, struct window *previous,
                 /* subtract update region since invalid parts of the valid rect won't be copied */
                 if (win->update_region)
                 {
-                    offset_region( tmp, -window_rect.left, -window_rect.top );
+                    offset_region( tmp, -win->rects.window.left, -win->rects.window.top );
                     subtract_region( tmp, tmp, win->update_region );
-                    offset_region( tmp, window_rect.left, window_rect.top );
+                    offset_region( tmp, win->rects.window.left, win->rects.window.top );
                 }
                 if (subtract_region( tmp, win_rgn, tmp )) win_rgn = tmp;
                 else free_region( tmp );
             }
         }
         if (!is_desktop_window(win))
-            offset_region( win_rgn, -client_rect.left, -client_rect.top );
+            offset_region( win_rgn, -win->rects.client.left, -win->rects.client.top );
         if (exposed_rgn)
         {
             union_region( exposed_rgn, exposed_rgn, win_rgn );
@@ -2675,11 +2671,12 @@ DECL_HANDLER(get_window_tree)
 /* set the position and Z order of a window */
 DECL_HANDLER(set_window_pos)
 {
-    struct rectangle window_rect, client_rect, visible_rect, surface_rect, valid_rect, old_window, old_client;
     const struct rectangle *extra_rects = get_req_data();
     struct window *previous = NULL;
     struct window *top, *win = get_window( req->handle );
     unsigned int flags = req->swp_flags, old_style;
+    struct window_rects old_rects, new_rects;
+    struct rectangle valid_rect;
 
     if (!win) return;
     if (!win->parent) flags |= SWP_NOZORDER;  /* no Z order for the desktop */
@@ -2723,20 +2720,20 @@ DECL_HANDLER(set_window_pos)
         return;
     }
 
-    window_rect = req->window;
-    client_rect = req->client;
-    if (get_req_data_size() >= sizeof(struct rectangle)) visible_rect = extra_rects[0];
-    else visible_rect = window_rect;
-    if (get_req_data_size() >= 2 * sizeof(struct rectangle)) surface_rect = extra_rects[1];
-    else surface_rect = visible_rect;
+    new_rects.window = req->window;
+    new_rects.client = req->client;
+    if (get_req_data_size() >= sizeof(struct rectangle)) new_rects.visible = extra_rects[0];
+    else new_rects.visible = new_rects.window;
+    if (get_req_data_size() >= 2 * sizeof(struct rectangle)) new_rects.surface = extra_rects[1];
+    else new_rects.surface = new_rects.visible;
     if (get_req_data_size() >= 3 * sizeof(struct rectangle)) valid_rect = extra_rects[2];
     else valid_rect = empty_rect;
     if (win->parent && win->parent->ex_style & WS_EX_LAYOUTRTL)
     {
-        mirror_rect( win->parent->rects.client, &window_rect );
-        mirror_rect( win->parent->rects.client, &visible_rect );
-        mirror_rect( win->parent->rects.client, &client_rect );
-        mirror_rect( win->parent->rects.client, &surface_rect );
+        mirror_rect( win->parent->rects.client, &new_rects.window );
+        mirror_rect( win->parent->rects.client, &new_rects.visible );
+        mirror_rect( win->parent->rects.client, &new_rects.client );
+        mirror_rect( win->parent->rects.client, &new_rects.surface );
         mirror_rect( win->parent->rects.client, &valid_rect );
     }
 
@@ -2744,12 +2741,12 @@ DECL_HANDLER(set_window_pos)
     if (win->paint_flags & PAINT_HAS_PIXEL_FORMAT) update_pixel_format_flags( win );
 
     old_style = win->style;
-    old_window = win->rects.window;
-    old_client = win->rects.client;
-    set_window_pos( win, previous, flags, window_rect, client_rect,
-                    visible_rect, surface_rect, valid_rect );
-    if ((win->style & old_style & WS_VISIBLE) && (memcmp( &old_client, &win->rects.client, sizeof(old_client) )
-        || memcmp( &old_window, &win->rects.window, sizeof(old_window) )))
+    old_rects = win->rects;
+    set_window_pos( win, previous, flags, new_rects, valid_rect );
+
+    if ((win->style & old_style & WS_VISIBLE) &&
+        (memcmp( &old_rects.client, &win->rects.client, sizeof(old_rects.client) ) ||
+         memcmp( &old_rects.window, &win->rects.window, sizeof(old_rects.window) )))
         update_cursor_pos( win->desktop );
 
     if (win->paint_flags & SET_WINPOS_LAYERED_WINDOW) validate_whole_window( win );
