@@ -1260,7 +1260,9 @@ static int d2d_arc_to_bezier(const D2D_POINT_2F *start_point, const D2D1_ARC_SEG
         return 0;
     }
 
-    if (fabs(rotation) < FUZZ)
+    /* Rotating a circle has no geometric effect, and only introduces rounding
+     * error into the endpoint and centre calculations. */
+    if (fabs(rotation) < FUZZ || radius.x == radius.y)
     {
         rCos = 1.0f;
         rSin = 0.0f;
