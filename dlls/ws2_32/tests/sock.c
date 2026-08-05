@@ -7277,7 +7277,7 @@ static void test_send_writability(void)
     ret = setsockopt(server, SOL_SOCKET, SO_SNDBUF, (char *)&value, sizeof(value));
     ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
     writable = socket_select_writable(server);
-    todo_wine ok(writable == 1, "got writable %d\n", writable);
+    ok(writable == 1, "got writable %d\n", writable);
     ret = send(server, buffer, sizeof(buffer), 0);
     send_error = ret == SOCKET_ERROR ? WSAGetLastError() : 0;
     ok(ret == sizeof(buffer), "got %d, error %u\n", ret, send_error);
