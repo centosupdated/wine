@@ -9700,11 +9700,22 @@ static void test_wic_gdi_interop(BOOL d3d11)
 static void test_layer(BOOL d3d11)
 {
     ID2D1Factory *factory, *layer_factory;
+    ID2D1EllipseGeometry *mask;
+    ID2D1SolidColorBrush *brush;
     struct d2d1_test_context ctx;
+    struct resource_readback rb;
     ID2D1RenderTarget *rt;
     ID2D1Layer *layer;
+    D2D1_LAYER_PARAMETERS1 parameters1;
+    D2D1_LAYER_PARAMETERS parameters;
+    D2D1_MATRIX_3X2_F matrix;
+    D2D1_ELLIPSE ellipse;
+    D2D1_RECT_F rect;
+    D2D1_COLOR_F color;
+    DWORD colour;
     D2D1_SIZE_F size;
     HRESULT hr;
+    unsigned int i;
 
     if (!init_test_context(&ctx, d3d11))
         return;
@@ -9732,6 +9743,64 @@ static void test_layer(BOOL d3d11)
     ok(size.width == 800.0f, "Got unexpected width %.8e.\n", size.width);
     ok(size.height == 600.0f, "Got unexpected height %.8e.\n", size.height);
     ID2D1Layer_Release(layer);
+
+    ID2D1RenderTarget_SetDpi(rt, 96.0f, 96.0f);
+    set_matrix_identity(&matrix);
+    ID2D1RenderTarget_SetTransform(rt, &matrix);
+    set_color(&color, 0.0f, 0.0f, 1.0f, 1.0f);
+    hr = ID2D1RenderTarget_CreateSolidColorBrush(rt, &color, NULL, &brush);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ellipse.point.x = 320.0f;
+    ellipse.point.y = 240.0f;
+    ellipse.radiusX = 64.0f;
+    ellipse.radiusY = 48.0f;
+    hr = ID2D1Factory_CreateEllipseGeometry(factory, &ellipse, &mask);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1RenderTarget_CreateLayer(rt, NULL, &layer);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_rect(&parameters.contentBounds, -FLT_MAX, -FLT_MAX, FLT_MAX, FLT_MAX);
+    parameters.geometricMask = (ID2D1Geometry *)mask;
+    parameters.maskAntialiasMode = D2D1_ANTIALIAS_MODE_ALIASED;
+    parameters.maskTransform = matrix;
+    parameters.opacity = 1.0f;
+    parameters.opacityBrush = NULL;
+    parameters.layerOptions = D2D1_LAYER_OPTIONS_INITIALIZE_FOR_CLEARTYPE;
+
+    memcpy(&parameters1, &parameters, sizeof(parameters));
+    parameters1.layerOptions = D2D1_LAYER_OPTIONS1_INITIALIZE_FROM_BACKGROUND;
+
+    for (i = 0; i < 2; ++i)
+    {
+        winetest_push_context("interface %u", i);
+        ID2D1RenderTarget_BeginDraw(rt);
+        set_color(&color, 1.0f, 0.0f, 0.0f, 1.0f);
+        ID2D1RenderTarget_Clear(rt, &color);
+        if (i)
+            ID2D1DeviceContext_PushLayer(ctx.context, &parameters1, NULL);
+        else
+            ID2D1RenderTarget_PushLayer(rt, &parameters, layer);
+        set_rect(&rect, 0.0f, 0.0f, 640.0f, 480.0f);
+        ID2D1RenderTarget_FillRectangle(rt, &rect, (ID2D1Brush *)brush);
+        ID2D1RenderTarget_PopLayer(rt);
+        hr = ID2D1RenderTarget_EndDraw(rt, NULL, NULL);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        get_surface_readback(&ctx, &rb);
+        colour = get_readback_colour(&rb, 10, 10);
+        todo_wine ok(compare_colour(colour, 0xffff0000, 1),
+                "Got unexpected corner colour 0x%08lx.\n", colour);
+        colour = get_readback_colour(&rb, 320, 240);
+        ok(compare_colour(colour, 0xff0000ff, 1),
+                "Got unexpected centre colour 0x%08lx.\n", colour);
+        release_resource_readback(&rb);
+        winetest_pop_context();
+    }
+
+    ID2D1Layer_Release(layer);
+    ID2D1EllipseGeometry_Release(mask);
+    ID2D1SolidColorBrush_Release(brush);
 
     release_test_context(&ctx);
 }
