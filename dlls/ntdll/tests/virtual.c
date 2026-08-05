@@ -1011,6 +1011,170 @@ static void test_NtAllocateVirtualMemoryEx_address_requirements(void)
     ok(status == STATUS_INVALID_PARAMETER, "Unexpected status %08lx.\n", status);
 }
 
+static BOOL enable_privilege( const char *name )
+{
+    TOKEN_PRIVILEGES privs;
+    HANDLE token;
+    BOOL ret;
+
+    if (!OpenProcessToken( GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token )) return FALSE;
+
+    privs.PrivilegeCount = 1;
+    privs.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    if (!(ret = LookupPrivilegeValueA( NULL, name, &privs.Privileges[0].Luid )))
+    {
+        CloseHandle( token );
+        return FALSE;
+    }
+    SetLastError( 0xdeadbeef );
+    ret = AdjustTokenPrivileges( token, FALSE, &privs, sizeof(privs), NULL, NULL ) &&
+          GetLastError() == ERROR_SUCCESS;
+    CloseHandle( token );
+    return ret;
+}
+
+static NTSTATUS alloc_and_free( SIZE_T size, ULONG type, ULONG protect, BOOL use_ex )
+{
+    NTSTATUS status, ret;
+    void *addr = NULL;
+
+    if (use_ex)
+        status = pNtAllocateVirtualMemoryEx( NtCurrentProcess(), &addr, &size, type, protect, NULL, 0 );
+    else
+        status = NtAllocateVirtualMemory( NtCurrentProcess(), &addr, 0, &size, type, protect );
+
+    if (!status)
+    {
+        size = 0;
+        ret = NtFreeVirtualMemory( NtCurrentProcess(), &addr, &size, MEM_RELEASE );
+        ok( !ret, "NtFreeVirtualMemory returned %08lx\n", ret );
+    }
+    return status;
+}
+
+/* MEM_LARGE_PAGES and MEM_PHYSICAL are absent from the type masks that
+ * NtAllocateVirtualMemory[Ex] validate against, so Wine refuses any allocation
+ * carrying either bit with STATUS_INVALID_PARAMETER.  Windows tells the cases
+ * apart: an AWE reservation succeeds, a large page request without
+ * SeLockMemoryPrivilege fails on the privilege, and the two combined succeed.
+ */
+static void test_large_pages(void)
+{
+    static const char *const api_name[2] = { "NtAllocateVirtualMemory  ", "NtAllocateVirtualMemoryEx" };
+    SIZE_T (WINAPI *pGetLargePageMinimum)(void);
+    SIZE_T large_min, large_size;
+    NTSTATUS status, status_ex;
+    BOOL have_privilege;
+    unsigned int i, j;
+
+    pGetLargePageMinimum = (void *)GetProcAddress( GetModuleHandleA("kernel32.dll"), "GetLargePageMinimum" );
+    if (!pGetLargePageMinimum)
+    {
+        win_skip( "GetLargePageMinimum is not available\n" );
+        return;
+    }
+    large_min = pGetLargePageMinimum();
+    have_privilege = enable_privilege( "SeLockMemoryPrivilege" );
+
+    /* 0xe00000 is the size an affected application asks for; it is already a
+     * multiple of the 2MB minimum, but do not assume that minimum. */
+    large_size = large_min ? (0xe00000 + large_min - 1) & ~(large_min - 1) : 0xe00000;
+
+    trace( "large page minimum %#Ix, allocation size %#Ix, SeLockMemoryPrivilege %s\n",
+           large_min, large_size, have_privilege ? "enabled" : "not held" );
+
+    {
+        const struct
+        {
+            const char *name;
+            SIZE_T      size;
+            ULONG       type;
+            ULONG       protect;
+        }
+        tests[] =
+        {
+            { "COMMIT|RESERVE (control)",          large_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE },
+            { "COMMIT|RESERVE|LARGE",              large_size, MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE },
+            { "RESERVE|LARGE",                     large_size, MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE },
+            { "COMMIT|LARGE",                      large_size, MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE },
+            { "COMMIT|RESERVE|LARGE, unaligned",   page_size,  MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE },
+            { "COMMIT|RESERVE|LARGE, exec prot",   large_size, MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_EXECUTE_READWRITE },
+            { "RESERVE|PHYSICAL (AWE)",            large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE },
+            { "RESERVE|PHYSICAL, exec prot",       large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_EXECUTE_READWRITE },
+            { "COMMIT|RESERVE|PHYSICAL",           large_size, MEM_COMMIT | MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE },
+            /* 0x20403000, the combination an affected application passes */
+            { "COMMIT|RESERVE|PHYSICAL|LARGE",     large_size, MEM_COMMIT | MEM_RESERVE | MEM_PHYSICAL | MEM_LARGE_PAGES, PAGE_READWRITE },
+            { "COMMIT|RESERVE|4MB_PAGES",          large_size, MEM_COMMIT | MEM_RESERVE | MEM_4MB_PAGES, PAGE_READWRITE },
+        };
+
+        for (i = 0; i < ARRAY_SIZE(tests); i++)
+        {
+            NTSTATUS results[2];
+
+            winetest_push_context( "%s", tests[i].name );
+            for (j = 0; j < 2; j++)
+            {
+                if (j && !pNtAllocateVirtualMemoryEx)
+                {
+                    results[j] = results[0];
+                    continue;
+                }
+                results[j] = alloc_and_free( tests[i].size, tests[i].type, tests[i].protect, j );
+                trace( "%s size %#Ix type %#lx prot %#lx -> %08lx\n", api_name[j],
+                       tests[i].size, tests[i].type, tests[i].protect, results[j] );
+            }
+            ok( results[0] == results[1], "Nt %08lx and NtEx %08lx disagree\n", results[0], results[1] );
+            winetest_pop_context();
+        }
+    }
+
+    /* An ordinary allocation of the same size must work, so nothing below can be
+     * blamed on the size or on memory pressure. */
+    status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE, FALSE );
+    ok( !status, "MEM_COMMIT|MEM_RESERVE returned %08lx\n", status );
+
+    /* Reserving an AWE region needs no privilege: MEM_RESERVE on its own, and
+     * PAGE_READWRITE on its own. */
+    status = alloc_and_free( large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE, FALSE );
+    todo_wine ok( !status, "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
+    if (pNtAllocateVirtualMemoryEx)
+    {
+        status_ex = alloc_and_free( large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE, TRUE );
+        todo_wine ok( !status_ex, "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status_ex );
+    }
+
+    status = alloc_and_free( large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_EXECUTE_READWRITE, FALSE );
+    todo_wine ok( status == STATUS_INVALID_PAGE_PROTECTION ||
+                  broken( status == STATUS_INVALID_PARAMETER_6 ) /* <= win10v1507 */,
+                  "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
+
+    status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE, FALSE );
+    ok( status == STATUS_INVALID_PARAMETER ||
+        broken( status == STATUS_INVALID_PARAMETER_5 ) /* <= win10v1507 */,
+        "MEM_COMMIT|MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
+
+    /* Combined with MEM_LARGE_PAGES the commit is accepted, and still without
+     * needing a privilege. */
+    status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_PHYSICAL | MEM_LARGE_PAGES,
+                             PAGE_READWRITE, FALSE );
+    todo_wine ok( !status || broken( status == STATUS_INVALID_PARAMETER_5 ) /* <= win10v1507 */,
+                  "MEM_COMMIT|MEM_RESERVE|MEM_PHYSICAL|MEM_LARGE_PAGES returned %08lx\n", status );
+
+    /* Large pages on their own need SeLockMemoryPrivilege.  Without it the
+     * failure is about the privilege, not about the arguments. */
+    if (!have_privilege)
+    {
+        status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE, FALSE );
+        todo_wine ok( status == STATUS_PRIVILEGE_NOT_HELD,
+                      "MEM_COMMIT|MEM_RESERVE|MEM_LARGE_PAGES returned %08lx\n", status );
+    }
+
+    status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_4MB_PAGES, PAGE_READWRITE, FALSE );
+    ok( status == STATUS_INVALID_PARAMETER ||
+        broken( status == STATUS_INVALID_PARAMETER_5 ) /* <= win10v1507 */,
+        "MEM_COMMIT|MEM_RESERVE|MEM_4MB_PAGES returned %08lx\n", status );
+}
+
 struct test_stack_size_thread_args
 {
     DWORD expect_committed;
@@ -3602,6 +3766,7 @@ START_TEST(virtual)
     test_NtAllocateVirtualMemory();
     test_NtAllocateVirtualMemoryEx();
     test_NtAllocateVirtualMemoryEx_address_requirements();
+    test_large_pages();
     test_NtFreeVirtualMemory();
     test_NtProtectVirtualMemory();
     test_RtlCreateUserStack();
