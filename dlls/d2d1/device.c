@@ -829,7 +829,7 @@ static HRESULT d2d_device_context_update_ps_cb(struct d2d_device_context *contex
 }
 
 static HRESULT d2d_device_context_update_vs_cb(struct d2d_device_context *context,
-        const D2D_MATRIX_3X2_F *geometry_transform, float stroke_width)
+        const D2D_MATRIX_3X2_F *geometry_transform, float stroke_width, float miter_limit)
 {
     D3D11_MAPPED_SUBRESOURCE map_desc;
     ID3D11DeviceContext *d3d_context;
@@ -872,6 +872,11 @@ static HRESULT d2d_device_context_update_vs_cb(struct d2d_device_context *contex
     cb_data->transform_rty.z = w->_32 * tmp_y;
     cb_data->transform_rty.w = -2.0f / context->pixel_size.height;
 
+    cb_data->stroke_params.x = miter_limit;
+    cb_data->stroke_params.y = 0.0f;
+    cb_data->stroke_params.z = 0.0f;
+    cb_data->stroke_params.w = 0.0f;
+
     ID3D11DeviceContext_Unmap(d3d_context, (ID3D11Resource *)context->vs_cb, 0);
     ID3D11DeviceContext_Release(d3d_context);
 
@@ -879,14 +884,16 @@ static HRESULT d2d_device_context_update_vs_cb(struct d2d_device_context *contex
 }
 
 static void d2d_device_context_draw_geometry(struct d2d_device_context *render_target,
-        const struct d2d_geometry *geometry, struct d2d_brush *brush, float stroke_width)
+        const struct d2d_geometry *geometry, struct d2d_brush *brush, float stroke_width,
+        float miter_limit)
 {
     D3D11_SUBRESOURCE_DATA buffer_data;
     D3D11_BUFFER_DESC buffer_desc;
     ID3D11Buffer *ib, *vb;
     HRESULT hr;
 
-    if (FAILED(hr = d2d_device_context_update_vs_cb(render_target, &geometry->transform, stroke_width)))
+    if (FAILED(hr = d2d_device_context_update_vs_cb(render_target, &geometry->transform,
+            stroke_width, miter_limit)))
     {
         WARN("Failed to update vs constant buffer, hr %#lx.\n", hr);
         return;
@@ -1006,6 +1013,7 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawGeometry(ID2D1DeviceContext
     struct d2d_device_context *context = impl_from_ID2D1DeviceContext(iface);
     struct d2d_brush *brush_impl = unsafe_impl_from_ID2D1Brush(brush);
     struct d2d_stroke_style *stroke_style_impl = unsafe_impl_from_ID2D1StrokeStyle(stroke_style);
+    float miter_limit = D2D_MITER_LIMIT_NONE;
 
     TRACE("iface %p, geometry %p, brush %p, stroke_width %.8e, stroke_style %p.\n",
             iface, geometry, brush, stroke_width, stroke_style);
@@ -1026,16 +1034,20 @@ static void STDMETHODCALLTYPE d2d_device_context_DrawGeometry(ID2D1DeviceContext
         return;
     }
 
-    if (stroke_style)
-        FIXME("Ignoring stroke style %p.\n", stroke_style);
-
     if (stroke_style_impl)
     {
         if (stroke_style_impl->desc.transformType == D2D1_STROKE_TRANSFORM_TYPE_FIXED)
             stroke_width /= context->drawing_state.transform.m11;
+
+        miter_limit = d2d_stroke_style_miter_limit(&stroke_style_impl->desc);
+
+        if (stroke_style_impl->desc.dashStyle != D2D1_DASH_STYLE_SOLID
+                || stroke_style_impl->desc.startCap != D2D1_CAP_STYLE_FLAT
+                || stroke_style_impl->desc.endCap != D2D1_CAP_STYLE_FLAT)
+            FIXME("Ignoring dash style and line caps of stroke style %p.\n", stroke_style);
     }
 
-    d2d_device_context_draw_geometry(context, geometry_impl, brush_impl, stroke_width);
+    d2d_device_context_draw_geometry(context, geometry_impl, brush_impl, stroke_width, miter_limit);
 }
 
 static void d2d_device_context_fill_geometry(struct d2d_device_context *render_target,
@@ -1053,7 +1065,8 @@ static void d2d_device_context_fill_geometry(struct d2d_device_context *render_t
     buffer_data.SysMemPitch = 0;
     buffer_data.SysMemSlicePitch = 0;
 
-    if (FAILED(hr = d2d_device_context_update_vs_cb(render_target, &geometry->transform, 0.0f)))
+    if (FAILED(hr = d2d_device_context_update_vs_cb(render_target, &geometry->transform, 0.0f,
+            D2D_MITER_LIMIT_NONE)))
     {
         WARN("Failed to update vs constant buffer, hr %#lx.\n", hr);
         return;
@@ -4004,6 +4017,7 @@ static const char shape_vs_code_outline[] =
     "float stroke_width;\n"
     "float4 transform_rtx;\n"
     "float4 transform_rty;\n"
+    "float4 stroke_params;\n"
     "\n"
     "struct output\n"
     "{\n"
@@ -4039,6 +4053,20 @@ static const char shape_vs_code_outline[] =
     "    v_p = float2(-q_prev.y, q_prev.x);\n"
     "    l = -dot(v_p, q_next) / (1.0f + dot(q_prev, q_next));\n"
     "    q_i = l * q_prev + v_p;\n"
+    "\n"
+    "    /* |q⃑ᵢ| = 1 / sin(½θ), which is exactly the ratio of miter length to\n"
+    "     * stroke width. Left unbounded it diverges as the angle closes, and the\n"
+    "     * join shoots out into a spike. Clamping its length while keeping its\n"
+    "     * direction applies the miter limit.\n"
+    "     *\n"
+    "     * A non-positive value means \"no limit\": the stroke then keeps the\n"
+    "     * original unbounded miter instead of collapsing to nothing. */\n"
+    "    if (stroke_params.x > 0.0f)\n"
+    "    {\n"
+    "        l = length(q_i);\n"
+    "        if (l > stroke_params.x)\n"
+    "            q_i *= stroke_params.x / l;\n"
+    "    }\n"
     "\n"
     "    o.b = float4(0.0, 0.0, 0.0, 0.0);\n"
     "\n"
