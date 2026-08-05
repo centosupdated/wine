@@ -128,7 +128,7 @@ static inline int validate_rectangles( const struct rectangle *rects, unsigned i
 
     for (ptr = rects, end = rects + nb_rects; ptr < end; ptr++)
     {
-        if (is_rect_empty( ptr )) return 0;  /* empty rectangle */
+        if (is_rect_empty( *ptr )) return 0;  /* empty rectangle */
         if (ptr == end - 1) break;
         if (ptr[0].top == ptr[1].top)  /* same band */
         {
@@ -620,12 +620,12 @@ void free_region( struct region *region )
 }
 
 /* set region to a simple rectangle */
-void set_region_rect( struct region *region, const struct rectangle *rect )
+void set_region_rect( struct region *region, struct rectangle rect )
 {
     if (!is_rect_empty( rect ))
     {
         region->num_rects = 1;
-        region->rects[0] = region->extents = *rect;
+        region->rects[0] = region->extents = rect;
     }
     else
     {
@@ -690,10 +690,10 @@ int is_region_equal( const struct region *region1, const struct region *region2 
 
     if (region1->num_rects != region2->num_rects) return 0;
     if (region1->num_rects == 0) return 1;
-    if (!is_rect_equal( &region1->extents, &region2->extents )) return 0;
+    if (!is_rect_equal( region1->extents, region2->extents )) return 0;
     for (i = 0; i < region1->num_rects; i++)
     {
-        if (!is_rect_equal( &region1->rects[i], &region2->rects[i] )) return 0;
+        if (!is_rect_equal( region1->rects[i], region2->rects[i] )) return 0;
     }
 
     return 1;
@@ -718,7 +718,7 @@ void offset_region( struct region *region, int x, int y )
 }
 
 /* mirror a region relative to a window client rect */
-void mirror_region( const struct rectangle *client_rect, struct region *region )
+void mirror_region( struct rectangle rect, struct region *region )
 {
     int start, end, i, j;
 
@@ -731,12 +731,12 @@ void mirror_region( const struct rectangle *client_rect, struct region *region )
             struct rectangle rect = region->rects[j];
             region->rects[i] = region->rects[j];
             region->rects[j] = rect;
-            mirror_rect( client_rect, &region->rects[j] );
-            mirror_rect( client_rect, &region->rects[i] );
+            mirror_rect( rect, &region->rects[j] );
+            mirror_rect( rect, &region->rects[i] );
         }
-        if (i == j) mirror_rect( client_rect, &region->rects[i] );
+        if (i == j) mirror_rect( rect, &region->rects[i] );
     }
-    mirror_rect( client_rect, &region->extents );
+    mirror_rect( rect, &region->extents );
 }
 
 
@@ -872,16 +872,16 @@ int point_in_region( struct region *region, int x, int y )
 }
 
 /* check if the given rectangle is (at least partially) inside the region */
-int rect_in_region( struct region *region, const struct rectangle *rect )
+int rect_in_region( struct region *region, struct rectangle rect )
 {
     const struct rectangle *ptr, *end;
 
     for (ptr = region->rects, end = region->rects + region->num_rects; ptr < end; ptr++)
     {
-        if (ptr->top >= rect->bottom) return 0;
-        if (ptr->bottom <= rect->top) continue;
-        if (ptr->left >= rect->right) continue;
-        if (ptr->right <= rect->left) continue;
+        if (ptr->top >= rect.bottom) return 0;
+        if (ptr->bottom <= rect.top) continue;
+        if (ptr->left >= rect.right) continue;
+        if (ptr->right <= rect.left) continue;
         return 1;
     }
     return 0;
