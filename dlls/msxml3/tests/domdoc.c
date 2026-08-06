@@ -157,6 +157,8 @@ typedef struct
     LONG ref;
 } dispevent;
 
+static int g_expectedcall, g_unexpectedcall;
+
 static inline dispevent *impl_from_IDispatch( IDispatch *iface )
 {
     return CONTAINING_RECORD(iface, dispevent, IDispatch_iface);
@@ -198,7 +200,7 @@ static ULONG WINAPI dispevent_Release(IDispatch *iface)
 
 static HRESULT WINAPI dispevent_GetTypeInfoCount(IDispatch *iface, UINT *pctinfo)
 {
-    ok(0, "unexpected call\n");
+    g_unexpectedcall++;
     *pctinfo = 0;
     return S_OK;
 }
@@ -206,14 +208,14 @@ static HRESULT WINAPI dispevent_GetTypeInfoCount(IDispatch *iface, UINT *pctinfo
 static HRESULT WINAPI dispevent_GetTypeInfo(IDispatch *iface, UINT iTInfo,
         LCID lcid, ITypeInfo **ppTInfo)
 {
-    ok(0, "unexpected call\n");
+    g_unexpectedcall++;
     return S_OK;
 }
 
 static HRESULT WINAPI dispevent_GetIDsOfNames(IDispatch *iface, REFIID riid,
         LPOLESTR *rgszNames, UINT cNames, LCID lcid, DISPID *rgDispId)
 {
-    ok(0, "unexpected call\n");
+    g_unexpectedcall++;
     return S_OK;
 }
 
@@ -221,7 +223,20 @@ static HRESULT WINAPI dispevent_Invoke(IDispatch *iface, DISPID member, REFIID r
         LCID lcid, WORD flags, DISPPARAMS *params, VARIANT *result,
         EXCEPINFO *excepInfo, UINT *argErr)
 {
-    ok(0, "unexpected call\n");
+    ok(!member, "expected 0 member, got %ld.\n", member);
+    ok(lcid == LOCALE_SYSTEM_DEFAULT, "expected LOCALE_SYSTEM_DEFAULT, got lcid %lx.\n", lcid);
+    ok(flags == DISPATCH_METHOD, "expected DISPATCH_METHOD, got %d\n", flags);
+
+    ok(params->cArgs == 0, "got %d\n", params->cArgs);
+    ok(params->cNamedArgs == 0, "got %d\n", params->cNamedArgs);
+    ok(params->rgvarg == NULL, "got %p\n", params->rgvarg);
+    ok(params->rgdispidNamedArgs == NULL, "got %p\n", params->rgdispidNamedArgs);
+
+    ok(result == NULL, "got %p\n", result);
+    ok(excepInfo == NULL, "got %p\n", excepInfo);
+    ok(argErr == NULL, "got %p\n", argErr);
+
+    g_expectedcall++;
     return E_FAIL;
 }
 
@@ -1517,12 +1532,6 @@ static void test_domdoc( void )
 
     doc = create_document(&IID_IXMLDOMDocument);
     if (!doc) return;
-
-if (0)
-{
-    /* crashes on native */
-    IXMLDOMDocument_loadXML( doc, (BSTR)0x1, NULL );
-}
 
     /* try some stupid things */
     hr = IXMLDOMDocument_loadXML( doc, NULL, NULL );
@@ -9045,6 +9054,128 @@ static void test_events(void)
 
     IDispatch_Release(event);
 
+    IXMLDOMDocument_Release(doc);
+}
+
+static void test_onreadystatechange_load_stream(void)
+{
+    IXMLDOMDocument *doc;
+    IStream *stream;
+    HGLOBAL mem;
+    IDispatch *event;
+    VARIANT v_src;
+    VARIANT v;
+    VARIANT_BOOL b;
+    HRESULT hr;
+    char xml[] = "<?xml version=\"1.0\"?><root/>";
+    size_t len = strlen(xml);
+
+    doc = create_document(&IID_IXMLDOMDocument);
+    event = create_dispevent();
+
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = event;
+    hr = IXMLDOMDocument_put_onreadystatechange(doc, v);
+    ok(hr == S_OK, "put_onreadystatechange returned %#lx.\n", hr);
+
+    mem = GlobalAlloc(0, len);
+    memcpy(mem, xml, len);
+    hr = CreateStreamOnHGlobal(mem, TRUE, &stream);
+    ok(hr == S_OK, "CreateStreamOnHGlobal returned %#lx.\n", hr);
+
+    g_expectedcall = 0;
+    g_unexpectedcall = 0;
+    VariantInit(&v_src);
+    V_VT(&v_src) = VT_UNKNOWN;
+    V_UNKNOWN(&v_src) = (IUnknown*)stream;
+    hr = IXMLDOMDocument_load(doc, v_src, &b);
+    ok(hr == S_OK, "load returned %#lx.\n", hr);
+    ok(b == VARIANT_TRUE, "load set b to %#hx.\n", b);
+    ok(g_expectedcall >= 1, "expected onreadystatechange to fire at least once, got %d.\n", g_expectedcall);
+    ok(g_unexpectedcall == 0, "got %d unexpected IDispatch calls.\n", g_unexpectedcall);
+
+    IStream_Release(stream);
+    IDispatch_Release(event);
+    IXMLDOMDocument_Release(doc);
+}
+
+static void test_onreadystatechange_sync(void)
+{
+    static const WCHAR xml[] = L"<?xml version=\"1.0\"?><root/>";
+    static const WCHAR garbage[] = L"this is not xml at all";
+    IXMLDOMDocument *doc;
+    IDispatch *event;
+    VARIANT_BOOL b;
+    HRESULT hr;
+    VARIANT v;
+    LONG state;
+    BSTR str;
+
+    /* MSXML invokes onreadystatechange synchronously from loadXML()
+     * before returning to the caller.  The handler may fire at every
+     * readyState transition (UNINITIALIZED>LOADING>LOADED>INTERACTIVE>
+     * COMPLETED) so we only assert that it fired at least once and that
+     * readyState reached 4 by the time loadXML() returns. */
+    doc = create_document(&IID_IXMLDOMDocument);
+
+    event = create_dispevent();
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = event;
+    hr = IXMLDOMDocument_put_onreadystatechange(doc, v);
+    ok(hr == S_OK, "put_onreadystatechange returned %#lx.\n", hr);
+
+    g_expectedcall = 0;
+    g_unexpectedcall = 0;
+
+    str = SysAllocString(xml);
+    b = VARIANT_FALSE;
+    hr = IXMLDOMDocument_loadXML(doc, str, &b);
+    SysFreeString(str);
+    ok(hr == S_OK, "loadXML returned %#lx.\n", hr);
+    ok(b == VARIANT_TRUE, "loadXML set success to %d.\n", b);
+
+    ok(g_expectedcall >= 1, "expected onreadystatechange to fire at least once, got %d.\n", g_expectedcall);
+    ok(g_unexpectedcall == 0, "got %d unexpected IDispatch calls.\n", g_unexpectedcall);
+
+    state = -1;
+    hr = IXMLDOMDocument_get_readyState(doc, &state);
+    ok(hr == S_OK, "get_readyState returned %#lx.\n", hr);
+    ok(state == 4, "expected readyState 4 after successful loadXML, got %ld.\n", state);
+
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = NULL;
+    hr = IXMLDOMDocument_put_onreadystatechange(doc, v);
+    ok(hr == S_OK, "put_onreadystatechange(NULL) returned %#lx.\n", hr);
+
+    IDispatch_Release(event);
+    IXMLDOMDocument_Release(doc);
+
+    /* A failed parse on a fresh document must not invoke the handler. */
+    doc = create_document(&IID_IXMLDOMDocument);
+
+    event = create_dispevent();
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = event;
+    hr = IXMLDOMDocument_put_onreadystatechange(doc, v);
+    ok(hr == S_OK, "put_onreadystatechange returned %#lx.\n", hr);
+
+    g_expectedcall = 0;
+    g_unexpectedcall = 0;
+
+    str = SysAllocString(garbage);
+    b = VARIANT_TRUE;
+    hr = IXMLDOMDocument_loadXML(doc, str, &b);
+    SysFreeString(str);
+    ok(hr == S_FALSE, "loadXML on invalid xml returned %#lx.\n", hr);
+    ok(b == VARIANT_FALSE, "loadXML on invalid xml set success to %d.\n", b);
+    ok(g_unexpectedcall == 0, "got %d unexpected IDispatch calls.\n", g_unexpectedcall);
+
+    V_VT(&v) = VT_DISPATCH;
+    V_DISPATCH(&v) = NULL;
+    hr = IXMLDOMDocument_put_onreadystatechange(doc, v);
+    ok(hr == S_OK, "put_onreadystatechange(NULL) returned %#lx.\n", hr);
+
+    IDispatch_Release(event);
     IXMLDOMDocument_Release(doc);
 }
 
@@ -18807,6 +18938,8 @@ START_TEST(domdoc)
     test_default_properties();
     test_selectSingleNode();
     test_events();
+    test_onreadystatechange_load_stream();
+    test_onreadystatechange_sync();
     test_put_nodeTypedValue();
     test_get_xml();
     test_insertBefore();
