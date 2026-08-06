@@ -1136,17 +1136,17 @@ static void test_large_pages(void)
     /* Reserving an AWE region needs no privilege: MEM_RESERVE on its own, and
      * PAGE_READWRITE on its own. */
     status = alloc_and_free( large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE, FALSE );
-    todo_wine ok( !status, "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
+    ok( !status, "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
     if (pNtAllocateVirtualMemoryEx)
     {
         status_ex = alloc_and_free( large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE, TRUE );
-        todo_wine ok( !status_ex, "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status_ex );
+        ok( !status_ex, "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status_ex );
     }
 
     status = alloc_and_free( large_size, MEM_RESERVE | MEM_PHYSICAL, PAGE_EXECUTE_READWRITE, FALSE );
-    todo_wine ok( status == STATUS_INVALID_PAGE_PROTECTION ||
-                  broken( status == STATUS_INVALID_PARAMETER_6 ) /* <= win10v1507 */,
-                  "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
+    ok( status == STATUS_INVALID_PAGE_PROTECTION ||
+        broken( status == STATUS_INVALID_PARAMETER_6 ) /* <= win10v1507 */,
+        "MEM_RESERVE|MEM_PHYSICAL returned %08lx\n", status );
 
     status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_PHYSICAL, PAGE_READWRITE, FALSE );
     ok( status == STATUS_INVALID_PARAMETER ||
@@ -1157,16 +1157,16 @@ static void test_large_pages(void)
      * needing a privilege. */
     status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_PHYSICAL | MEM_LARGE_PAGES,
                              PAGE_READWRITE, FALSE );
-    todo_wine ok( !status || broken( status == STATUS_INVALID_PARAMETER_5 ) /* <= win10v1507 */,
-                  "MEM_COMMIT|MEM_RESERVE|MEM_PHYSICAL|MEM_LARGE_PAGES returned %08lx\n", status );
+    ok( !status || broken( status == STATUS_INVALID_PARAMETER_5 ) /* <= win10v1507 */,
+        "MEM_COMMIT|MEM_RESERVE|MEM_PHYSICAL|MEM_LARGE_PAGES returned %08lx\n", status );
 
     /* Large pages on their own need SeLockMemoryPrivilege.  Without it the
      * failure is about the privilege, not about the arguments. */
     if (!have_privilege)
     {
         status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES, PAGE_READWRITE, FALSE );
-        todo_wine ok( status == STATUS_PRIVILEGE_NOT_HELD,
-                      "MEM_COMMIT|MEM_RESERVE|MEM_LARGE_PAGES returned %08lx\n", status );
+        ok( status == STATUS_PRIVILEGE_NOT_HELD,
+            "MEM_COMMIT|MEM_RESERVE|MEM_LARGE_PAGES returned %08lx\n", status );
     }
 
     status = alloc_and_free( large_size, MEM_COMMIT | MEM_RESERVE | MEM_4MB_PAGES, PAGE_READWRITE, FALSE );
