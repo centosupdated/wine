@@ -20836,6 +20836,64 @@ static void test_DoubleSetCapture(void)
     DestroyWindow(hwnd);
 }
 
+static int capturechanged_count;
+
+static LRESULT CALLBACK release_capture_captor_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    if (msg == WM_CAPTURECHANGED) capturechanged_count++;
+    return DefWindowProcA( hwnd, msg, wp, lp );
+}
+
+static LRESULT CALLBACK release_capture_caller_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    /* Call ReleaseCapture() from within this window's own message
+     * processing, while this window itself does not hold capture. */
+    if (msg == WM_APP) ReleaseCapture();
+    return DefWindowProcA( hwnd, msg, wp, lp );
+}
+
+static void test_ReleaseCaptureOtherWindow(void)
+{
+    WNDCLASSA cls;
+    HWND hwnd1, hwnd2;
+
+    memset( &cls, 0, sizeof(cls) );
+    cls.hInstance = GetModuleHandleA( 0 );
+
+    cls.lpfnWndProc = release_capture_captor_wnd_proc;
+    cls.lpszClassName = "ReleaseCaptureCaptorClass";
+    ok( RegisterClassA( &cls ) != 0, "RegisterClassA failed, error %ld\n", GetLastError() );
+
+    cls.lpfnWndProc = release_capture_caller_wnd_proc;
+    cls.lpszClassName = "ReleaseCaptureCallerClass";
+    ok( RegisterClassA( &cls ) != 0, "RegisterClassA failed, error %ld\n", GetLastError() );
+
+    hwnd1 = CreateWindowExA( 0, "ReleaseCaptureCaptorClass", "captor", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, 0, NULL );
+    ok( hwnd1 != 0, "Failed to create window 1\n" );
+    hwnd2 = CreateWindowExA( 0, "ReleaseCaptureCallerClass", "caller", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                            350, 100, 200, 200, 0, 0, 0, NULL );
+    ok( hwnd2 != 0, "Failed to create window 2\n" );
+
+    SetCapture( hwnd1 );
+    ok( GetCapture() == hwnd1, "expected hwnd1 to have capture, got %p\n", GetCapture() );
+
+    /* hwnd2 does not have capture; hwnd2 calling ReleaseCapture() from its
+     * own wndproc still releases hwnd1's real capture and notifies it,
+     * matching real Windows (confirmed against a real Windows machine). */
+    capturechanged_count = 0;
+    SendMessageA( hwnd2, WM_APP, 0, 0 );
+
+    ok( capturechanged_count == 1, "expected one WM_CAPTURECHANGED, got %d\n", capturechanged_count );
+    ok( GetCapture() == NULL, "expected capture to be released, got %p\n", GetCapture() );
+
+    ReleaseCapture();
+    DestroyWindow( hwnd1 );
+    DestroyWindow( hwnd2 );
+    UnregisterClassA( "ReleaseCaptureCaptorClass", GetModuleHandleA( 0 ) );
+    UnregisterClassA( "ReleaseCaptureCallerClass", GetModuleHandleA( 0 ) );
+}
+
 static const struct message WmRestoreMinimizedSeq[] =
 {
     { HCBT_ACTIVATE, hook },
@@ -21551,6 +21609,7 @@ START_TEST(msg)
     test_TrackPopupMenu();
     test_TrackPopupMenuEmpty();
     test_DoubleSetCapture();
+    test_ReleaseCaptureOtherWindow();
     test_create_name();
     test_hook_changing_window_proc();
     test_hook_cleanup();

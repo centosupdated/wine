@@ -296,6 +296,7 @@ static const struct ratio no_dpi;
 UINT system_dpi;
 static RECT work_area;
 static DWORD process_layout = ~0u;
+BOOL compat_keep_cache_dc;
 
 static HDC display_dc;
 static pthread_mutex_t display_dc_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -6012,6 +6013,8 @@ void sysparams_init(void)
     {
         if (strstr( app_compat_flags, "HIGHDPIAWARE" )) NtUserSetProcessDpiAwarenessContext( NTUSER_DPI_SYSTEM_AWARE, 0 );
         if (strstr( app_compat_flags, "DPIUNAWARE" )) NtUserSetProcessDpiAwarenessContext( NTUSER_DPI_UNAWARE, 0 );
+        /* Wine extension, see Wine-Bug 27403 */
+        if (strstr( app_compat_flags, "WINE_KEEPCACHEDC" )) compat_keep_cache_dc = TRUE;
     }
     free( app_compat_flags );
 }

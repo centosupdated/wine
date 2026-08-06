@@ -1243,7 +1243,12 @@ static INT release_dc( HWND hwnd, HDC hdc, BOOL end_paint )
         {
             dce->count = 0;
             set_dc_pixel_format_internal( hdc, 0, &drawables );
-            set_dce_flags( dce->hdc, DCHF_DISABLEDC );
+            /* Wine-Bug 27403: some apps keep using a cache DC handle across
+             * multiple paint cycles; disabling it here makes their later
+             * drawing silently no-op. Real Windows apps aren't supposed to
+             * do this, so keep disabling by default, but let flagged
+             * processes opt out via AppCompatFlags. */
+            if (!compat_keep_cache_dc) set_dce_flags( dce->hdc, DCHF_DISABLEDC );
         }
         ret = TRUE;
     }
