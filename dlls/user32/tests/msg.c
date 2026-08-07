@@ -20902,6 +20902,71 @@ static void test_SetWindowPosTopmostChildSiblingErase(void)
     UnregisterClassA( "TopmostSiblingClass", GetModuleHandleA( 0 ) );
 }
 
+static HWND rapid_active_track_hwnd;
+static int rapid_active_cancelmode_count;
+static int rapid_active_deactivate_count;
+
+static LRESULT CALLBACK rapid_active_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    if (hwnd == rapid_active_track_hwnd)
+    {
+        if (msg == WM_CANCELMODE) rapid_active_cancelmode_count++;
+        if (msg == WM_ACTIVATE && LOWORD(wp) == WA_INACTIVE) rapid_active_deactivate_count++;
+    }
+    return DefWindowProcA( hwnd, msg, wp, lp );
+}
+
+static void test_RapidSetActiveWindow(void)
+{
+    WNDCLASSA cls;
+    HWND hwnd, popup;
+
+    memset( &cls, 0, sizeof(cls) );
+    cls.hInstance = GetModuleHandleA( 0 );
+    cls.lpfnWndProc = rapid_active_wnd_proc;
+    cls.lpszClassName = "RapidActiveClass";
+    ok( RegisterClassA( &cls ) != 0, "RegisterClassA failed, error %ld\n", GetLastError() );
+
+    hwnd = CreateWindowExA( 0, "RapidActiveClass", "main", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, 0, NULL );
+    ok( hwnd != 0, "Failed to create main window\n" );
+    /* Same shape as SolidWorks's transient suggestion popup: owned, distinct
+     * top-level window, briefly made active while the user interacts with it. */
+    popup = CreateWindowExA( 0, "RapidActiveClass", "popup", WS_POPUP | WS_VISIBLE,
+                             120, 120, 100, 100, hwnd, 0, 0, NULL );
+    ok( popup != 0, "Failed to create popup window\n" );
+
+    SetForegroundWindow( hwnd );
+    flush_events();
+
+    rapid_active_track_hwnd = hwnd;
+    rapid_active_cancelmode_count = 0;
+    rapid_active_deactivate_count = 0;
+
+    /* SolidWorks does SetActiveWindow(popup) then SetActiveWindow(hwnd) back
+     * to back, with no message pump in between — the X server confirms the
+     * first request only after the second one has already been sent.
+     * hwnd legitimately gets deactivated once (by the first call, delivered
+     * synchronously) and reactivated once — exactly 1 WM_ACTIVATE(deactivate)
+     * is correct. What must NOT happen: an intermediate WM_CANCELMODE from
+     * the stale focus-out, or a SECOND, spurious WM_ACTIVATE(deactivate)
+     * once hwnd is already active again (from the delayed X11 confirmation
+     * of the now-superseded popup activation request). */
+    SetActiveWindow( popup );
+    SetActiveWindow( hwnd );
+    flush_events();
+
+    ok( GetActiveWindow() == hwnd, "expected hwnd to be active again, got %p\n", GetActiveWindow() );
+    ok( rapid_active_cancelmode_count == 0,
+        "expected no WM_CANCELMODE from the intermediate focus-out, got %d\n", rapid_active_cancelmode_count );
+    ok( rapid_active_deactivate_count == 1,
+        "expected exactly 1 WM_ACTIVATE(deactivate), got %d\n", rapid_active_deactivate_count );
+
+    DestroyWindow( popup );
+    DestroyWindow( hwnd );
+    UnregisterClassA( "RapidActiveClass", GetModuleHandleA( 0 ) );
+}
+
 static const struct message WmRestoreMinimizedSeq[] =
 {
     { HCBT_ACTIVATE, hook },
@@ -21618,6 +21683,7 @@ START_TEST(msg)
     test_TrackPopupMenuEmpty();
     test_DoubleSetCapture();
     test_SetWindowPosTopmostChildSiblingErase();
+    test_RapidSetActiveWindow();
     test_create_name();
     test_hook_changing_window_proc();
     test_hook_cleanup();
