@@ -1054,6 +1054,7 @@ enum wined3d_memory_segment_group
 #define WINED3DCREATE_ENABLE_PRESENTSTATS                       0x00004000
 #define WINED3DCREATE_DISABLE_PRINTSCREEN                       0x00008000
 #define WINED3DCREATE_SCREENSAVER                               0x10000000
+#define WINED3DCREATE_VIDEO_SUPPORT                             0x20000000
 
 /* VTF defines */
 #define WINED3DDMAPSAMPLER                                      0x100
