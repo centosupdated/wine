@@ -947,7 +947,6 @@ static void test_dtm_change_on_selchange(void)
 
     memset(&dtm_notify.last_change, 0, sizeof(dtm_notify.last_change));
     SendMessageA(hwnd, WM_NOTIFY, nmsel.nmhdr.idFrom, (LPARAM)&nmsel);
-    todo_wine
     ok(dtm_notify.last_change.wYear == 2007 && dtm_notify.last_change.wMonth == 4 &&
        dtm_notify.last_change.wDay == 20,
        "MCN_SELCHANGE: expected date 2007/4/20, got %u/%u/%u\n",
