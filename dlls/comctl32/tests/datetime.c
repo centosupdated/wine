@@ -892,6 +892,80 @@ static void test_dts_shownone(void)
     DestroyWindow(hwnd);
 }
 
+static struct
+{
+    SYSTEMTIME last_change;
+} dtm_notify;
+
+static LRESULT WINAPI dtm_parent_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_NOTIFY)
+    {
+        const NMHDR *nmhdr = (const NMHDR *)lParam;
+        if (nmhdr->code == DTN_DATETIMECHANGE)
+        {
+            const NMDATETIMECHANGE *dt = (const NMDATETIMECHANGE *)lParam;
+            dtm_notify.last_change = dt->st;
+        }
+    }
+    return DefWindowProcA(hwnd, msg, wParam, lParam);
+}
+
+static void test_dtm_change_on_selchange(void)
+{
+    static const WNDCLASSA cls = { 0, dtm_parent_proc, 0, 0, 0, NULL, NULL, NULL, NULL, "dtm_parent" };
+    HWND parent, hwnd, monthcal = NULL;
+    NMSELCHANGE nmsel;
+    SYSTEMTIME st;
+
+    RegisterClassA(&cls);
+    parent = CreateWindowA("dtm_parent", NULL, WS_OVERLAPPED, 0, 0, 400, 300, NULL, NULL, NULL, NULL);
+    ok(parent != NULL, "failed to create parent window\n");
+    hwnd = CreateWindowExA(0, DATETIMEPICK_CLASSA, NULL,
+                           WS_CHILD | WS_VISIBLE | DTS_SHORTDATEFORMAT,
+                           10, 10, 200, 30, parent, NULL, NULL, NULL);
+    ok(hwnd != NULL, "failed to create datetime picker\n");
+
+    todo_wine {
+        monthcal = (HWND)SendMessageA(hwnd, DTM_GETMONTHCAL, 0, 0);
+        ok(monthcal == 0, "Expected NULL(no child month calendar control), got %p\n", monthcal);
+    }
+
+    memset(&st, 0, sizeof(st));
+    st.wYear = 2007; st.wMonth = 4; st.wDay = 11;
+    SendMessageA(hwnd, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&st);
+
+    memset(&st, 0, sizeof(st));
+    st.wYear = 2007; st.wMonth = 4; st.wDay = 20;
+    SendMessageA(monthcal, MCM_SETCURSEL, 0, (LPARAM)&st);
+
+    memset(&nmsel, 0, sizeof(nmsel));
+    nmsel.nmhdr.hwndFrom = monthcal;
+    nmsel.nmhdr.idFrom   = GetDlgCtrlID(monthcal);
+    nmsel.nmhdr.code     = MCN_SELCHANGE;
+    nmsel.stSelStart = nmsel.stSelEnd = st;
+
+    memset(&dtm_notify.last_change, 0, sizeof(dtm_notify.last_change));
+    SendMessageA(hwnd, WM_NOTIFY, nmsel.nmhdr.idFrom, (LPARAM)&nmsel);
+    todo_wine
+    ok(dtm_notify.last_change.wYear == 2007 && dtm_notify.last_change.wMonth == 4 &&
+       dtm_notify.last_change.wDay == 20,
+       "MCN_SELCHANGE: expected date 2007/4/20, got %u/%u/%u\n",
+       dtm_notify.last_change.wYear, dtm_notify.last_change.wMonth, dtm_notify.last_change.wDay);
+
+    nmsel.nmhdr.code = MCN_SELECT;
+    memset(&dtm_notify.last_change, 0, sizeof(dtm_notify.last_change));
+    SendMessageA(hwnd, WM_NOTIFY, nmsel.nmhdr.idFrom, (LPARAM)&nmsel);
+    ok(dtm_notify.last_change.wYear == 2007 && dtm_notify.last_change.wMonth == 4 &&
+       dtm_notify.last_change.wDay == 20,
+       "MCN_SELECT: expected date 2007/4/20, got %u/%u/%u\n",
+       dtm_notify.last_change.wYear, dtm_notify.last_change.wMonth, dtm_notify.last_change.wDay);
+
+    DestroyWindow(hwnd);
+    DestroyWindow(parent);
+    UnregisterClassA("dtm_parent", NULL);
+}
+
 static void init_functions(void)
 {
     HMODULE hComCtl32 = LoadLibraryA("comctl32.dll");
@@ -927,6 +1001,7 @@ START_TEST(datetime)
     test_dtm_set_and_get_systemtime_with_limits();
     test_wm_set_get_text();
     test_dts_shownone();
+    test_dtm_change_on_selchange();
 
     if (!load_v6_module(&cookie, &ctxt))
         return;
@@ -938,6 +1013,7 @@ START_TEST(datetime)
     test_dtm_get_ideal_size();
     test_wm_set_get_text();
     test_dts_shownone();
+    test_dtm_change_on_selchange();
 
     uninit_winevent_hook();
 
