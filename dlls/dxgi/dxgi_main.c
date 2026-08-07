@@ -191,7 +191,7 @@ HRESULT WINAPI DXGID3D10CreateDevice(HMODULE d3d10core, IDXGIFactory *factory, I
         return E_OUTOFMEMORY;
     }
 
-    hr = dxgi_device_init(dxgi_device, &d3d10_layer, factory, adapter, feature_levels, level_count);
+    hr = dxgi_device_init(dxgi_device, &d3d10_layer, factory, adapter, flags, feature_levels, level_count);
     if (FAILED(hr))
     {
         WARN("Failed to initialize device, hr %#lx.\n", hr);

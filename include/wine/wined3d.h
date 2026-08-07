@@ -2429,8 +2429,8 @@ HRESULT __cdecl wined3d_device_begin_scene(struct wined3d_device *device);
 HRESULT __cdecl wined3d_device_clear(struct wined3d_device *device, unsigned int rect_count, const RECT *rects,
         uint32_t flags, const struct wined3d_color *color, float z, unsigned int stencil);
 HRESULT __cdecl wined3d_device_create(struct wined3d *wined3d, struct wined3d_adapter *adapter,
-        enum wined3d_device_type device_type, HWND focus_window, unsigned int behaviour_flags, BYTE surface_alignment,
-        const enum wined3d_feature_level *feature_levels, unsigned int feature_level_count,
+        enum wined3d_device_type device_type, HWND focus_window, unsigned int behaviour_flags, unsigned int orig_flags,
+        BYTE surface_alignment, const enum wined3d_feature_level *feature_levels, unsigned int feature_level_count,
         struct wined3d_device_parent *device_parent, struct wined3d_device **device);
 ULONG __cdecl wined3d_device_decref(struct wined3d_device *device);
 HRESULT __cdecl wined3d_device_end_scene(struct wined3d_device *device);

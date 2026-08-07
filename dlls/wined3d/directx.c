@@ -2783,8 +2783,8 @@ HRESULT CDECL wined3d_get_device_caps(const struct wined3d_adapter *adapter,
 }
 
 HRESULT CDECL wined3d_device_create(struct wined3d *wined3d, struct wined3d_adapter *adapter,
-        enum wined3d_device_type device_type, HWND focus_window, uint32_t flags, BYTE surface_alignment,
-        const enum wined3d_feature_level *feature_levels, unsigned int feature_level_count,
+        enum wined3d_device_type device_type, HWND focus_window, uint32_t flags, uint32_t orig_flags,
+        BYTE surface_alignment, const enum wined3d_feature_level *feature_levels, unsigned int feature_level_count,
         struct wined3d_device_parent *device_parent, struct wined3d_device **device)
 {
     struct wined3d_device *object;
@@ -2794,6 +2794,14 @@ HRESULT CDECL wined3d_device_create(struct wined3d *wined3d, struct wined3d_adap
             "surface_alignment %u, feature_levels %p, feature_level_count %u, device_parent %p, device %p.\n",
             wined3d, adapter, device_type, focus_window, flags, surface_alignment,
             feature_levels, feature_level_count, device_parent, device);
+
+    /* Unity uses shared resources if D3D11_CREATE_DEVICE_VIDEO_SUPPORT succeeds,
+     * so allow failing for now */
+    if (orig_flags != (orig_flags & ~wined3d_settings.no_create_flags))
+    {
+        FIXME("Failing for device create flags 0x%x forced unsupported.\n", wined3d_settings.no_create_flags);
+        return E_FAIL;
+    }
 
     if (FAILED(hr = adapter->adapter_ops->adapter_create_device(wined3d, adapter,
             device_type, focus_window, flags, surface_alignment,
