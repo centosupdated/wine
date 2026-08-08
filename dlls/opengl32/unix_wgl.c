@@ -388,6 +388,7 @@ static struct
 {
     struct rb_tree map;
     struct vk_device *vk_device;
+    BOOL client_pointer;
 } buffers = { .map = { compare_buffer_name } };
 
 static void free_buffer( const struct opengl_funcs *funcs, struct buffer *buffer )
@@ -786,6 +787,23 @@ BOOL wrap_wglCopyContext( TEB *teb, HGLRC client_src, HGLRC client_dst, UINT mas
     return copy_context_attributes( teb, client_dst, dst, client_src, src, mask );
 }
 
+static BOOL initialize_client_pointer( TEB *teb, struct context *ctx )
+{
+    struct opengl_client_context *client = opengl_client_context_from_client( ctx->base.client_context );
+
+    if (!client->extensions[GL_MESA_map_buffer_client_pointer])
+    {
+        TRACE( "GL_MESA_map_buffer_client_pointer is not supported\n" );
+        return FALSE;
+    }
+
+    /* internal use only */
+    client->extensions[GL_MESA_map_buffer_client_pointer] = FALSE;
+    buffers.client_pointer = TRUE;
+
+    return TRUE;
+}
+
 static BOOL initialize_vk_device( TEB *teb, struct context *ctx )
 {
     struct opengl_client_context *client = opengl_client_context_from_client( ctx->base.client_context );
@@ -1047,7 +1065,8 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
         TRACE( "-- %s (disabled by config)\n", all_extensions[i].name );
     }
 
-    if (is_win64 && is_wow64() && !initialize_vk_device( teb, ctx )
+    if (is_win64 && is_wow64() && !initialize_client_pointer( teb, ctx )
+        && !initialize_vk_device( teb, ctx )
         && !(ctx->use_pinned_memory = client->extensions[GL_AMD_pinned_memory]))
     {
         if (client->major_version > 4 || (client->major_version == 4 && client->minor_version > 3))
@@ -2043,6 +2062,137 @@ static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint nam
     return buffer;
 }
 
+static GLint get_buffer_param( TEB *teb, GLenum target, GLenum param )
+{
+    const struct opengl_funcs *funcs = teb->glTable;
+    GLint size = 0;
+    if (funcs->p_glGetBufferParameteriv) funcs->p_glGetBufferParameteriv( target, param, &size );
+    return size;
+}
+
+static GLint get_named_buffer_param( TEB *teb, GLint buffer, GLenum param )
+{
+    const struct opengl_funcs *funcs = teb->glTable;
+    GLint size = 0;
+    if (funcs->p_glGetNamedBufferParameteriv) funcs->p_glGetNamedBufferParameteriv( buffer, param, &size );
+    return size;
+}
+
+static void add_client_pointer_range( TEB *teb, void *addr, GLsizeiptr length)
+{
+    const struct opengl_funcs *funcs = teb->glTable;
+
+    typeof(*funcs->p_glAddClientPointerRangeMESA) *func;
+    if (!(func = funcs->p_glAddClientPointerRangeMESA)) func = (void *)funcs->p_wglGetProcAddress( "glAddClientPointerRangeMESA" );
+    func( addr, length );
+}
+
+
+static void *release_client_pointer_range( TEB *teb, GLbitfield flags, GLsizeiptr *size )
+{
+    const struct opengl_funcs *funcs = teb->glTable;
+
+    typeof(*funcs->p_glReleaseClientPointerRangeMESA) *func;
+    if (!(func = funcs->p_glReleaseClientPointerRangeMESA)) func = (void *)funcs->p_wglGetProcAddress( "glReleaseClientPointerRangeMESA" );
+    return func( flags, size );
+}
+
+static BOOL free_client_pointer_range( TEB *teb, GLbitfield flags )
+{
+    GLsizeiptr clientptr_size;
+    SIZE_T alloc_size;
+
+    void *ptr = release_client_pointer_range( teb, flags, &clientptr_size );
+    alloc_size = clientptr_size;
+    if (ptr) NtFreeVirtualMemory( GetCurrentProcess(), &ptr, &alloc_size, MEM_RELEASE );
+
+    return !!ptr;
+}
+
+static void free_client_pointer_ranges( TEB *teb, GLbitfield flags )
+{
+    for (;;)
+    {
+        if (!free_client_pointer_range( teb, flags ))
+            break;
+    }
+}
+
+
+static void *wow64_map_buffer_client_pointer( TEB *teb, GLenum target, GLuint name, GLintptr offset,
+                                              size_t length, GLbitfield access )
+{
+    const struct opengl_funcs *funcs = teb->glTable;
+    GLsizeiptr clientptr_size;
+    SIZE_T alloc_size;
+    GLenum err;
+    void *ptr;
+
+    /* save the error in the wrapper so we can check for success */
+    set_gl_error( teb, funcs->p_glGetError() );
+
+    /* first approach, either this succeeds or the driver needs more client memory */
+    if (target)
+        ptr = funcs->p_glMapBufferRange( target, offset, length, access | GL_MAP_CLIENT_POINTER_BIT_MESA );
+    else
+        ptr = funcs->p_glMapNamedBufferRange( name, offset, length, access | GL_MAP_CLIENT_POINTER_BIT_MESA );
+
+    /* if the driver needs more client memory GL_OUT_OF_MEMORY is returned and
+       GL_BUFFER_CLIENT_POINTER_SIZE_MESA is set to the needed size */
+    if ((err = funcs->p_glGetError()) != GL_OUT_OF_MEMORY)
+    {
+        if (err)
+            set_gl_error( teb, err );
+        return ptr;
+    }
+
+    alloc_size = clientptr_size = name ? get_named_buffer_param( teb, name, GL_BUFFER_CLIENT_POINTER_SIZE_MESA )
+                                       : get_buffer_param( teb, target, GL_BUFFER_CLIENT_POINTER_SIZE_MESA );
+
+    if (!clientptr_size)
+    {
+        set_gl_error( teb, GL_OUT_OF_MEMORY );
+        return NULL;
+    }
+
+    if (NtAllocateVirtualMemory( GetCurrentProcess(), &ptr, zero_bits, &alloc_size,
+                                 MEM_COMMIT, PAGE_READWRITE ))
+    {
+        WARN( "NtAllocateVirtualMemory failed, freeing client pointer ranges and trying again\n" );
+        free_client_pointer_ranges( teb, 0 );
+
+        if (NtAllocateVirtualMemory( GetCurrentProcess(), &ptr, zero_bits, &alloc_size,
+                                     MEM_COMMIT, PAGE_READWRITE ))
+        {
+            WARN( "NtAllocateVirtualMemory failed, freeing all client pointer ranges and trying again\n" );
+            free_client_pointer_ranges( teb, GL_CLIENT_POINTER_RELEASE_ALL_MESA );
+
+            if (NtAllocateVirtualMemory( GetCurrentProcess(), &ptr, zero_bits, &alloc_size,
+                                         MEM_COMMIT, PAGE_READWRITE ))
+            {
+                ERR( "NtAllocateVirtualMemory failed\n" );
+                set_gl_error( teb, GL_OUT_OF_MEMORY );
+                return NULL;
+            }
+        }
+    }
+
+    TRACE("Allocated Wow64 client pointer range at %p - %p.\n", ptr, (uint8_t *)ptr + clientptr_size);
+    assert(clientptr_size == alloc_size);
+    add_client_pointer_range( teb, ptr, alloc_size );
+
+    /* second approach with new memory */
+    if (target)
+        ptr = funcs->p_glMapBufferRange( target, offset, length, access | GL_MAP_CLIENT_POINTER_BIT_MESA );
+    else
+        ptr = funcs->p_glMapNamedBufferRange( name, offset, length, access | GL_MAP_CLIENT_POINTER_BIT_MESA );
+
+    /* the mapping could have failed or gotten client memory from another thread */
+    free_client_pointer_range( teb, 0 );
+
+    return ptr;
+}
+
 static void *wow64_map_buffer( TEB *teb, struct buffer *buffer, GLenum target, GLuint name, GLintptr offset,
                                size_t length, GLbitfield access, void *ptr )
 {
@@ -2185,6 +2335,9 @@ void wow64_glBufferStorage( TEB *teb, GLenum target, GLsizeiptr size, const void
     const struct opengl_funcs *funcs = teb->glTable;
     struct buffer *buffer = NULL, *previous;
 
+    if (buffers.client_pointer)
+        return p_glBufferStorage( target, size, data, flags | GL_MAP_CLIENT_POINTER_BIT_MESA );
+
     if (flags & GL_MAP_PERSISTENT_BIT) buffer = create_buffer_storage( teb, target, 0, size, data, flags );
     previous = set_target_buffer_storage( teb, target, buffer );
     if (!buffer) p_glBufferStorage( target, size, data, flags );
@@ -2196,6 +2349,9 @@ void wow64_glNamedBufferStorage( TEB *teb, GLuint name, GLsizeiptr size, const v
 {
     const struct opengl_funcs *funcs = teb->glTable;
     struct buffer *buffer = NULL, *previous;
+
+    if (buffers.client_pointer)
+        return p_glNamedBufferStorage( name, size, data, flags | GL_MAP_CLIENT_POINTER_BIT_MESA );
 
     if (flags & GL_MAP_PERSISTENT_BIT) buffer = create_buffer_storage( teb, 0, name, size, data, flags );
     previous = set_named_buffer_storage( teb, name, buffer );
@@ -2240,6 +2396,9 @@ void *wow64_glMapBuffer( TEB *teb, GLenum target, GLenum access, PFN_glMapBuffer
     struct buffer *buffer;
     void *ptr = NULL;
 
+    if (buffers.client_pointer)
+        return wow64_map_buffer_client_pointer( teb, target, 0, 0, get_buffer_param( teb, target, GL_BUFFER_SIZE ), range_access );
+
     buffer = get_target_buffer_storage( teb, target );
     if (use_driver_buffer_map( buffer )) ptr = p_glMapBuffer( target, access );
     ptr = wow64_map_buffer( teb, buffer, target, 0, 0, 0, range_access, ptr );
@@ -2251,6 +2410,9 @@ void *wow64_glMapBufferRange( TEB *teb, GLenum target, GLintptr offset, GLsizeip
 {
     struct buffer *buffer;
     void *ptr = NULL;
+
+    if (buffers.client_pointer)
+        return wow64_map_buffer_client_pointer( teb, target, 0, offset, length, access );
 
     buffer = get_target_buffer_storage( teb, target );
     if (use_driver_buffer_map( buffer )) ptr = p_glMapBufferRange( target, offset, length, access );
@@ -2264,6 +2426,9 @@ void *wow64_glMapNamedBuffer( TEB *teb, GLuint name, GLenum access, PFN_glMapNam
     struct buffer *buffer;
     void *ptr = NULL;
 
+    if (buffers.client_pointer)
+        return wow64_map_buffer_client_pointer( teb, 0, name, 0, get_named_buffer_param( teb, name, GL_BUFFER_SIZE), range_access );
+
     buffer = get_named_buffer_storage( teb, name );
     if (use_driver_buffer_map( buffer )) ptr = p_glMapNamedBuffer( name, access );
     ptr = wow64_map_buffer( teb, buffer, 0, name, 0, 0, range_access, ptr );
@@ -2275,6 +2440,9 @@ void *wow64_glMapNamedBufferRange( TEB *teb, GLuint name, GLintptr offset, GLsiz
 {
     struct buffer *buffer;
     void *ptr = NULL;
+
+    if (buffers.client_pointer)
+        return wow64_map_buffer_client_pointer( teb, 0, name, offset, length, access );
 
     buffer = get_named_buffer_storage( teb, name );
     if (use_driver_buffer_map( buffer )) ptr = p_glMapNamedBufferRange( name, offset, length, access );
@@ -2313,6 +2481,11 @@ GLboolean wow64_glUnmapBuffer( TEB *teb, GLenum target, PFN_glUnmapBuffer p_glUn
 
     if ((buffer = get_target_buffer_storage( teb, target ))) ret = wow64_unmap_buffer( teb, buffer );
     if (use_driver_buffer_map( buffer )) ret = p_glUnmapBuffer( target );
+    else if (buffers.client_pointer)
+    {
+        ret = p_glUnmapBuffer( target );
+        free_client_pointer_range( teb, 0 );
+    }
     return ret;
 }
 
@@ -2323,6 +2496,11 @@ GLboolean wow64_glUnmapNamedBuffer( TEB *teb, GLuint name, PFN_glUnmapBuffer p_g
 
     if ((buffer = get_named_buffer_storage( teb, name ))) ret = wow64_unmap_buffer( teb, buffer );
     if (use_driver_buffer_map( buffer )) ret = p_glUnmapNamedBuffer( name );
+    else if (buffers.client_pointer)
+    {
+        ret = p_glUnmapNamedBuffer( name );
+        free_client_pointer_range( teb, 0 );
+    }
     return ret;
 }
 
@@ -2353,11 +2531,20 @@ void wow64_glBufferAttachMemoryNV( TEB *teb, GLenum target, GLuint memory, GLuin
     p_glBufferAttachMemoryNV( target, memory, offset );
 }
 
+static GLenum map_usage_client_pointer(GLenum usage)
+{
+    assert(usage >= GL_STREAM_DRAW && usage <= GL_DYNAMIC_COPY);
+
+    return usage + GL_CLIENT_POINTER_STREAM_DRAW_MESA - GL_STREAM_DRAW;
+}
+
 void wow64_glBufferData( TEB *teb, GLenum target, GLsizeiptr size, const void *data, GLenum usage, PFN_glBufferData p_glBufferData )
 {
     const struct opengl_funcs *funcs = teb->glTable;
     struct buffer *buffer;
 
+    if (buffers.client_pointer)
+        return p_glBufferData( target, size, data, map_usage_client_pointer( usage ) );
     if ((buffer = set_target_buffer_storage( teb, target, NULL ))) free_buffer( funcs, buffer );
     p_glBufferData( target, size, data, usage );
 }
@@ -2385,6 +2572,8 @@ void wow64_glNamedBufferData( TEB *teb, GLuint name, GLsizeiptr size, const void
     const struct opengl_funcs *funcs = teb->glTable;
     struct buffer *buffer;
 
+    if (buffers.client_pointer)
+        return p_glNamedBufferData( name, size, data, map_usage_client_pointer( usage ) );
     if ((buffer = set_named_buffer_storage( teb, name, NULL ))) free_buffer( funcs, buffer );
     p_glNamedBufferData( name, size, data, usage );
 }

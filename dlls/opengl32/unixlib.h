@@ -2587,6 +2587,13 @@ struct glActiveVaryingNV_params
     const GLchar *name;
 };
 
+struct glAddClientPointerRangeMESA_params
+{
+    TEB *teb;
+    GLvoid * addr;
+    GLsizeiptr size;
+};
+
 struct glAlphaFragmentOp1ATI_params
 {
     TEB *teb;
@@ -18102,6 +18109,14 @@ struct glReferencePlaneSGIX_params
     const GLdouble *equation;
 };
 
+struct glReleaseClientPointerRangeMESA_params
+{
+    TEB *teb;
+    GLbitfield flags;
+    GLsizeiptr * size;
+    void* ret;
+};
+
 struct glReleaseKeyedMutexWin32EXT_params
 {
     TEB *teb;
@@ -26140,6 +26155,7 @@ enum unix_funcs
     unix_glActiveTexture,
     unix_glActiveTextureARB,
     unix_glActiveVaryingNV,
+    unix_glAddClientPointerRangeMESA,
     unix_glAlphaFragmentOp1ATI,
     unix_glAlphaFragmentOp2ATI,
     unix_glAlphaFragmentOp3ATI,
@@ -27952,6 +27968,7 @@ enum unix_funcs
     unix_glRectxOES,
     unix_glRectxvOES,
     unix_glReferencePlaneSGIX,
+    unix_glReleaseClientPointerRangeMESA,
     unix_glReleaseKeyedMutexWin32EXT,
     unix_glReleaseShaderCompiler,
     unix_glRenderGpuMaskNV,

@@ -3480,6 +3480,16 @@ static NTSTATUS ext_glActiveVaryingNV( void *args )
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS ext_glAddClientPointerRangeMESA( void *args )
+{
+    struct glAddClientPointerRangeMESA_params *params = args;
+    const struct opengl_funcs *funcs = params->teb->glTable;
+    if (!funcs->p_glAddClientPointerRangeMESA) return STATUS_NOT_IMPLEMENTED;
+    funcs->p_glAddClientPointerRangeMESA( params->addr, params->size );
+    set_context_attribute( params->teb, -1 /* unsupported */, NULL, 0 );
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS ext_glAlphaFragmentOp1ATI( void *args )
 {
     struct glAlphaFragmentOp1ATI_params *params = args;
@@ -21219,6 +21229,16 @@ static NTSTATUS ext_glReferencePlaneSGIX( void *args )
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS ext_glReleaseClientPointerRangeMESA( void *args )
+{
+    struct glReleaseClientPointerRangeMESA_params *params = args;
+    const struct opengl_funcs *funcs = params->teb->glTable;
+    if (!funcs->p_glReleaseClientPointerRangeMESA) return STATUS_NOT_IMPLEMENTED;
+    params->ret = funcs->p_glReleaseClientPointerRangeMESA( params->flags, params->size );
+    set_context_attribute( params->teb, -1 /* unsupported */, NULL, 0 );
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS ext_glReleaseKeyedMutexWin32EXT( void *args )
 {
     struct glReleaseKeyedMutexWin32EXT_params *params = args;
@@ -30853,6 +30873,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     ext_glActiveTexture,
     ext_glActiveTextureARB,
     ext_glActiveVaryingNV,
+    ext_glAddClientPointerRangeMESA,
     ext_glAlphaFragmentOp1ATI,
     ext_glAlphaFragmentOp2ATI,
     ext_glAlphaFragmentOp3ATI,
@@ -32665,6 +32686,7 @@ const unixlib_entry_t __wine_unix_call_funcs[] =
     ext_glRectxOES,
     ext_glRectxvOES,
     ext_glReferencePlaneSGIX,
+    ext_glReleaseClientPointerRangeMESA,
     ext_glReleaseKeyedMutexWin32EXT,
     ext_glReleaseShaderCompiler,
     ext_glRenderGpuMaskNV,
@@ -39277,6 +39299,22 @@ static NTSTATUS wow64_ext_glActiveVaryingNV( void *args )
     const struct opengl_funcs *funcs = teb->glTable;
     if (!funcs->p_glActiveVaryingNV) return STATUS_NOT_IMPLEMENTED;
     funcs->p_glActiveVaryingNV( params->program, ULongToPtr(params->name) );
+    set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS wow64_ext_glAddClientPointerRangeMESA( void *args )
+{
+    struct
+    {
+        PTR32 teb;
+        PTR32 addr;
+        PTR32 size;
+    } *params = args;
+    TEB *teb = get_teb64( params->teb );
+    const struct opengl_funcs *funcs = teb->glTable;
+    if (!funcs->p_glAddClientPointerRangeMESA) return STATUS_NOT_IMPLEMENTED;
+    funcs->p_glAddClientPointerRangeMESA( ULongToPtr(params->addr), (GLsizeiptr)ULongToPtr(params->size) );
     set_context_attribute( teb, -1 /* unsupported */, NULL, 0 );
     return STATUS_SUCCESS;
 }
@@ -70706,6 +70744,19 @@ static NTSTATUS wow64_ext_glReferencePlaneSGIX( void *args )
     return STATUS_SUCCESS;
 }
 
+static NTSTATUS wow64_ext_glReleaseClientPointerRangeMESA( void *args )
+{
+    struct
+    {
+        PTR32 teb;
+        GLbitfield flags;
+        PTR32 size;
+        PTR32 ret;
+    } *params = args;
+    FIXME( "params %p stub!\n", params );
+    return STATUS_NOT_IMPLEMENTED;
+}
+
 static NTSTATUS wow64_ext_glReleaseKeyedMutexWin32EXT( void *args )
 {
     struct
@@ -87064,6 +87115,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_ext_glActiveTexture,
     wow64_ext_glActiveTextureARB,
     wow64_ext_glActiveVaryingNV,
+    wow64_ext_glAddClientPointerRangeMESA,
     wow64_ext_glAlphaFragmentOp1ATI,
     wow64_ext_glAlphaFragmentOp2ATI,
     wow64_ext_glAlphaFragmentOp3ATI,
@@ -88876,6 +88928,7 @@ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
     wow64_ext_glRectxOES,
     wow64_ext_glRectxvOES,
     wow64_ext_glReferencePlaneSGIX,
+    wow64_ext_glReleaseClientPointerRangeMESA,
     wow64_ext_glReleaseKeyedMutexWin32EXT,
     wow64_ext_glReleaseShaderCompiler,
     wow64_ext_glRenderGpuMaskNV,
