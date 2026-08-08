@@ -258,17 +258,36 @@ static WCHAR *get_compatible_ids(DEVICE_OBJECT *device)
 {
     static const WCHAR xinput_compat[] = L"WINEBUS\\WINE_COMP_XINPUT";
     static const WCHAR hid_compat[] = L"WINEBUS\\WINE_COMP_HID";
+    static const WCHAR usb_compat_format[] = L"USB\\VID_%04X&PID_%04X";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD size = sizeof(hid_compat);
+    WCHAR usb_compat[24];
+    DWORD usb_len = 0, size, pos = 0;
     WCHAR *dst;
 
+    /* Advertise a USB compatible id for USB devices, so consumers that read the
+     * USB interface number off the parent's compatible ids (as on Windows) work. */
+    if (ext->desc.bus_type == BUS_TYPE_USB)
+        usb_len = (swprintf(usb_compat, ARRAY_SIZE(usb_compat), usb_compat_format,
+                            ext->desc.vid, ext->desc.pid) + 1) * sizeof(WCHAR);
+
+    size = sizeof(hid_compat) + usb_len;
     if (ext->desc.is_gamepad) size += sizeof(xinput_compat);
 
     if ((dst = ExAllocatePool(PagedPool, size + sizeof(WCHAR))))
     {
-        if (ext->desc.is_gamepad) memcpy(dst, xinput_compat, sizeof(xinput_compat));
-        memcpy((char *)dst + size - sizeof(hid_compat), hid_compat, sizeof(hid_compat));
-        dst[size / sizeof(WCHAR)] = 0;
+        if (ext->desc.is_gamepad)
+        {
+            memcpy(dst + pos, xinput_compat, sizeof(xinput_compat));
+            pos += ARRAY_SIZE(xinput_compat);
+        }
+        memcpy(dst + pos, hid_compat, sizeof(hid_compat));
+        pos += ARRAY_SIZE(hid_compat);
+        if (usb_len)
+        {
+            memcpy(dst + pos, usb_compat, usb_len);
+            pos += usb_len / sizeof(WCHAR);
+        }
+        dst[pos] = 0;
     }
 
     return dst;
@@ -340,6 +359,16 @@ static void make_unique_serial(struct device_extension *device)
         if (!wcscmp(device->desc.serialnumber, ext->desc.serialnumber)) break;
     if (&ext->entry == &device_list && *device->desc.serialnumber) return;
 
+    /* Interfaces of one composite device keep a shared serial number, as on
+     * Windows: the &MI_xx suffix in the device id already disambiguates siblings
+     * (same VID/PID, different interface index), so only genuinely separate
+     * devices need a synthesized unique serial. */
+    if (&ext->entry != &device_list &&
+        ext->desc.vid == device->desc.vid &&
+        ext->desc.pid == device->desc.pid &&
+        ext->desc.input != device->desc.input)
+        return;
+
     swprintf(device->desc.serialnumber, ARRAY_SIZE(device->desc.serialnumber), L"%04x%08x%04x%04x",
              device->index, device->desc.input, device->desc.pid, device->desc.vid);
 }
@@ -348,6 +377,22 @@ static void make_unique_container_id(struct device_extension *device)
 {
     struct device_extension *ext;
     LARGE_INTEGER ticks;
+
+    /* Interfaces of one composite device share a container id, which on Windows
+     * identifies the physical device. Reuse a sibling's id (same VID/PID and
+     * serial, different interface index) if one was already added. */
+    if (*device->desc.serialnumber)
+    {
+        LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
+            if (ext->desc.vid == device->desc.vid && ext->desc.pid == device->desc.pid &&
+                ext->desc.input != device->desc.input &&
+                !wcscmp(ext->desc.serialnumber, device->desc.serialnumber) &&
+                !IsEqualGUID(&ext->container_id, &GUID_NULL))
+            {
+                device->container_id = ext->container_id;
+                return;
+            }
+    }
 
     LIST_FOR_EACH_ENTRY(ext, &device_list, struct device_extension, entry)
         if (IsEqualGUID(&device->container_id, &ext->container_id)) break;
