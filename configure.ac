@@ -59,6 +59,7 @@ AC_ARG_WITH(sdl,       AS_HELP_STRING([--without-sdl],[do not use SDL]))
 AC_ARG_WITH(udev,      AS_HELP_STRING([--without-udev],[do not use udev (plug and play support)]))
 AC_ARG_WITH(usb,       AS_HELP_STRING([--without-usb],[do not use the libusb library]))
 AC_ARG_WITH(v4l2,      AS_HELP_STRING([--without-v4l2],[do not use v4l2 (video capture)]))
+AC_ARG_WITH(va,        AS_HELP_STRING([--without-va],[do not use libva (DXVA2 hardware video decode support)]))
 AC_ARG_WITH(vulkan,    AS_HELP_STRING([--without-vulkan],[do not use Vulkan]))
 AC_ARG_WITH(wayland,   AS_HELP_STRING([--without-wayland],[do not build the Wayland driver]))
 AC_ARG_WITH(xcomposite,AS_HELP_STRING([--without-xcomposite],[do not use the Xcomposite extension]),
@@ -1772,6 +1773,21 @@ fi
 WINE_NOTICE_WITH(gstreamer,[test "x$ac_glib2_broken" != xyes -a "x$ac_cv_func_gst_pad_new" != xyes],
                  [gstreamer-1.0 base plugins ${notice_platform}development files not found, GStreamer won't be supported.],
                  [enable_winegstreamer])
+
+dnl **** Check for libva ****
+if test "x$with_va" != "xno"
+then
+    WINE_PACKAGE_FLAGS(LIBVA,[libva libva-drm],,,,
+        [AC_CHECK_HEADERS([va/va.h va/va_drm.h])
+         if test "$ac_cv_header_va_va_h" = "yes" -a "$ac_cv_header_va_va_drm_h" = "yes"
+         then
+            AC_DEFINE(HAVE_LIBVA, 1, [Define to 1 if you have the libva libraries.])
+         else
+            LIBVA_LIBS=""
+         fi])
+fi
+WINE_NOTICE_WITH(va,[test "x$LIBVA_LIBS" = x],
+        [libva ${notice_platform}development files not found, DXVA2 hardware video decode won't be supported.])
 
 dnl **** Check for ALSA 1.x ****
 AC_SUBST(ALSA_LIBS,"")
