@@ -1910,6 +1910,10 @@ RETURN_CODE WCMD_move(void)
     WINE_TRACE("Source '%s'\n", wine_dbgstr_w(src));
     WINE_TRACE("Dest   '%s'\n", wine_dbgstr_w(dest));
 
+    /* If source and destination are the same file, skip (no-op) */
+    if (!lstrcmpiW(src, dest))
+        continue;
+
     /* If destination exists, prompt unless /Y supplied */
     if (GetFileAttributesW(dest) != INVALID_FILE_ATTRIBUTES) {
       BOOL force = FALSE;

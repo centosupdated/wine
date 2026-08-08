@@ -721,6 +721,12 @@ mkdir foo & cd foo
 echo a > fileA
 echo b > fileB
 call :setError 666 & (move >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+call :setError 666 & (move fileA fileA >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+if exist fileA echo ok
+call :setError 666 & (move fileA >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+if exist fileA echo ok
+call :setError 666 & (move .\fileA >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
+if exist fileA echo ok
 call :setError 666 & (move fileA fileC >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 call :setError 666 & (move fileC nowhere\fileC >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)
 call :setError 666 & (move fileD fileE >NUL &&echo SUCCESS !errorlevel!||echo FAILURE !errorlevel!)

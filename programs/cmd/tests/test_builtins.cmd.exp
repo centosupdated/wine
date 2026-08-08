@@ -613,6 +613,12 @@ a@space@
 --- success/failure for MOVE command
 FAILURE 1
 SUCCESS 0
+ok
+SUCCESS 0
+ok
+SUCCESS 0
+ok
+SUCCESS 0
 FAILURE 1
 FAILURE 1
 FAILURE 1
@@ -1825,8 +1831,8 @@ file move with overwrite succeeded@or_broken@file overwrite impossible!
 bar@or_broken@baz
 read-only files are moveable
 file moved in subdirectory
-moving a file to itself is a no-op@or_broken@moving a file to itself should be a no-op!
-ErrorLevel: 0@or_broken@ErrorLevel: 1
+moving a file to itself is a no-op
+ErrorLevel: 0
 --- directory move
 simple directory move succeeded
 moving a directory to itself gives error; errlevel 1
