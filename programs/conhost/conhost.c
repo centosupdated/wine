@@ -2599,10 +2599,18 @@ static NTSTATUS screen_buffer_ioctl( struct screen_buffer *screen_buffer, unsign
         }
 
     case IOCTL_CONDRV_SET_MODE:
-        if (in_size != sizeof(unsigned int) || *out_size) return STATUS_INVALID_PARAMETER;
-        screen_buffer->mode = *(unsigned int *)in_data;
-        TRACE( "set %x mode\n", screen_buffer->mode );
-        return STATUS_SUCCESS;
+        {
+            unsigned int mode;
+
+            if (in_size != sizeof(unsigned int) || *out_size) return STATUS_INVALID_PARAMETER;
+            mode = *(unsigned int *)in_data;
+            /* VT sequences are not supported. */
+            if (mode & (ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN))
+                return STATUS_INVALID_PARAMETER;
+            screen_buffer->mode = mode;
+            TRACE( "set %x mode\n", screen_buffer->mode );
+            return STATUS_SUCCESS;
+        }
 
     case IOCTL_CONDRV_IS_UNIX:
         return screen_buffer->console->is_unix ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
@@ -2680,10 +2688,17 @@ static NTSTATUS console_input_ioctl( struct console *console, unsigned int code,
         }
 
     case IOCTL_CONDRV_SET_MODE:
-        if (in_size != sizeof(unsigned int) || *out_size) return STATUS_INVALID_PARAMETER;
-        console->mode = *(unsigned int *)in_data;
-        TRACE( "set %x mode\n", console->mode );
-        return STATUS_SUCCESS;
+        {
+            unsigned int mode;
+
+            if (in_size != sizeof(unsigned int) || *out_size) return STATUS_INVALID_PARAMETER;
+            mode = *(unsigned int *)in_data;
+            if (mode & ENABLE_VIRTUAL_TERMINAL_INPUT)
+                return STATUS_INVALID_PARAMETER;
+            console->mode = mode;
+            TRACE( "set %x mode\n", console->mode );
+            return STATUS_SUCCESS;
+        }
 
     case IOCTL_CONDRV_IS_UNIX:
         return console->is_unix ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
