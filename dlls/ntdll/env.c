@@ -172,6 +172,61 @@ static LPCWSTR ENV_FindVariable(PCWSTR var, PCWSTR name, unsigned namelen)
     return NULL;
 }
 
+static NTSTATUS ENV_get_pseudo_variable( const WCHAR *name, SIZE_T len, UNICODE_STRING *value )
+{
+    static const WCHAR appdir[] = {'_','_','A','P','P','D','I','R','_','_'};
+    static const WCHAR cd[] = {'_','_','C','D','_','_'};
+
+    if (!RtlCompareUnicodeStrings( name, len, appdir, ARRAY_SIZE( appdir ), FALSE ))
+    {
+        ULONG_PTR magic;
+        LDR_DATA_TABLE_ENTRY *pldr;
+        NTSTATUS status;
+
+        LdrLockLoaderLock( 0, NULL, &magic );
+        status = LdrFindEntryForAddress( NtCurrentTeb()->Peb->ImageBaseAddress, &pldr );
+        if (!status)
+        {
+            const WCHAR *ptr = wcsrchr( pldr->FullDllName.Buffer, L'\\' );
+            if (ptr)
+            {
+                SIZE_T dirlen = ptr + 1 - pldr->FullDllName.Buffer;
+                value->Length = dirlen * sizeof(WCHAR);
+                if (value->Length + sizeof(WCHAR) <= value->MaximumLength)
+                {
+                    memcpy( value->Buffer, pldr->FullDllName.Buffer, value->Length );
+                    value->Buffer[dirlen] = L'\0';
+                }
+                else if (value->MaximumLength >= sizeof(WCHAR))
+                    value->Buffer[0] = L'\0';
+                status = (value->Length >= value->MaximumLength) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+            }
+            else status = STATUS_INVALID_PARAMETER;
+        }
+        LdrUnlockLoaderLock( 0, magic );
+        return status;
+    }
+    else if (!RtlCompareUnicodeStrings( name, len, cd, ARRAY_SIZE( cd ), FALSE ))
+    {
+        ULONG actual = RtlGetCurrentDirectory_U( value->MaximumLength >= sizeof(WCHAR)
+                                                  ? value->MaximumLength - sizeof(WCHAR) : 0,
+                                                  value->Buffer );
+        if (actual + sizeof(WCHAR) <= value->MaximumLength)
+        {
+            value->Buffer[actual / sizeof(WCHAR)] = L'\\';
+            value->Buffer[actual / sizeof(WCHAR) + 1] = L'\0';
+            value->Length = actual + sizeof(WCHAR);
+        }
+        else
+        {
+            value->Length = actual;
+            if (value->MaximumLength >= sizeof(WCHAR)) value->Buffer[0] = L'\0';
+        }
+        return (value->Length >= value->MaximumLength) ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
+    }
+    return STATUS_VARIABLE_NOT_FOUND;
+}
+
 /******************************************************************
  *		RtlQueryEnvironmentVariable_U   [NTDLL.@]
  *
@@ -201,17 +256,21 @@ NTSTATUS WINAPI RtlQueryEnvironmentVariable_U(PWSTR env,
     }
     else var = env;
 
-    var = ENV_FindVariable(var, name->Buffer, namelen);
-    if (var != NULL)
+    nts = ENV_get_pseudo_variable( name->Buffer, namelen, value );
+    if (nts == STATUS_VARIABLE_NOT_FOUND)
     {
-        value->Length = wcslen(var) * sizeof(WCHAR);
-
-        if (value->Length <= value->MaximumLength)
+        var = ENV_FindVariable(var, name->Buffer, namelen);
+        if (var != NULL)
         {
-            memmove(value->Buffer, var, min(value->Length + sizeof(WCHAR), value->MaximumLength));
-            nts = STATUS_SUCCESS;
+            value->Length = wcslen(var) * sizeof(WCHAR);
+
+            if (value->Length <= value->MaximumLength)
+            {
+                memmove(value->Buffer, var, min(value->Length + sizeof(WCHAR), value->MaximumLength));
+                nts = STATUS_SUCCESS;
+            }
+            else nts = STATUS_BUFFER_TOO_SMALL;
         }
-        else nts = STATUS_BUFFER_TOO_SMALL;
     }
 
     if (!env) RtlReleasePebLock();
@@ -239,22 +298,34 @@ NTSTATUS WINAPI RtlQueryEnvironmentVariable( WCHAR *env, const WCHAR *name, SIZE
     }
     else var = env;
 
-    var = ENV_FindVariable(var, name, namelen);
-    if (var != NULL)
     {
-        len = wcslen(var);
-        if (len <= value_length)
-        {
-            memcpy(value, var, min(len + 1, value_length) * sizeof(WCHAR));
-            nts = STATUS_SUCCESS;
-        }
+        UNICODE_STRING us_value;
+        us_value.Buffer = value;
+        us_value.MaximumLength = value_length * sizeof(WCHAR);
+
+        nts = ENV_get_pseudo_variable( name, namelen, &us_value );
+        if (nts != STATUS_VARIABLE_NOT_FOUND)
+            *return_length = us_value.Length / sizeof(WCHAR);
         else
         {
-            len++;
-            nts = STATUS_BUFFER_TOO_SMALL;
+            var = ENV_FindVariable(var, name, namelen);
+            if (var != NULL)
+            {
+                len = wcslen(var);
+                if (len <= value_length)
+                {
+                    memcpy(value, var, min(len + 1, value_length) * sizeof(WCHAR));
+                    nts = STATUS_SUCCESS;
+                }
+                else
+                {
+                    len++;
+                    nts = STATUS_BUFFER_TOO_SMALL;
+                }
+            }
+            *return_length = len;
         }
     }
-    *return_length = len;
 
     if (!env) RtlReleasePebLock();
 
