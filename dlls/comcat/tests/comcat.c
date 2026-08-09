@@ -133,20 +133,16 @@ static void test_IsClassOfCategories(void)
     if (register_testentry())
     {
         hr = ICatInformation_IsClassOfCategories(pICat, &test_clsid, -1, NULL, -1, NULL);
-        todo_wine
         ok_ole_success(hr, "ICatInformation_IsClassesOfCategories");
 
         hr = ICatInformation_IsClassOfCategories(pICat, &test_clsid, 1, &implemented_cat, -1, NULL);
-        todo_wine
         ok_ole_success(hr, "ICatInformation_IsClassesOfCategories");
 
         hr = ICatInformation_IsClassOfCategories(pICat, &test_clsid, 1, &unsupported_cat, -1, NULL);
-        todo_wine
         ok(hr == S_FALSE, "Expected S_FALSE, got %#08lx\n", hr);
 
         hr = ICatInformation_IsClassOfCategories(pICat, &test_clsid, -1, NULL, 1, &unsupported_cat);
-        todo_wine
-        ok(hr == S_FALSE, "Expected S_FALSE, got %#08lx\n", hr);
+        ok_ole_success(hr, "ICatInformation_IsClassesOfCategories");
 
         unregister_testentry();
     }
