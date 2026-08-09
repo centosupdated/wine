@@ -122,7 +122,6 @@ struct context
     UINT64 debug_user;             /* client pointer */
     GLubyte *extensions;           /* extension string */
     char *wow64_version;           /* wow64 GL version override */
-    BOOL use_pinned_memory;        /* use GL_AMD_pinned_memory to emulate persistent maps */
 
     /* semi-stub state tracker for wglCopyContext */
     GLbitfield used;                            /* context state used bits */
@@ -1047,8 +1046,7 @@ static void make_context_current( TEB *teb, const struct opengl_funcs *funcs, HD
         TRACE( "-- %s (disabled by config)\n", all_extensions[i].name );
     }
 
-    if (is_win64 && is_wow64() && !initialize_vk_device( teb, ctx )
-        && !(ctx->use_pinned_memory = client->extensions[GL_AMD_pinned_memory]))
+    if (is_win64 && is_wow64() && !initialize_vk_device( teb, ctx ) && !client->extensions[GL_AMD_pinned_memory])
     {
         if (client->major_version > 4 || (client->major_version == 4 && client->minor_version > 3))
         {
@@ -1925,7 +1923,7 @@ static int find_vk_memory_type( struct vk_device *vk_device, uint32_t flags, uin
     return -1;
 }
 
-static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint name, size_t size, const void *data, GLbitfield flags )
+static BOOL init_buffer_storage_vulkan( struct buffer *buffer, TEB *teb, GLenum target, GLuint name, size_t size, const void *data, GLbitfield flags )
 {
     VkExportMemoryAllocateInfo export_alloc =
     {
@@ -1944,103 +1942,112 @@ static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint nam
         .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
     };
     struct opengl_funcs *funcs = teb->glTable;
-    GLuint buffer_name = name ? name : get_target_name( teb, target );
     uint32_t type_mask = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     uint32_t desired_type = type_mask;
-    struct context *ctx = get_current_context( teb, NULL, NULL );
     struct vk_device *vk_device;
-    struct buffer *buffer;
+    VkDeviceMemory vk_memory;
     int fd, memory_type;
     VkResult vr;
 
-    if (!(flags & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT))) return NULL;
-    if ((!(vk_device = buffers.vk_device) || !vk_device->vk_device) && !ctx->use_pinned_memory) return NULL;
-
-    if (!(buffer = calloc( 1, sizeof(*buffer) ))) return NULL;
-    buffer->name = buffer_name;
-    buffer->size = size;
-    buffer->vk_device = vk_device;
-
-    if (ctx->use_pinned_memory)
-    {
-        if (!buffer_vm_alloc( teb, buffer, size )) return NULL;
-        if (data) memcpy( buffer->vm_ptr, data, size );
-        buffer->pinned = TRUE;
-
-        /* FIXME: we may interfere with GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD if the
-         * application uses it as well. Unlike other targets, there’s no way to query
-         * the currently bound target, so we’d need to track it ourselves if we want
-         * to support it. */
-        funcs->p_glBindBuffer( GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, buffer_name );
-        funcs->p_glBufferData( GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, size, buffer->vm_ptr, GL_DYNAMIC_COPY );
-        TRACE( "created buffer %p with pinned memory %p\n", buffer, buffer->vm_ptr );
-        return buffer;
-    }
+    if (!(flags & GL_MAP_PERSISTENT_BIT)) return FALSE;
+    if ((!(vk_device = buffers.vk_device) || !vk_device->vk_device)) return FALSE;
 
     if (flags & GL_CLIENT_STORAGE_BIT) desired_type &= ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
     memory_type = find_vk_memory_type( vk_device, desired_type, type_mask );
     if (memory_type == -1) /* if we can’t find a matching type, try ignoring GL_CLIENT_STORAGE_BIT */
         memory_type = find_vk_memory_type( vk_device, desired_type, type_mask & ~VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
-    if (memory_type == -1)
-    {
-        WARN( "Could not find memory type\n" );
-        free_buffer( funcs, buffer );
-        return NULL;
-    }
+    if (memory_type == -1) return FALSE;
     alloc_info.memoryTypeIndex = memory_type;
 
-    vr = vk_device->p_vkAllocateMemory( vk_device->vk_device, &alloc_info, NULL, &buffer->vk_memory );
-    if (vr)
-    {
-        ERR( "vkAllocateMemory failed: %d\n", vr );
-        free_buffer( funcs, buffer );
-        return NULL;
-    }
+    if (vk_device->p_vkAllocateMemory( vk_device->vk_device, &alloc_info, NULL, &vk_memory )) return FALSE;
 
     if (data)
     {
         VkMemoryMapInfoKHR map_info =
         {
             .sType = VK_STRUCTURE_TYPE_MEMORY_MAP_INFO_KHR,
-            .memory = buffer->vk_memory,
+            .memory = vk_memory,
             .size = VK_WHOLE_SIZE,
         };
         VkMemoryUnmapInfoKHR unmap_info =
         {
             .sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR,
-            .memory = buffer->vk_memory,
+            .memory = vk_memory,
         };
         void *ptr;
 
-        vr = vk_device->p_vkMapMemory2KHR( vk_device->vk_device, &map_info, &ptr );
-        if (vr)
-        {
-            ERR( "vkMapMemory2KHR failed: %d\n", vr );
-            free_buffer( funcs, buffer );
-            return NULL;
-        }
-
+        if ((vr = vk_device->p_vkMapMemory2KHR( vk_device->vk_device, &map_info, &ptr ))) goto failed;
         memcpy( ptr, data, size );
         vk_device->p_vkUnmapMemory2KHR( vk_device->vk_device, &unmap_info );
     }
 
-    fd_info.memory = buffer->vk_memory;
-    vr = vk_device->p_vkGetMemoryFdKHR( vk_device->vk_device, &fd_info, &fd );
-    if (vr)
-    {
-        ERR( "vkGetMemoryFdKHR failed: %d\n", vr );
-        free_buffer( funcs, buffer );
-        return NULL;
-    }
+    fd_info.memory = vk_memory;
+    if ((vr = vk_device->p_vkGetMemoryFdKHR( vk_device->vk_device, &fd_info, &fd ))) goto failed;
+
+    buffer->vk_device = vk_device;
+    buffer->vk_memory = vk_memory;
 
     funcs->p_glCreateMemoryObjectsEXT( 1, &buffer->gl_memory );
     funcs->p_glImportMemoryFdEXT( buffer->gl_memory, size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd );
-    if (name)
-        funcs->p_glNamedBufferStorageMemEXT( buffer->name, size, buffer->gl_memory, 0 );
-    else
-        funcs->p_glBufferStorageMemEXT( target, size, buffer->gl_memory, 0 );
-    TRACE( "created buffer_storage %p\n", buffer );
-    return buffer;
+    if (name) funcs->p_glNamedBufferStorageMemEXT( buffer->name, size, buffer->gl_memory, 0 );
+    else funcs->p_glBufferStorageMemEXT( target, size, buffer->gl_memory, 0 );
+
+    TRACE( "created buffer %p with vulkan memory\n", buffer );
+    return TRUE;
+
+failed:
+    vk_device->p_vkFreeMemory( vk_device->vk_device, vk_memory, NULL );
+    return FALSE;
+}
+
+static BOOL init_buffer_storage_pinned( struct buffer *buffer, TEB *teb, GLenum target, GLuint name, size_t size, const void *data, GLbitfield flags )
+{
+    struct context *ctx = get_current_context( teb, NULL, NULL );
+    struct opengl_client_context *client = opengl_client_context_from_client( ctx->base.client_context );
+    struct opengl_funcs *funcs = teb->glTable;
+
+    if (!client->extensions[GL_AMD_pinned_memory]) return FALSE;
+    if (!buffer_vm_alloc( teb, buffer, size )) return FALSE;
+    if (data) memcpy( buffer->vm_ptr, data, size );
+    buffer->pinned = TRUE;
+
+    /* FIXME: we may interfere with GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD if the
+     * application uses it as well. Unlike other targets, there’s no way to query
+     * the currently bound target, so we’d need to track it ourselves if we want
+     * to support it. */
+    funcs->p_glBindBuffer( GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, name ? name : get_target_name( teb, target ) );
+    funcs->p_glBufferData( GL_EXTERNAL_VIRTUAL_MEMORY_BUFFER_AMD, size, buffer->vm_ptr, GL_DYNAMIC_COPY );
+
+    TRACE( "created buffer %p with pinned memory %p\n", buffer, buffer->vm_ptr );
+    return TRUE;
+}
+
+static BOOL init_buffer_storage( struct buffer *buffer, TEB *teb, GLenum target, GLuint name, size_t size, const void *data, GLbitfield flags )
+{
+    if (!buffer_vm_alloc( teb, buffer, size )) return FALSE;
+    if (data) memcpy( buffer->vm_ptr, data, size );
+
+    TRACE( "created buffer %p with virtual memory %p\n", buffer, buffer->vm_ptr );
+    return TRUE;
+}
+
+static struct buffer *create_buffer_storage( TEB *teb, GLenum target, GLuint name, GLint size, const void *data, GLbitfield flags )
+{
+    GLuint buffer_name = name ? name : get_target_name( teb, target );
+    struct buffer *buffer;
+
+    if (!(flags & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT))) return NULL;
+    if (!(buffer = calloc( 1, sizeof(*buffer) ))) return NULL;
+    buffer->name = buffer_name;
+    buffer->size = size;
+
+    if (init_buffer_storage_vulkan( buffer, teb, target, name, size, data, flags )) return buffer;
+    if (init_buffer_storage_pinned( buffer, teb, target, name, size, data, flags )) return buffer;
+    if (init_buffer_storage( buffer, teb, target, name, size, data, flags )) return buffer;
+
+    if (buffer->vm_ptr) NtFreeVirtualMemory( GetCurrentProcess(), &buffer->vm_ptr, &buffer->vm_size, MEM_RELEASE );
+    free( buffer );
+    return NULL;
 }
 
 static void *wow64_map_buffer( TEB *teb, struct buffer *buffer, GLenum target, GLuint name, GLintptr offset,
@@ -2183,9 +2190,9 @@ void wow64_glBufferStorage( TEB *teb, GLenum target, GLsizeiptr size, const void
                             GLbitfield flags, PFN_glBufferStorage p_glBufferStorage )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    struct buffer *buffer = NULL, *previous;
+    struct buffer *buffer, *previous;
 
-    if (flags & GL_MAP_PERSISTENT_BIT) buffer = create_buffer_storage( teb, target, 0, size, data, flags );
+    buffer = create_buffer_storage( teb, target, 0, size, data, flags );
     previous = set_target_buffer_storage( teb, target, buffer );
     if (!buffer) p_glBufferStorage( target, size, data, flags );
     if (previous) free_buffer( funcs, previous );
@@ -2195,9 +2202,9 @@ void wow64_glNamedBufferStorage( TEB *teb, GLuint name, GLsizeiptr size, const v
                                  GLbitfield flags, PFN_glNamedBufferStorage p_glNamedBufferStorage )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    struct buffer *buffer = NULL, *previous;
+    struct buffer *buffer, *previous;
 
-    if (flags & GL_MAP_PERSISTENT_BIT) buffer = create_buffer_storage( teb, 0, name, size, data, flags );
+    buffer = create_buffer_storage( teb, 0, name, size, data, flags );
     previous = set_named_buffer_storage( teb, name, buffer );
     if (!buffer) p_glNamedBufferStorage( name, size, data, flags );
     if (previous) free_buffer( funcs, previous );
@@ -2294,6 +2301,17 @@ static BOOL wow64_unmap_buffer( TEB *teb, struct buffer *buffer )
         unmap_vk_buffer( buffer );
     }
 
+    if (buffer->pinned)
+    {
+        if (!buffer->map_ptr)
+        {
+            set_gl_error( teb, GL_INVALID_OPERATION );
+            return FALSE;
+        }
+        buffer->map_ptr = NULL;
+        return TRUE;
+    }
+
     if (buffer->copy_length)
     {
         TRACE( "Copying %#zx from wow64 buffer %p to buffer %p\n", buffer->copy_length,
@@ -2356,10 +2374,12 @@ void wow64_glBufferAttachMemoryNV( TEB *teb, GLenum target, GLuint memory, GLuin
 void wow64_glBufferData( TEB *teb, GLenum target, GLsizeiptr size, const void *data, GLenum usage, PFN_glBufferData p_glBufferData )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    struct buffer *buffer;
+    struct buffer *buffer, *previous;
 
-    if ((buffer = set_target_buffer_storage( teb, target, NULL ))) free_buffer( funcs, buffer );
-    p_glBufferData( target, size, data, usage );
+    buffer = size >= 0x1000 ? create_buffer_storage( teb, target, 0, size, data, GL_MAP_READ_BIT | GL_MAP_WRITE_BIT ) : NULL;
+    previous = set_target_buffer_storage( teb, target, buffer );
+    if (use_driver_buffer_map( buffer )) p_glBufferData( target, size, data, usage );
+    if (previous) free_buffer( funcs, previous );
 }
 
 void wow64_glBufferStorageMemEXT( TEB *teb, GLenum target, GLsizeiptr size, GLuint memory, GLuint64 offset, PFN_glBufferStorageMemEXT p_glBufferStorageMemEXT )
