@@ -10773,6 +10773,100 @@ static void test_window_from_point(HWND main_window, const char *argv0)
     DestroyWindow(hwnd);
 }
 
+static void test_window_from_point_layered(void)
+{
+    HWND win, top, bottom;
+    unsigned int *bits, width = 100, height = 100, x, y;
+    char bmibuf[sizeof(BITMAPINFO) + 256 * sizeof(RGBQUAD)];
+    BITMAPINFO *bmi = (BITMAPINFO *)bmibuf;
+    HBITMAP bitmap, holdbmp;
+    SIZE size = { width, height };
+    POINT dst = { 0, 0 }, src = { 0, 0 }, pt = { 0, 0 };
+    HDC hdc;
+    BOOL ret;
+    BLENDFUNCTION bf;
+
+    bf.BlendOp = AC_SRC_OVER;
+    bf.BlendFlags = 0;
+    bf.SourceConstantAlpha = 128;
+    bf.AlphaFormat = AC_SRC_ALPHA;
+
+    if (!pUpdateLayeredWindow)
+    {
+        win_skip( "UpdateLayeredWindow is not available\n" );
+        return;
+    }
+
+    bottom = CreateWindowExA( 0, "MainWindowClass", "bottom", WS_POPUP | WS_VISIBLE,
+                              0, 0, width, height, NULL, NULL, GetModuleHandleA(0), NULL );
+    ok( bottom != 0, "CreateWindowEx error %lu\n", GetLastError() );
+
+    pt.x = 25;
+    pt.y = 50;
+    ClientToScreen( bottom, &pt );
+    win = WindowFromPoint( pt );
+    pt.x = 75;
+    pt.y = 50;
+    ClientToScreen( bottom, &pt );
+    if (win == bottom)
+        win = WindowFromPoint( pt );
+    if (win != bottom)
+    {
+        skip( "there's another window covering test window\n" );
+        DestroyWindow( bottom );
+        return;
+    }
+
+    top = CreateWindowExA( WS_EX_LAYERED | WS_EX_TOPMOST, "MainWindowClass", "top", WS_POPUP | WS_VISIBLE,
+                           0, 0, width, height, NULL, NULL, GetModuleHandleA(0), NULL );
+    ok( top != 0, "CreateWindowEx error %lu\n", GetLastError() );
+
+    hdc = CreateCompatibleDC( 0 );
+
+    memset( bmi, 0, sizeof(bmibuf) );
+    bmi->bmiHeader.biSize = sizeof(bmi->bmiHeader);
+    bmi->bmiHeader.biWidth = width;
+    bmi->bmiHeader.biHeight = height * -1;
+    bmi->bmiHeader.biBitCount = 32;
+    bmi->bmiHeader.biPlanes = 1;
+    bmi->bmiHeader.biCompression = BI_RGB;
+
+    bitmap = CreateDIBSection( 0, bmi, DIB_RGB_COLORS, (void **)&bits, NULL, 0 );
+    ok( bitmap != NULL, "CreateDIBSection error %lu\n", GetLastError() );
+
+    for (y = 0; y < height; y++)
+    {
+        for (x = 0; x < width; x++)
+        {
+            bits[y * width + x] = (x < width / 2) ? 0 : 0xff00ffc8;
+        }
+    }
+
+    holdbmp = SelectObject( hdc, bitmap );
+
+    ret = pUpdateLayeredWindow( top, 0, &dst, &size, hdc, &src, 0, &bf, ULW_ALPHA );
+    ok( ret, "UpdateLayeredWindow should succeed on layered window\n" );
+
+    SelectObject( hdc, holdbmp );
+    DeleteObject( bitmap );
+    DeleteDC( hdc );
+
+    pt.x = 25;
+    pt.y = 50;
+    ClientToScreen( bottom, &pt );
+    win = WindowFromPoint( pt );
+    ok( win == bottom, "expected %p window, got %p\n", bottom, win );
+
+    pt.x = 75;
+    pt.y = 50;
+    ClientToScreen( top, &pt );
+    win = WindowFromPoint( pt );
+    ok( win == top, "expected %p window, got %p\n", top, win );
+
+    DestroyWindow( top );
+    DestroyWindow( bottom );
+}
+
 static void test_map_points(void)
 {
     BOOL ret;
@@ -14676,6 +14770,7 @@ START_TEST(win)
     /* Add the tests below this line */
     test_child_window_from_point();
     test_window_from_point(hwndMain, argv[0]);
+    test_window_from_point_layered();
     test_thick_child_size(hwndMain);
     test_fullscreen();
     test_hwnd_message();
