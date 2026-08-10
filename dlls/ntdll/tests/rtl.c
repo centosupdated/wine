@@ -30,6 +30,8 @@
 #include "windef.h"
 #include "winbase.h"
 #include "winreg.h"
+#include "winuser.h"
+#include "winver.h"
 #include "winternl.h"
 #include "in6addr.h"
 #include "inaddr.h"
@@ -123,7 +125,10 @@ static void      (WINAPI *pRtlInitializeGenericTable)(RTL_GENERIC_TABLE *, PRTL_
 static void *    (WINAPI *pRtlFindExportedRoutineByName)(HMODULE,const char *);
 static void *    (WINAPI *pRtlLookupElementGenericTable)(PRTL_GENERIC_TABLE, void *);
 static ULONG     (WINAPI *pRtlNumberGenericTableElements)(PRTL_GENERIC_TABLE);
+static NTSTATUS  (WINAPI *pLdrAccessResource)(HMODULE, const IMAGE_RESOURCE_DATA_ENTRY *, void **, ULONG *);
 static NTSTATUS  (WINAPI *pLdrEnumerateLoadedModules)(void *, void *, void *);
+static NTSTATUS  (WINAPI *pLdrFindResource_U)(HMODULE, const LDR_RESOURCE_INFO *, ULONG,
+                                              const IMAGE_RESOURCE_DATA_ENTRY **);
 static NTSTATUS  (WINAPI *pLdrRegisterDllNotification)(ULONG, PLDR_DLL_NOTIFICATION_FUNCTION, void *, void **);
 static NTSTATUS  (WINAPI *pLdrUnregisterDllNotification)(void *);
 static VOID      (WINAPI *pRtlGetDeviceFamilyInfoEnum)(ULONGLONG *,DWORD *,DWORD *);
@@ -197,7 +202,9 @@ static void InitFunctionPtrs(void)
         pRtlFindExportedRoutineByName = (void *)GetProcAddress(hntdll, "RtlFindExportedRoutineByName");
         pRtlLookupElementGenericTable = (void *)GetProcAddress(hntdll, "RtlLookupElementGenericTable");
         pRtlNumberGenericTableElements = (void *)GetProcAddress(hntdll, "RtlNumberGenericTableElements");
+        pLdrAccessResource = (void *)GetProcAddress(hntdll, "LdrAccessResource");
         pLdrEnumerateLoadedModules = (void *)GetProcAddress(hntdll, "LdrEnumerateLoadedModules");
+        pLdrFindResource_U = (void *)GetProcAddress(hntdll, "LdrFindResource_U");
         pLdrRegisterDllNotification = (void *)GetProcAddress(hntdll, "LdrRegisterDllNotification");
         pLdrUnregisterDllNotification = (void *)GetProcAddress(hntdll, "LdrUnregisterDllNotification");
         pRtlCreateServiceSid = (void *)GetProcAddress(hntdll, "RtlCreateServiceSid");
@@ -5543,6 +5550,52 @@ static void test_pointer_encoding(void)
     ok( v == expected, "got %p, expected %p.\n", v, expected );
 }
 
+static void test_resource_access(void)
+{
+    const IMAGE_RESOURCE_DATA_ENTRY *rsrc = NULL;
+    VS_FIXEDFILEINFO *file_info;
+    LDR_RESOURCE_INFO info;
+    NTSTATUS status;
+    HMODULE module;
+    UINT length;
+    void *data;
+
+    module = LoadLibraryA( "ntdll.dll" );
+    ok( !!module, "Failed to load library %#lx.\n", GetLastError() );
+
+    info.Type = (ULONG_PTR)RT_VERSION;
+    info.Name = (ULONG_PTR)VS_VERSION_INFO;
+    info.Language = MAKELANGID( LANG_NEUTRAL, SUBLANG_NEUTRAL );
+    status = pLdrFindResource_U( GetModuleHandleW( NULL ), &info, 3, &rsrc );
+    ok( !status && !!rsrc, "Got %#lx.\n", status );
+    data = (void *)0xdeadbeef;
+    status = pLdrAccessResource( module, rsrc, &data, NULL );
+    todo_wine ok( status == STATUS_INVALID_IMAGE_FORMAT, "Got %#lx.\n", status );
+    todo_wine ok( data == (void *)0xdeadbeef, "Got data %p.\n", data );
+    data = NULL;
+    status = pLdrAccessResource( GetModuleHandleW( NULL ), rsrc, &data, NULL );
+    ok( !status && !!data, "Got %#lx.\n", status );
+    ok( !!VerQueryValueA( data, "\\", (void **)&file_info, &length ),
+            "VerQueryValueA failed %#lx.\n", GetLastError() );
+    ok( file_info->dwFileType == VFT_APP, "Got file type %lx.\n", file_info->dwFileType );
+
+    rsrc = NULL;
+    status = pLdrFindResource_U( module, &info, 3, &rsrc );
+    ok( !status && !!rsrc, "Got %#lx.\n", status );
+    data = (void *)0xdeadbeef;
+    status = pLdrAccessResource( GetModuleHandleW( NULL ), rsrc, &data, NULL );
+    todo_wine ok( status == STATUS_INVALID_IMAGE_FORMAT, "Got %#lx.\n", status );
+    todo_wine ok( data == (void *)0xdeadbeef, "Got data %p.\n", data );
+    data = NULL;
+    status = pLdrAccessResource( module, rsrc, &data, NULL );
+    ok( !status && !!data, "Got %#lx.\n", status );
+    ok( !!VerQueryValueA( data, "\\", (void **)&file_info, &length ),
+            "VerQueryValueA failed %#lx.\n", GetLastError() );
+    ok( file_info->dwFileType == VFT_DLL, "Got file type %lx.\n", file_info->dwFileType );
+
+    FreeLibrary( module );
+}
+
 START_TEST(rtl)
 {
     InitFunctionPtrs();
@@ -5614,4 +5667,5 @@ START_TEST(rtl)
     test_RtlCreateServiceSid();
     test_RtlDeriveCapabilitySidsFromName();
     test_pointer_encoding();
+    test_resource_access();
 }
