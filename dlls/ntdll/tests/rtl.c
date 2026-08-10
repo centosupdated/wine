@@ -5570,8 +5570,8 @@ static void test_resource_access(void)
     ok( !status && !!rsrc, "Got %#lx.\n", status );
     data = (void *)0xdeadbeef;
     status = pLdrAccessResource( module, rsrc, &data, NULL );
-    todo_wine ok( status == STATUS_INVALID_IMAGE_FORMAT, "Got %#lx.\n", status );
-    todo_wine ok( data == (void *)0xdeadbeef, "Got data %p.\n", data );
+    ok( status == STATUS_INVALID_IMAGE_FORMAT, "Got %#lx.\n", status );
+    ok( data == (void *)0xdeadbeef, "Got data %p.\n", data );
     data = NULL;
     status = pLdrAccessResource( GetModuleHandleW( NULL ), rsrc, &data, NULL );
     ok( !status && !!data, "Got %#lx.\n", status );
@@ -5584,8 +5584,8 @@ static void test_resource_access(void)
     ok( !status && !!rsrc, "Got %#lx.\n", status );
     data = (void *)0xdeadbeef;
     status = pLdrAccessResource( GetModuleHandleW( NULL ), rsrc, &data, NULL );
-    todo_wine ok( status == STATUS_INVALID_IMAGE_FORMAT, "Got %#lx.\n", status );
-    todo_wine ok( data == (void *)0xdeadbeef, "Got data %p.\n", data );
+    ok( status == STATUS_INVALID_IMAGE_FORMAT, "Got %#lx.\n", status );
+    ok( data == (void *)0xdeadbeef, "Got data %p.\n", data );
     data = NULL;
     status = pLdrAccessResource( module, rsrc, &data, NULL );
     ok( !status && !!data, "Got %#lx.\n", status );

@@ -831,8 +831,8 @@ static void test_load_resource(void)
     ok( !!rsrc, "Resource not found %#lx.\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     data = LoadResource( module, rsrc );
-    todo_wine ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "Got wrong last error %#lx.\n", GetLastError() );
-    todo_wine ok( !data, "Loaded data %p.\n", data );
+    ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "Got wrong last error %#lx.\n", GetLastError() );
+    ok( !data, "Loaded data %p.\n", data );
     SetLastError( 0xdeadbeef );
     data = LoadResource( GetModuleHandleW( NULL ), rsrc );
     ok( !!data, "Failed to load resource %#lx.\n", GetLastError() );
@@ -846,8 +846,8 @@ static void test_load_resource(void)
     ok( !!rsrc, "Resource not found %#lx.\n", GetLastError() );
     SetLastError( 0xdeadbeef );
     data = LoadResource( GetModuleHandleW( NULL ), rsrc );
-    todo_wine ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "Got wrong last error %#lx.\n", GetLastError() );
-    todo_wine ok( !data, "Loaded data %p.\n", data );
+    ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "Got wrong last error %#lx.\n", GetLastError() );
+    ok( !data, "Loaded data %p.\n", data );
     SetLastError( 0xdeadbeef );
     data = LoadResource( module, rsrc );
     ok( !!data, "Failed to load resource %#lx.\n", GetLastError() );
