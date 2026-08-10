@@ -18,6 +18,11 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#define VER_FILEDESCRIPTION_STR "Wine tests for kernel32"
+#define VER_INTERNALNAME_STR "kernel32_test.exe"
+#define VER_FILETYPE VFT_APP
+
+#include "common.ver"
 #include "windef.h"
 
 1 MENU LANGUAGE LANG_GERMAN, SUBLANG_DEFAULT

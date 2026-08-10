@@ -815,6 +815,51 @@ static void test_mui(void)
     RemoveDirectoryW( L"en-US" );
 }
 
+static void test_load_resource(void)
+{
+    VS_FIXEDFILEINFO *file_info;
+    HMODULE module;
+    HGLOBAL data;
+    UINT length;
+    HRSRC rsrc;
+    void *ptr;
+
+    module = LoadLibraryA( "kernel32.dll" );
+    ok( !!module, "Failed to load library %#lx.\n", GetLastError() );
+
+    rsrc = FindResourceW( NULL, MAKEINTRESOURCEW(VS_VERSION_INFO), (LPCWSTR)RT_VERSION );
+    ok( !!rsrc, "Resource not found %#lx.\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    data = LoadResource( module, rsrc );
+    todo_wine ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "Got wrong last error %#lx.\n", GetLastError() );
+    todo_wine ok( !data, "Loaded data %p.\n", data );
+    SetLastError( 0xdeadbeef );
+    data = LoadResource( GetModuleHandleW( NULL ), rsrc );
+    ok( !!data, "Failed to load resource %#lx.\n", GetLastError() );
+    ptr = LockResource( data );
+    ok( !!ptr, "LockResource failed.\n" );
+    ok( !!VerQueryValueA( ptr, "\\", (void **)&file_info, &length ),
+            "VerQueryValueA failed %#lx.\n", GetLastError() );
+    ok( file_info->dwFileType == VFT_APP, "Got file type %lx.\n", file_info->dwFileType );
+
+    rsrc = FindResourceW( module, MAKEINTRESOURCEW(VS_VERSION_INFO), (LPCWSTR)RT_VERSION );
+    ok( !!rsrc, "Resource not found %#lx.\n", GetLastError() );
+    SetLastError( 0xdeadbeef );
+    data = LoadResource( GetModuleHandleW( NULL ), rsrc );
+    todo_wine ok( GetLastError() == ERROR_BAD_EXE_FORMAT, "Got wrong last error %#lx.\n", GetLastError() );
+    todo_wine ok( !data, "Loaded data %p.\n", data );
+    SetLastError( 0xdeadbeef );
+    data = LoadResource( module, rsrc );
+    ok( !!data, "Failed to load resource %#lx.\n", GetLastError() );
+    ptr = LockResource( data );
+    ok( !!ptr, "LockResource failed.\n" );
+    ok( !!VerQueryValueA( ptr, "\\", (void **)&file_info, &length ),
+            "VerQueryValueA failed %#lx.\n", GetLastError() );
+    ok( file_info->dwFileType == VFT_DLL, "Got file type %lx.\n", file_info->dwFileType );
+
+    FreeLibrary( module );
+}
+
 START_TEST(resource)
 {
     DWORD i;
@@ -848,4 +893,5 @@ START_TEST(resource)
     }
     test_find_resource();
     test_mui();
+    test_load_resource();
 }
