@@ -397,7 +397,7 @@ static void test_install_file_short_name(void)
     rc = VerInstallFileA(0, "thesrc.tmp", sb, dir, dir, dir, outbuf, &size);
     ok(!rc, "expected success, got 0x%lx\n", rc);
 
-    todo_wine ok(GetFileAttributesA(longname) != INVALID_FILE_ATTRIBUTES,
+    ok(GetFileAttributesA(longname) != INVALID_FILE_ATTRIBUTES,
                  "long-named file %s was lost\n", longname);
 
     DeleteFileA(longname);
