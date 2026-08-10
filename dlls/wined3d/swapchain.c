@@ -543,6 +543,34 @@ static void swapchain_gl_set_swap_interval(struct wined3d_swapchain *swapchain,
     }
 }
 
+static void wined3d_swapchain_rendertarget_view_gl_rotate(struct wined3d_swapchain *swapchain)
+{
+    struct wined3d_rendertarget_view_gl *view_gl;
+    struct wined3d_rendertarget_view *swap_view;
+    GLuint name, name_prev;
+    unsigned int i;
+
+    LIST_FOR_EACH_ENTRY(swap_view, &swapchain->back_buffer_rendertarget_views,
+            struct wined3d_rendertarget_view, entry)
+    {
+        view_gl = wined3d_rendertarget_view_gl(swap_view);
+        if (!view_gl->gl_view[0].name)
+        {
+            FIXME("Skipping rotate for view_gl %p with gl view name 0 which should not occur.\n", view_gl);
+            continue;
+        }
+
+        name_prev = view_gl->gl_view[0].name;
+        for (i = 1; i < swapchain->state.desc.backbuffer_count; i++)
+        {
+            name = view_gl->gl_view[i].name;
+            view_gl->gl_view[i].name = name_prev;
+            name_prev = name;
+        }
+        view_gl->gl_view[0].name = name_prev;
+    }
+}
+
 /* Context activation is done by the caller. */
 static void wined3d_swapchain_gl_rotate(struct wined3d_swapchain *swapchain, struct wined3d_context *context)
 {
@@ -583,7 +611,7 @@ static void wined3d_swapchain_gl_rotate(struct wined3d_swapchain *swapchain, str
 
     texture_prev->texture_rgb = tex0;
     texture_prev->rb_multisample = rb0;
-
+    wined3d_swapchain_rendertarget_view_gl_rotate(swapchain);
     wined3d_texture_validate_location(&texture_prev->t, 0, locations0 & supported_locations);
     wined3d_texture_invalidate_location(&texture_prev->t, 0, ~(locations0 & supported_locations));
 
@@ -1205,6 +1233,34 @@ static VkResult wined3d_swapchain_vk_blit(struct wined3d_swapchain_vk *swapchain
     return vr;
 }
 
+static void wined3d_swapchain_rendertarget_view_vk_rotate(struct wined3d_swapchain *swapchain)
+{
+    VkImageView vk_image_view, vk_image_view_prev;
+    struct wined3d_rendertarget_view_vk *view_vk;
+    struct wined3d_rendertarget_view *swap_view;
+    unsigned int i;
+
+    LIST_FOR_EACH_ENTRY(swap_view, &swapchain->back_buffer_rendertarget_views,
+            struct wined3d_rendertarget_view, entry)
+    {
+        view_vk = wined3d_rendertarget_view_vk(swap_view);
+        if (!view_vk->vk_image_view[0])
+        {
+            FIXME("Skipping rotate for view_vk %p with vk_image_view 0 which should not occur.\n", view_vk);
+            continue;
+        }
+
+        vk_image_view_prev = view_vk->vk_image_view[0];
+        for (i = 1; i < swapchain->state.desc.backbuffer_count; i++)
+        {
+            vk_image_view = view_vk->vk_image_view[i];
+            view_vk->vk_image_view[i] = vk_image_view_prev;
+            vk_image_view_prev = vk_image_view;
+        }
+        view_vk->vk_image_view[0] = vk_image_view_prev;
+    }
+}
+
 static void wined3d_swapchain_vk_rotate(struct wined3d_swapchain *swapchain, struct wined3d_context_vk *context_vk)
 {
     struct wined3d_texture_sub_resource *sub_resource;
@@ -1253,7 +1309,7 @@ static void wined3d_swapchain_vk_rotate(struct wined3d_swapchain *swapchain, str
     texture_prev->layout = vk_layout0;
     texture_prev->bind_mask = bind_mask0;
     texture_prev->default_image_info = vk_info0;
-
+    wined3d_swapchain_rendertarget_view_vk_rotate(swapchain);
     wined3d_texture_validate_location(&texture_prev->t, 0, locations0 & supported_locations);
     wined3d_texture_invalidate_location(&texture_prev->t, 0, ~(locations0 & supported_locations));
 

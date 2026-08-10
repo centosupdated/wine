@@ -11239,7 +11239,7 @@ static void test_swapchain_flip(void)
     {
         ID3D10Device_ClearRenderTargetView(device, backbuffer_0_rtv_srgb, grey);
         color = get_texture_color(backbuffer_0, 320, 240); /* grey */
-        todo_wine ok(compare_color(color, 0x80bcbcbc, 1), "Got unexpected srgb color 0x%08x.\n", color);
+        ok(compare_color(color, 0x80bcbcbc, 1), "Got unexpected srgb color 0x%08x.\n", color);
     }
 
     ID3D10Device_ClearRenderTargetView(device, backbuffer_0_rtv, red);
@@ -11265,7 +11265,7 @@ static void test_swapchain_flip(void)
     {
         ID3D10Device_ClearRenderTargetView(device, backbuffer_1_rtv_srgb, grey);
         color = get_texture_color(backbuffer_0, 320, 240); /* grey */
-        todo_wine ok(compare_color(color, 0x80bcbcbc, 1), "Got unexpected srgb color 0x%08x.\n", color);
+        ok(compare_color(color, 0x80bcbcbc, 1), "Got unexpected srgb color 0x%08x.\n", color);
     }
 
     ID3D10Device_ClearRenderTargetView(device, backbuffer_0_rtv, green);
