@@ -35,7 +35,7 @@ static HCRYPTPROV import_key( cert_store_data_t data, DWORD flags )
 {
     HCRYPTPROV prov = 0;
     HCRYPTKEY cryptkey;
-    DWORD size, acquire_flags;
+    DWORD size, acquire_flags, import_flags;
     void *key;
     struct import_store_key_params params = { data, NULL, &size };
     /* Use a unique container name per import. With a NULL container +
@@ -57,9 +57,12 @@ static HCRYPTPROV import_key( cert_store_data_t data, DWORD flags )
         goto done;
     }
 
+    import_flags = flags & CRYPT_EXPORTABLE;
+    if (flags & (PKCS12_NO_PERSIST_KEY | PKCS12_ALWAYS_CNG_KSP)) import_flags |= CRYPT_EXPORTABLE;
+
     params.buf = key = CryptMemAlloc( size );
     if (CRYPT32_CALL( import_store_key, &params ) ||
-        !CryptImportKey( prov, key, size, 0, flags & CRYPT_EXPORTABLE, &cryptkey ))
+        !CryptImportKey( prov, key, size, 0, import_flags, &cryptkey ))
     {
         WARN( "CryptImportKey failed %08lx\n", GetLastError() );
         CryptReleaseContext( prov, 0 );
