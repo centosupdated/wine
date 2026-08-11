@@ -4549,9 +4549,8 @@ static void test_click_notifications(BOOL is_v6)
     ok(g_nmitemactivate.hdr.code == NM_DBLCLK, "Expected NM_DBLCLK, got %d.\n",
             (int)g_nmitemactivate.hdr.code);
     ok(g_nmitemactivate.iItem == -1, "Expected item -1, got %d.\n", g_nmitemactivate.iItem);
-    todo_wine_if(is_v6)
-        ok(g_nmitemactivate.iSubItem == expected_subitem, "Expected subitem %d, got %d.\n",
-                expected_subitem, g_nmitemactivate.iSubItem);
+    ok(g_nmitemactivate.iSubItem == expected_subitem, "Expected subitem %d, got %d.\n",
+            expected_subitem, g_nmitemactivate.iSubItem);
 
     memset(&g_nmitemactivate, 0, sizeof(g_nmitemactivate));
     PostMessageA(hwnd, WM_RBUTTONDOWN, MK_RBUTTON, point);
@@ -4560,9 +4559,8 @@ static void test_click_notifications(BOOL is_v6)
     ok(g_nmitemactivate.hdr.code == NM_RCLICK, "Expected NM_RCLICK, got %d.\n",
             (int)g_nmitemactivate.hdr.code);
     ok(g_nmitemactivate.iItem == -1, "Expected item -1, got %d.\n", g_nmitemactivate.iItem);
-    todo_wine_if(is_v6)
-        ok(g_nmitemactivate.iSubItem == expected_subitem, "Expected subitem %d, got %d.\n",
-                expected_subitem, g_nmitemactivate.iSubItem);
+    ok(g_nmitemactivate.iSubItem == expected_subitem, "Expected subitem %d, got %d.\n",
+            expected_subitem, g_nmitemactivate.iSubItem);
 
     memset(&g_nmitemactivate, 0, sizeof(g_nmitemactivate));
     PostMessageA(hwnd, WM_RBUTTONDBLCLK, MK_RBUTTON, point);
@@ -4571,9 +4569,8 @@ static void test_click_notifications(BOOL is_v6)
     ok(g_nmitemactivate.hdr.code == NM_RDBLCLK, "Expected NM_RDBLCLK, got %d.\n",
             (int)g_nmitemactivate.hdr.code);
     ok(g_nmitemactivate.iItem == -1, "Expected item -1, got %d.\n", g_nmitemactivate.iItem);
-    todo_wine_if(is_v6)
-        ok(g_nmitemactivate.iSubItem == expected_subitem, "Expected subitem %d, got %d.\n",
-                expected_subitem, g_nmitemactivate.iSubItem);
+    ok(g_nmitemactivate.iSubItem == expected_subitem, "Expected subitem %d, got %d.\n",
+            expected_subitem, g_nmitemactivate.iSubItem);
 
     SetCursorPos(orig_pos.x, orig_pos.y);
     DestroyWindow(hwnd);
