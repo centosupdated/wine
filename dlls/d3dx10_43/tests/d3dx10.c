@@ -7798,10 +7798,9 @@ static void test_sprite(void)
 
     refcount = get_refcount(srv1);
     hr = ID3DX10Sprite_DrawSpritesBuffered(sprite, &sprite_desc, 1);
-todo_wine {
+todo_wine
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
     ok(get_refcount(srv1) > refcount, "Unexpected refcount.\n");
-}
 
     hr = ID3DX10Sprite_Flush(sprite);
     todo_wine
