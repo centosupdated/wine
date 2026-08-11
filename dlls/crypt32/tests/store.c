@@ -3664,6 +3664,49 @@ static void test_PFXImportCertStore_trailing_zeros(void)
     if (store) CertCloseStore( store, 0 );
 }
 
+static void test_PFXImportCertStore_no_persist_key_exportable(void)
+{
+    /* A PKCS12_NO_PERSIST_KEY import keeps the private key in-process
+     * only, reachable through CERT_KEY_CONTEXT_PROP_ID rather than a
+     * named CSP container. Show whether such a key can be exported when
+     * CRYPT_EXPORTABLE was not also requested. */
+
+    CRYPT_DATA_BLOB pfx = { sizeof(pfxdata), (BYTE *)pfxdata };
+    HCERTSTORE store;
+    const CERT_CONTEXT *cert;
+    CERT_KEY_CONTEXT key_ctx;
+    HCRYPTKEY key;
+    DWORD size, blob_size;
+    BOOL ret;
+
+    store = PFXImportCertStore( &pfx, NULL, PKCS12_NO_PERSIST_KEY );
+    ok( store != NULL, "PFXImportCertStore failed: %lu\n", GetLastError() );
+    if (!store) return;
+
+    cert = CertFindCertificateInStore( store, X509_ASN_ENCODING, 0, CERT_FIND_ANY, NULL, NULL );
+    ok( cert != NULL, "no cert in store: %08lx\n", GetLastError() );
+    if (!cert) goto done_close;
+
+    size = sizeof(key_ctx);
+    ret = CertGetCertificateContextProperty( cert, CERT_KEY_CONTEXT_PROP_ID, &key_ctx, &size );
+    ok( ret, "no CERT_KEY_CONTEXT on PKCS12_NO_PERSIST_KEY-imported cert: %08lx\n", GetLastError() );
+    if (!ret) goto done_cert;
+
+    ret = CryptGetUserKey( key_ctx.hCryptProv, key_ctx.dwKeySpec, &key );
+    ok( ret, "CryptGetUserKey(keyspec=%lu) failed: %08lx\n", key_ctx.dwKeySpec, GetLastError() );
+    if (!ret) goto done_cert;
+
+    blob_size = 0;
+    ret = CryptExportKey( key, 0, PRIVATEKEYBLOB, 0, NULL, &blob_size );
+    ok( ret, "CryptExportKey(PRIVATEKEYBLOB) failed: %08lx\n", GetLastError() );
+
+    CryptDestroyKey( key );
+done_cert:
+    CertFreeCertificateContext( cert );
+done_close:
+    CertCloseStore( store, 0 );
+}
+
 static void test_PFXExportCertStoreEx(void)
 {
     HCERTSTORE store, store2;
@@ -3895,6 +3938,7 @@ START_TEST(store)
     test_PFXImportCertStore_unique_containers();
     test_PFXImportCertStore_sha256_signing();
     test_PFXImportCertStore_trailing_zeros();
+    test_PFXImportCertStore_no_persist_key_exportable();
     test_PFXExportCertStoreEx();
     test_CryptQueryObject();
 }
