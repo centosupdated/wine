@@ -4240,6 +4240,51 @@ static void testAcquireCertPrivateKey(void)
         ok(GetLastError() == ERROR_SUCCESS, "got %08lx\n", GetLastError());
         CryptReleaseContext(certCSP, 0);
 
+        /* The key of this certificate lives in a legacy CSP container
+         * (MS_DEF_PROV, PROV_RSA_FULL), so there is no CNG key for it.
+         * CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG restricts the search to CNG
+         * keys, so no key can be found; returning the CAPI provider here
+         * would be actively harmful, as a caller that asked for NCrypt-only
+         * uses the returned value as an NCRYPT_KEY_HANDLE.
+         */
+        certCSP = 0xdeadbeef;
+        keySpec = 0xdeadbeef;
+        SetLastError(0xdeadbeef);
+        ret = CryptAcquireCertificatePrivateKey(cert,
+         CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG, NULL, &certCSP, &keySpec,
+         &callerFree);
+        ok(!ret, "expected failure\n");
+        trace("ONLY_NCRYPT: error %08lx, handle %Ix, keySpec %08lx\n",
+         GetLastError(), certCSP, keySpec);
+        if (ret && callerFree) CryptReleaseContext(certCSP, 0);
+
+        /* ALLOW and PREFER both permit falling back to the CAPI key. */
+        certCSP = 0xdeadbeef;
+        keySpec = 0xdeadbeef;
+        SetLastError(0xdeadbeef);
+        ret = CryptAcquireCertificatePrivateKey(cert,
+         CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG, NULL, &certCSP, &keySpec,
+         &callerFree);
+        ok(ret, "CryptAcquireCertificatePrivateKey failed: %08lx\n", GetLastError());
+        if (ret)
+        {
+            ok(keySpec == AT_SIGNATURE, "got keySpec %08lx\n", keySpec);
+            if (callerFree) CryptReleaseContext(certCSP, 0);
+        }
+
+        certCSP = 0xdeadbeef;
+        keySpec = 0xdeadbeef;
+        SetLastError(0xdeadbeef);
+        ret = CryptAcquireCertificatePrivateKey(cert,
+         CRYPT_ACQUIRE_PREFER_NCRYPT_KEY_FLAG, NULL, &certCSP, &keySpec,
+         &callerFree);
+        ok(ret, "CryptAcquireCertificatePrivateKey failed: %08lx\n", GetLastError());
+        if (ret)
+        {
+            ok(keySpec == AT_SIGNATURE, "got keySpec %08lx\n", keySpec);
+            if (callerFree) CryptReleaseContext(certCSP, 0);
+        }
+
         /* Use the key prov info's caching (there shouldn't be any) */
         SetLastError(0xdeadbeef);
         ret = CryptAcquireCertificatePrivateKey(cert,
