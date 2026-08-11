@@ -107,6 +107,7 @@ void info_help(void)
             "  info share <addr>    Displays internal module state",
             "  info stack [<len>]   Dumps information about top of stack, up to len words",
             "  info symbol <sym>    Displays information about a given symbol",
+			"  info system          Displays brief system information",
             "  info thread          Shows all running threads",
             "  info wnd <handle>    Displays internal window state",
             "",
