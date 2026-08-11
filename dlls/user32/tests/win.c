@@ -13677,6 +13677,35 @@ static void test_ncdestroy(void)
     DestroyWindow(hwnd);
 }
 
+static BOOL nchittest_hit;
+static BOOL hide_caption;
+
+static LRESULT CALLBACK test_calc_size_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    switch (message)
+    {
+        case WM_NCCALCSIZE:
+        {
+            NCCALCSIZE_PARAMS *params = (NCCALCSIZE_PARAMS *)lparam;
+            RECT *local_rect;
+
+            if (!hide_caption)
+                break;
+
+            local_rect = params->rgrc;
+            local_rect->top -= 1;
+            return 0;
+        }
+        case WM_NCHITTEST:
+        {
+            nchittest_hit = TRUE;
+            break;
+        }
+    }
+
+    return DefWindowProcA(hwnd, message, wparam, lparam);
+}
+
 static void test_WM_NCCALCSIZE(void)
 {
     WNDCLASSA cls;
@@ -13685,6 +13714,8 @@ static void test_WM_NCCALCSIZE(void)
     WINDOWPOS winpos;
     RECT client_rect, window_rect;
     LRESULT ret;
+    POINT point;
+    DWORD style;
 
     cls.style = CS_DBLCLKS | CS_VREDRAW | CS_HREDRAW;
     cls.lpfnWndProc = DefWindowProcA;
@@ -13739,6 +13770,62 @@ static void test_WM_NCCALCSIZE(void)
     ok(!ret, "got %08Ix\n", ret);
     ok(EqualRect(&window_rect, &client_rect), "got %s\n", wine_dbgstr_rect(&window_rect));
 
+    DestroyWindow(hwnd);
+
+    hide_caption = TRUE;
+    memset(&cls, 0, sizeof(cls));
+    cls.lpfnWndProc = test_calc_size_proc;
+    cls.lpszClassName = "test_calc_size_class";
+    cls.hbrBackground = GetStockObject(WHITE_BRUSH);
+    ret = RegisterClassA(&cls);
+    ok(ret, "RegisterClass error %#lx.\n", GetLastError());
+    hwnd = CreateWindowExA(0, "test_calc_size_class", NULL,
+            WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_THICKFRAME | WS_VISIBLE,
+            100, 100, 200, 200, 0, 0, NULL, NULL);
+    ok(hwnd != 0, "CreateWindowEx error %#lx.\n", GetLastError());
+    ret = SetWindowPos(hwnd, HWND_TOPMOST, 100, 100, 200, 200, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    ok(ret, "SetWindowPos failed %#lx.\n", GetLastError());
+    style = GetWindowLongA(hwnd, GWL_STYLE);
+    ok((style & WS_CAPTION) == WS_CAPTION, "Got wrong style %#lx.\n", style);
+    GetWindowRect(hwnd, &window_rect);
+    SetCursorPos(0, 0);
+    flush_events(TRUE);
+
+    point.x = (window_rect.left + window_rect.right) / 2;
+    point.y = window_rect.top + GetSystemMetrics(SM_CYFRAME) + 1;
+    nchittest_hit = FALSE;
+    ret = SetCursorPos(point.x, point.y);
+    ok(ret, "SetCursorPos failed %#lx.\n", GetLastError());
+    flush_events(TRUE);
+    ok(!!nchittest_hit, "WM_NCHITTEST test failed.\n");
+    nchittest_hit = FALSE;
+    ret = SendMessageA(hwnd, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y));
+    ok(!!nchittest_hit, "WM_NCHITTEST test failed.\n");
+    ok(ret == HTCLIENT, "Got %Id.\n", ret);
+    DestroyWindow(hwnd);
+
+    hide_caption = FALSE;
+    hwnd = CreateWindowExA(0, "test_calc_size_class", NULL,
+            WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_THICKFRAME | WS_VISIBLE,
+            100, 100, 200, 200, 0, 0, NULL, NULL);
+    ok(hwnd != 0, "CreateWindowEx error %#lx.\n", GetLastError());
+    ret = SetWindowPos(hwnd, HWND_TOPMOST, 100, 100, 200, 200, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    ok(ret, "SetWindowPos failed %#lx.\n", GetLastError());
+    GetWindowRect(hwnd, &window_rect);
+    SetCursorPos(0, 0);
+    flush_events(TRUE);
+
+    point.x = (window_rect.left + window_rect.right) / 2;
+    point.y = window_rect.top + GetSystemMetrics(SM_CYFRAME) + 1;
+    nchittest_hit = FALSE;
+    ret = SetCursorPos(point.x, point.y);
+    ok(ret, "SetCursorPos failed %#lx.\n", GetLastError());
+    flush_events(TRUE);
+    ok(!nchittest_hit, "WM_NCHITTEST test failed.\n");
+    nchittest_hit = FALSE;
+    ret = SendMessageA(hwnd, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y));
+    ok(!!nchittest_hit, "WM_NCHITTEST test failed.\n");
+    ok(ret == HTCAPTION, "Got %Id.\n", ret);
     DestroyWindow(hwnd);
 }
 
