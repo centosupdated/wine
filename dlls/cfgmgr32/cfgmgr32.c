@@ -1870,6 +1870,7 @@ CONFIGRET WINAPI CM_Get_Device_ID_ExW( DEVINST node, WCHAR *buffer, ULONG len, U
     if (path_len > len) return CR_BUFFER_SMALL;
     memcpy( buffer, path, path_len * sizeof(WCHAR) );
     if (path_len < len) buffer[path_len] = 0;
+    wcsupr( buffer );
 
     return CR_SUCCESS;
 }

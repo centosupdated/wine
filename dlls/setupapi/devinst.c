@@ -798,6 +798,7 @@ static struct device *create_device(struct DeviceInfoSet *set,
     struct device *device;
     WCHAR guidstr[MAX_GUID_STRING_LEN];
     WCHAR class_name[MAX_CLASS_NAME_LEN];
+    WCHAR *tmp;
     DWORD size;
 
     TRACE("%p, %s, %s, %d\n", set, debugstr_guid(class),
@@ -825,7 +826,10 @@ static struct device *create_device(struct DeviceInfoSet *set,
         return NULL;
     }
 
+    tmp = wcsrchr(device->instanceId, '\\');
+    *tmp = 0;
     wcsupr(device->instanceId);
+    *tmp = '\\';
     device->set = set;
     device->key = SETUPDI_CreateDevKey(device);
     device->phantom = phantom;
