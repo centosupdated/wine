@@ -2229,7 +2229,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
                                desktop_shm->keystate[VK_RBUTTON] | desktop_shm->keystate[VK_XBUTTON1] |
                                desktop_shm->keystate[VK_XBUTTON2]) & 0x80;
         input_shm_t *input_shm = sender && sender->input ? sender->input->shared : NULL;
-        if (!state && input_shm && !input_shm->capture) set_window_rect_visible( win, rect );
+        if (!state && (!input_shm || !input_shm->capture)) set_window_rect_visible( win, rect );
     }
 
     if (flags & MOUSEEVENTF_MOVE)
