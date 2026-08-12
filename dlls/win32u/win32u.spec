@@ -1019,9 +1019,9 @@
 @ stub -syscall NtUserGetExtendedPointerDeviceProperty
 @ stdcall -syscall NtUserGetForegroundWindow()
 @ stdcall -syscall NtUserGetGUIThreadInfo(long ptr)
-@ stub -syscall NtUserGetGestureConfig
-@ stub -syscall NtUserGetGestureExtArgs
-@ stub -syscall NtUserGetGestureInfo
+@ stdcall -syscall NtUserGetGestureConfig(long long long ptr ptr long)
+@ stdcall -syscall NtUserGetGestureExtArgs(long long ptr)
+@ stdcall -syscall NtUserGetGestureInfo(long ptr)
 @ stub -syscall NtUserGetGuiResources
 @ stub -syscall NtUserGetHDevName
 @ stub -syscall NtUserGetHimetricScaleFactorFromPixelLocation
@@ -1104,7 +1104,7 @@
 @ stdcall -syscall NtUserGetThreadState(long)
 @ stdcall -syscall NtUserGetTitleBarInfo(long ptr)
 @ stub -syscall NtUserGetTopLevelWindow
-@ stub -syscall NtUserGetTouchInputInfo
+@ stdcall -syscall NtUserGetTouchInputInfo(long long ptr long)
 @ stub -syscall NtUserGetTouchValidationStatus
 @ stub -syscall NtUserGetUniformSpaceMapping
 @ stub -syscall NtUserGetUnpredictedMessagePos
@@ -1173,7 +1173,7 @@
 @ stub -syscall NtUserIsQueueAttached
 @ stub -syscall NtUserIsResizeLayoutSynchronizationEnabled
 @ stub -syscall NtUserIsTopLevelWindow
-@ stub -syscall NtUserIsTouchWindow
+@ stdcall -syscall NtUserIsTouchWindow(long ptr)
 @ stub -syscall NtUserIsWindowBroadcastingDpiToChildren
 @ stub -syscall NtUserIsWindowDisplayChangeSuppressed
 @ stub -syscall NtUserIsWindowGDIScaledDpiMessageEnabled
@@ -1282,6 +1282,7 @@
 @ stub -syscall NtUserRegisterSystemThread
 @ stub -syscall NtUserRegisterTasklist
 @ stub -syscall NtUserRegisterTouchHitTestingWindow
+@ stdcall -syscall NtUserRegisterTouchWindow(long long)
 @ stdcall -syscall NtUserRegisterTouchPadCapable(long)
 @ stub -syscall NtUserRegisterUserApiHook
 @ stub -syscall NtUserRegisterUserHungAppHandlers
@@ -1371,7 +1372,7 @@
 @ stdcall -syscall NtUserSetForegroundWindow(long)
 @ stub -syscall NtUserSetForegroundWindowForApplication
 @ stub -syscall NtUserSetFullscreenMagnifierOffsetsDWMUpdated
-@ stub -syscall NtUserSetGestureConfig
+@ stdcall -syscall NtUserSetGestureConfig(long long long ptr long)
 @ stub -syscall NtUserSetImeHotKey
 @ stub -syscall NtUserSetImeInfoEx
 @ stub -syscall NtUserSetImeOwnerWindow
@@ -1504,6 +1505,9 @@
 @ stub -syscall NtUserUnlockWindowStation
 @ stdcall -syscall NtUserUnregisterClass(ptr ptr ptr)
 @ stdcall -syscall NtUserUnregisterHotKey(long long)
+@ stdcall -syscall NtUserUnregisterTouchWindow(long)
+@ stdcall -syscall NtUserCloseTouchInputHandle(long)
+@ stdcall -syscall NtUserCloseGestureInfoHandle(long)
 @ stub -syscall NtUserUnregisterSessionPort
 @ stub -syscall NtUserUnregisterUserApiHook
 @ stub -syscall NtUserUpdateClientRect

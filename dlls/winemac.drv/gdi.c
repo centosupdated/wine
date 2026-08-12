@@ -245,6 +245,7 @@ static const struct user_driver_funcs macdrv_funcs =
     .pBeep = macdrv_Beep,
     .pChangeDisplaySettings = macdrv_ChangeDisplaySettings,
     .pClipCursor = macdrv_ClipCursor,
+    .pGetTouchCapabilities = macdrv_GetTouchCapabilities,
     .pNotifyIcon = macdrv_NotifyIcon,
     .pCleanupIcons = macdrv_CleanupIcons,
     .pClipboardWindowProc = macdrv_ClipboardWindowProc,

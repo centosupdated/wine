@@ -388,7 +388,8 @@ static BOOL wayland_window_surface_flush(struct window_surface *window_surface, 
         goto done;
     }
 
-    buffer_format = (shape_bits || wws->layered) ? WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888;
+    buffer_format = (shape_bits || wws->layered || wayland_csd_should_draw_win(window_surface->hwnd)) ?
+                    WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888;
     if (wws->wayland_buffer_queue->format != buffer_format)
     {
         int width = wws->wayland_buffer_queue->width;
@@ -440,8 +441,32 @@ static BOOL wayland_window_surface_flush(struct window_surface *window_surface, 
     }
 
     wayland_shm_buffer_copy_data(shm_buffer, color_bits, &surface_rect, copy_from_window_region,
-                                 shape_bits && !wws->layered);
+                                 (shape_bits && !wws->layered) || wayland_csd_should_draw_win(window_surface->hwnd));
     if (shape_bits) wayland_shm_buffer_copy_shape(shm_buffer, rect, shape_info, shape_bits);
+
+    if (wayland_csd_should_draw_win(window_surface->hwnd))
+    {
+        struct wayland_win_data *csd_data;
+        int csd_client_top = 0;
+
+        if ((csd_data = wayland_win_data_get(window_surface->hwnd)))
+        {
+            int nonclient_top = csd_data->rects.client.top - csd_data->rects.visible.top;
+            int border = csd_data->rects.client.left - csd_data->rects.window.left;
+            /* The caption occupies the non-client top minus the menu bar.
+             * The cached SM_CYCAPTION/SM_CYMENU metrics are at the process
+             * DPI, but their ratio is DPI independent, so use it to split
+             * the window's actual caption+menu height. */
+            if (csd_data->csd_has_menu)
+                csd_client_top = nonclient_top - (nonclient_top - border) *
+                                 process_wayland.sm_menu_height /
+                                 (process_wayland.sm_caption_height + process_wayland.sm_menu_height);
+            else
+                csd_client_top = nonclient_top;
+            wayland_csd_paint(shm_buffer, csd_data, csd_client_top);
+            wayland_win_data_release(csd_data);
+        }
+    }
 
     NtGdiSetRectRgn(shm_buffer->damage_region, 0, 0, 0, 0);
 

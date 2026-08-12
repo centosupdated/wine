@@ -36,6 +36,7 @@ static const struct user_driver_funcs waylanddrv_funcs =
 {
     .pClipboardWindowProc = WAYLAND_ClipboardWindowProc,
     .pClipCursor = WAYLAND_ClipCursor,
+    .pGetTouchCapabilities = WAYLAND_GetTouchCapabilities,
     .pDesktopWindowProc = WAYLAND_DesktopWindowProc,
     .pDestroyWindow = WAYLAND_DestroyWindow,
     .pSetIMECompositionRect = WAYLAND_SetIMECompositionRect,
@@ -47,6 +48,7 @@ static const struct user_driver_funcs waylanddrv_funcs =
     .pSetWindowIcons = WAYLAND_SetWindowIcons,
     .pSetWindowStyle = WAYLAND_SetWindowStyle,
     .pSetWindowText = WAYLAND_SetWindowText,
+    .pGetWindowStyleMasks = WAYLAND_GetWindowStyleMasks,
     .pSysCommand = WAYLAND_SysCommand,
     .pUpdateLayeredWindow = WAYLAND_UpdateLayeredWindow,
     .pUpdateDisplayDevices = WAYLAND_UpdateDisplayDevices,

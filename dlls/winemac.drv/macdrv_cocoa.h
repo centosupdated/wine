@@ -284,6 +284,7 @@ enum {
     MOUSE_MOVED_RELATIVE,
     MOUSE_MOVED_ABSOLUTE,
     MOUSE_SCROLL,
+    TOUCH,
     QUERY_EVENT,
     QUERY_EVENT_NO_PREEMPT_WAIT,
     REASSERT_WINDOW_POSITION,
@@ -371,6 +372,13 @@ typedef struct macdrv_event {
             int             y;
             unsigned long   time_ms;
         }                                           mouse_scroll;
+        struct {
+            int             id;
+            int             phase;  /* 0 = down, 1 = moved, 2 = up */
+            int             x;
+            int             y;
+            unsigned long   time_ms;
+        }                                           touch;
         struct {
             struct macdrv_query *query;
         }                                           query_event;

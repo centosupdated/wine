@@ -157,6 +157,10 @@ DECL_HANDLER(get_window_info);
 DECL_HANDLER(init_window_info);
 DECL_HANDLER(set_window_info);
 DECL_HANDLER(set_window_fnid);
+DECL_HANDLER(set_window_touch_flags);
+DECL_HANDLER(get_window_touch_flags);
+DECL_HANDLER(set_gesture_config);
+DECL_HANDLER(get_gesture_config);
 DECL_HANDLER(set_parent);
 DECL_HANDLER(get_window_parents);
 DECL_HANDLER(get_window_list);
@@ -469,6 +473,10 @@ static const req_handler req_handlers[REQ_NB_REQUESTS] =
     (req_handler)req_init_window_info,
     (req_handler)req_set_window_info,
     (req_handler)req_set_window_fnid,
+    (req_handler)req_set_window_touch_flags,
+    (req_handler)req_get_window_touch_flags,
+    (req_handler)req_set_gesture_config,
+    (req_handler)req_get_gesture_config,
     (req_handler)req_set_parent,
     (req_handler)req_get_window_parents,
     (req_handler)req_get_window_list,
@@ -1539,6 +1547,22 @@ C_ASSERT( sizeof(struct set_window_info_reply) == 24 );
 C_ASSERT( offsetof(struct set_window_fnid_request, handle) == 12 );
 C_ASSERT( offsetof(struct set_window_fnid_request, atom) == 16 );
 C_ASSERT( sizeof(struct set_window_fnid_request) == 24 );
+C_ASSERT( offsetof(struct set_window_touch_flags_request, handle) == 12 );
+C_ASSERT( offsetof(struct set_window_touch_flags_request, flags) == 16 );
+C_ASSERT( offsetof(struct set_window_touch_flags_request, set) == 20 );
+C_ASSERT( sizeof(struct set_window_touch_flags_request) == 24 );
+C_ASSERT( offsetof(struct get_window_touch_flags_request, handle) == 12 );
+C_ASSERT( sizeof(struct get_window_touch_flags_request) == 16 );
+C_ASSERT( offsetof(struct get_window_touch_flags_reply, flags) == 8 );
+C_ASSERT( sizeof(struct get_window_touch_flags_reply) == 16 );
+C_ASSERT( offsetof(struct set_gesture_config_request, handle) == 12 );
+C_ASSERT( offsetof(struct set_gesture_config_request, count) == 16 );
+C_ASSERT( sizeof(struct set_gesture_config_request) == 24 );
+C_ASSERT( offsetof(struct get_gesture_config_request, handle) == 12 );
+C_ASSERT( offsetof(struct get_gesture_config_request, count) == 16 );
+C_ASSERT( sizeof(struct get_gesture_config_request) == 24 );
+C_ASSERT( offsetof(struct get_gesture_config_reply, count) == 8 );
+C_ASSERT( sizeof(struct get_gesture_config_reply) == 16 );
 C_ASSERT( offsetof(struct set_parent_request, handle) == 12 );
 C_ASSERT( offsetof(struct set_parent_request, parent) == 16 );
 C_ASSERT( sizeof(struct set_parent_request) == 24 );

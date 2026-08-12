@@ -132,6 +132,7 @@ extern UINT macdrv_UpdateDisplayDevices(const struct gdi_device_manager *device_
 extern BOOL macdrv_GetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp);
 extern BOOL macdrv_SetDeviceGammaRamp(PHYSDEV dev, LPVOID ramp);
 extern BOOL macdrv_ClipCursor(const RECT *clip, BOOL reset);
+extern UINT macdrv_GetTouchCapabilities(void);
 extern LRESULT macdrv_NotifyIcon(HWND hwnd, UINT msg, NOTIFYICONDATAW *data);
 extern void macdrv_CleanupIcons(HWND hwnd);
 extern LRESULT macdrv_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -237,6 +238,7 @@ extern BOOL query_min_max_info(HWND hwnd);
 extern void macdrv_mouse_button(HWND hwnd, const macdrv_event *event);
 extern void macdrv_mouse_moved(HWND hwnd, const macdrv_event *event);
 extern void macdrv_mouse_scroll(HWND hwnd, const macdrv_event *event);
+extern void macdrv_touch(HWND hwnd, const macdrv_event *event);
 extern void macdrv_release_capture(HWND hwnd, const macdrv_event *event);
 
 extern void macdrv_compute_keyboard_layout(struct macdrv_thread_data *thread_data);

@@ -198,6 +198,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
 
     - (void) dealloc
     {
+        [touchIDs release];
         [windowsBeingDragged release];
         [cursor release];
         [screenFrameCGRects release];
@@ -1775,6 +1776,90 @@ static NSString* WineLocalizedString(unsigned int stringID)
         }
     }
 
+    - (void) handleTouch:(NSEvent*)theEvent
+    {
+        WineWindow* window = (WineWindow*)[theEvent window];
+        NSView* view;
+        NSSet* touches;
+
+        if (![window isKindOfClass:[WineWindow class]])
+            return;
+
+        if (!(view = [window contentView]))
+            return;
+
+        touches = [theEvent touchesMatchingPhase:NSTouchPhaseAny inView:view];
+        if (![touches count])
+            return;
+
+        for (NSTouch* touch in touches)
+        {
+            int phase;
+            NSPoint pt, screenPt;
+            CGPoint cgpt;
+            macdrv_event* event;
+
+            /* Only direct (on-screen) touches are meaningful here.  Indirect
+               touches come from the trackpad and are delivered to Wine as
+               mouse and gesture events instead. */
+            if (touch.type != NSTouchTypeDirect)
+                continue;
+
+            if (touch.phase & NSTouchPhaseBegan)
+                phase = 0;
+            else if (touch.phase & NSTouchPhaseMoved)
+                phase = 1;
+            else if (touch.phase & (NSTouchPhaseEnded | NSTouchPhaseCancelled))
+                phase = 2;
+            else
+                continue;  /* stationary touches need no update */
+
+            /* Convert the touch location from the (flipped) view coordinate
+               system to global screen coordinates, the same space the mouse
+               events use, then scale for Retina. */
+            pt = [view convertPoint:[touch locationInView:view] toView:nil];
+            screenPt = [window convertPointToScreen:pt];
+            cgpt = cgpoint_win_from_mac(NSPointToCGPoint(screenPt));
+
+            event = macdrv_create_event(TOUCH, window);
+            event->touch.id = [self touchIDForTouch:touch];
+            event->touch.phase = phase;
+            event->touch.x = floor(cgpt.x);
+            event->touch.y = floor(cgpt.y);
+            event->touch.time_ms = [self ticksForEventTime:[theEvent timestamp]];
+
+            [window.queue postEvent:event];
+            macdrv_release_event(event);
+
+            if (phase == 2)
+                [self releaseTouchID:touch];
+        }
+    }
+
+    - (int) touchIDForTouch:(NSTouch*)touch
+    {
+        id identity = touch.identity;
+        NSNumber* number;
+        int id;
+
+        if (!touchIDs)
+            touchIDs = [[NSMutableDictionary alloc] init];
+
+        if ((number = touchIDs[identity]))
+            id = [number intValue];
+        else
+        {
+            id = nextTouchID++;
+            touchIDs[identity] = @(id);
+        }
+        return id;
+    }
+
+    - (void) releaseTouchID:(NSTouch*)touch
+    {
+        [touchIDs removeObjectForKey:touch.identity];
+    }
+
     // Returns TRUE if the event was handled and caller should do nothing more
     // with it.  Returns FALSE if the caller should process it as normal and
     // then call -didSendEvent:.
@@ -1803,6 +1888,8 @@ static NSString* WineLocalizedString(unsigned int stringID)
             [self handleScrollWheel:anEvent];
             ret = mouseCaptureWindow != nil;
         }
+        else if (type == NSEventTypeDirectTouch)
+            [self handleTouch:anEvent];
         else if (type == NSEventTypeKeyDown)
         {
             // -[NSApplication sendEvent:] seems to consume presses of the Help

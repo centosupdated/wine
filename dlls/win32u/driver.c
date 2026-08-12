@@ -1338,6 +1338,8 @@ static const struct user_driver_funcs lazy_load_driver =
     nulldrv_WindowPosChanged,
     /* system parameters */
     nulldrv_SystemParametersInfo,
+    /* digitizer capabilities */
+    NULL,
     /* wintab support */
     loaderdrv_WintabProc,
     /* vulkan support */

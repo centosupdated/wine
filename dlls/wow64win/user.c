@@ -4204,6 +4204,93 @@ NTSTATUS WINAPI wow64_NtUserRegisterTouchPadCapable( UINT *args )
     return NtUserRegisterTouchPadCapable( capable );
 }
 
+NTSTATUS WINAPI wow64_NtUserRegisterTouchWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    UINT flags = get_ulong( &args );
+
+    return NtUserRegisterTouchWindow( hwnd, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserUnregisterTouchWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+
+    return NtUserUnregisterTouchWindow( hwnd );
+}
+
+NTSTATUS WINAPI wow64_NtUserIsTouchWindow( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    ULONG *flags = get_ptr( &args );
+
+    return NtUserIsTouchWindow( hwnd, flags );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetTouchInputInfo( UINT *args )
+{
+    HTOUCHINPUT handle = get_handle( &args );
+    UINT count = get_ulong( &args );
+    TOUCHINPUT *ptr = get_ptr( &args );
+    INT size = get_ulong( &args );
+
+    return NtUserGetTouchInputInfo( handle, count, ptr, size );
+}
+
+NTSTATUS WINAPI wow64_NtUserCloseTouchInputHandle( UINT *args )
+{
+    HTOUCHINPUT handle = get_handle( &args );
+
+    return NtUserCloseTouchInputHandle( handle );
+}
+
+NTSTATUS WINAPI wow64_NtUserSetGestureConfig( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    DWORD reserved = get_ulong( &args );
+    UINT count = get_ulong( &args );
+    GESTURECONFIG *config = get_ptr( &args );
+    UINT size = get_ulong( &args );
+
+    return NtUserSetGestureConfig( hwnd, reserved, count, config, size );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetGestureConfig( UINT *args )
+{
+    HWND hwnd = get_handle( &args );
+    DWORD reserved = get_ulong( &args );
+    DWORD flags = get_ulong( &args );
+    UINT *count = get_ptr( &args );
+    GESTURECONFIG *config = get_ptr( &args );
+    UINT size = get_ulong( &args );
+
+    return NtUserGetGestureConfig( hwnd, reserved, flags, count, config, size );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetGestureInfo( UINT *args )
+{
+    HGESTUREINFO handle = get_handle( &args );
+    GESTUREINFO *info = get_ptr( &args );
+
+    return NtUserGetGestureInfo( handle, info );
+}
+
+NTSTATUS WINAPI wow64_NtUserGetGestureExtArgs( UINT *args )
+{
+    HGESTUREINFO handle = get_handle( &args );
+    UINT size = get_ulong( &args );
+    BYTE *data = get_ptr( &args );
+
+    return NtUserGetGestureExtArgs( handle, size, data );
+}
+
+NTSTATUS WINAPI wow64_NtUserCloseGestureInfoHandle( UINT *args )
+{
+    HGESTUREINFO handle = get_handle( &args );
+
+    return NtUserCloseGestureInfoHandle( handle );
+}
+
 NTSTATUS WINAPI wow64_NtUserReleaseCapture( UINT *args )
 {
     return NtUserReleaseCapture();

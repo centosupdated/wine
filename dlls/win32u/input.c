@@ -36,6 +36,7 @@
 #include "wine/server.h"
 #include "wine/debug.h"
 #include "kbd.h"
+#include <inttypes.h>
 
 WINE_DEFAULT_DEBUG_CHANNEL(win);
 WINE_DECLARE_DEBUG_CHANNEL(keyboard);
@@ -2928,6 +2929,240 @@ BOOL WINAPI NtUserRegisterTouchPadCapable( BOOL capable )
     FIXME( "capable %u stub!\n", capable );
     RtlSetLastWin32Error( ERROR_CALL_NOT_IMPLEMENTED );
     return FALSE;
+}
+
+/**********************************************************************
+ *       NtUserRegisterTouchWindow    (win32u.@)
+ */
+BOOL WINAPI NtUserRegisterTouchWindow( HWND hwnd, ULONG flags )
+{
+    BOOL ret = TRUE;
+
+    TRACE( "hwnd %p, flags %#" PRIx32 "\n", hwnd, flags );
+
+    SERVER_START_REQ( set_window_touch_flags )
+    {
+        req->handle = wine_server_user_handle( hwnd );
+        req->flags  = flags;
+        req->set    = 1;
+        ret = !wine_server_call( req );
+    }
+    SERVER_END_REQ;
+
+    return ret;
+}
+
+/**********************************************************************
+ *       NtUserUnregisterTouchWindow    (win32u.@)
+ */
+BOOL WINAPI NtUserUnregisterTouchWindow( HWND hwnd )
+{
+    BOOL ret = TRUE;
+
+    TRACE( "hwnd %p\n", hwnd );
+
+    SERVER_START_REQ( set_window_touch_flags )
+    {
+        req->handle = wine_server_user_handle( hwnd );
+        req->flags  = 0;
+        req->set    = 0;
+        ret = !wine_server_call( req );
+    }
+    SERVER_END_REQ;
+
+    return ret;
+}
+
+/**********************************************************************
+ *       NtUserIsTouchWindow    (win32u.@)
+ */
+BOOL WINAPI NtUserIsTouchWindow( HWND hwnd, ULONG *flags )
+{
+    unsigned int touch_flags = 0;
+
+    TRACE( "hwnd %p, flags %p\n", hwnd, flags );
+
+    SERVER_START_REQ( get_window_touch_flags )
+    {
+        req->handle = wine_server_user_handle( hwnd );
+        if (!wine_server_call( req )) touch_flags = reply->flags;
+    }
+    SERVER_END_REQ;
+
+    if (!(touch_flags & WIN_TOUCH_FLAG_REGISTERED)) return FALSE;
+    if (flags) *flags = touch_flags & ~WIN_TOUCH_FLAG_REGISTERED;
+    return TRUE;
+}
+
+/**********************************************************************
+ *       NtUserGetTouchInputInfo    (win32u.@)
+ */
+BOOL WINAPI NtUserGetTouchInputInfo( HTOUCHINPUT handle, UINT count, TOUCHINPUT *ptr, int size )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct touch_input *touch_input = thread_info->touch_input;
+
+    TRACE( "handle %p, count %u, ptr %p, size %d\n", handle, count, ptr, size );
+
+    if (!touch_input || touch_input->hw_id != (UINT_PTR)handle || size != sizeof(TOUCHINPUT))
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+    if (count > touch_input->count)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    memcpy( ptr, touch_input->data, count * sizeof(TOUCHINPUT) );
+    return TRUE;
+}
+
+/**********************************************************************
+ *       NtUserCloseTouchInputHandle    (win32u.@)
+ */
+BOOL WINAPI NtUserCloseTouchInputHandle( HTOUCHINPUT handle )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct touch_input *touch_input = thread_info->touch_input;
+
+    TRACE( "handle %p\n", handle );
+
+    if (!touch_input || touch_input->hw_id != (UINT_PTR)handle)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+
+    free( touch_input );
+    thread_info->touch_input = NULL;
+    return TRUE;
+}
+
+/**********************************************************************
+ *       NtUserSetGestureConfig    (win32u.@)
+ */
+BOOL WINAPI NtUserSetGestureConfig( HWND hwnd, DWORD reserved, UINT count, GESTURECONFIG *config, UINT size )
+{
+    BOOL ret;
+
+    TRACE( "hwnd %p, reserved %#" PRIx32 ", count %u, config %p, size %u\n", hwnd, reserved, count, config, size );
+
+    if (size != sizeof(GESTURECONFIG) || count > GESTURECONFIGMAXCOUNT)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    SERVER_START_REQ( set_gesture_config )
+    {
+        req->handle = wine_server_user_handle( hwnd );
+        req->count  = count;
+        wine_server_add_data( req, config, count * sizeof(GESTURECONFIG) );
+        ret = !wine_server_call( req );
+    }
+    SERVER_END_REQ;
+
+    return ret;
+}
+
+/**********************************************************************
+ *       NtUserGetGestureConfig    (win32u.@)
+ */
+BOOL WINAPI NtUserGetGestureConfig( HWND hwnd, DWORD reserved, DWORD flags, UINT *count, GESTURECONFIG *config, UINT size )
+{
+    BOOL ret = FALSE;
+
+    TRACE( "hwnd %p, reserved %#" PRIx32 ", flags %#" PRIx32 ", count %p, config %p, size %u\n", hwnd, reserved, flags, count, config, size );
+
+    if (size != sizeof(GESTURECONFIG) || !count)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+
+    SERVER_START_REQ( get_gesture_config )
+    {
+        req->handle = wine_server_user_handle( hwnd );
+        req->count  = *count;
+        wine_server_set_reply( req, config, *count * size );
+        if (!(ret = !wine_server_call( req ))) *count = reply->count;
+    }
+    SERVER_END_REQ;
+
+    return ret;
+}
+
+/**********************************************************************
+ *       NtUserGetGestureInfo    (win32u.@)
+ */
+BOOL WINAPI NtUserGetGestureInfo( HGESTUREINFO handle, GESTUREINFO *info )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct gesture_info *gesture_info = thread_info->gesture_info;
+
+    TRACE( "handle %p, info %p\n", handle, info );
+
+    if (!info || info->cbSize != sizeof(GESTUREINFO))
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_PARAMETER );
+        return FALSE;
+    }
+    if (!gesture_info || gesture_info->hw_id != (UINT_PTR)handle)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+
+    *info = gesture_info->info;
+    return TRUE;
+}
+
+/**********************************************************************
+ *       NtUserGetGestureExtArgs    (win32u.@)
+ */
+BOOL WINAPI NtUserGetGestureExtArgs( HGESTUREINFO handle, UINT size, BYTE *args )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct gesture_info *gesture_info = thread_info->gesture_info;
+
+    TRACE( "handle %p, size %u, args %p\n", handle, size, args );
+
+    if (!gesture_info || gesture_info->hw_id != (UINT_PTR)handle || !gesture_info->info.cbExtraArgs)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+
+    if (size < gesture_info->info.cbExtraArgs)
+    {
+        RtlSetLastWin32Error( ERROR_INSUFFICIENT_BUFFER );
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+/**********************************************************************
+ *       NtUserCloseGestureInfoHandle    (win32u.@)
+ */
+BOOL WINAPI NtUserCloseGestureInfoHandle( HGESTUREINFO handle )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct gesture_info *gesture_info = thread_info->gesture_info;
+
+    TRACE( "handle %p\n", handle );
+
+    if (!gesture_info || gesture_info->hw_id != (UINT_PTR)handle)
+    {
+        RtlSetLastWin32Error( ERROR_INVALID_HANDLE );
+        return FALSE;
+    }
+
+    free( gesture_info );
+    thread_info->gesture_info = NULL;
+    return TRUE;
 }
 
 /**********************************************************************

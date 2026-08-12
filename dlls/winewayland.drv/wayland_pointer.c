@@ -1083,3 +1083,19 @@ BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset)
 
     return TRUE;
 }
+
+/***********************************************************************
+ *	     WAYLAND_GetTouchCapabilities
+ */
+UINT WAYLAND_GetTouchCapabilities(void)
+{
+    UINT caps = 0;
+
+    pthread_mutex_lock(&process_wayland.touch.mutex);
+    if (process_wayland.touch.wl_touch) caps = NID_INTEGRATED_TOUCH | NID_MULTI_INPUT | NID_READY;
+    pthread_mutex_unlock(&process_wayland.touch.mutex);
+
+    TRACE("caps=%#x\n", caps);
+
+    return MAKELONG(caps, WAYLAND_TOUCH_MAX_SLOTS);
+}

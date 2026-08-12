@@ -3642,6 +3642,66 @@ struct set_window_fnid_reply
 
 
 
+struct set_window_touch_flags_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+    unsigned int   flags;
+    unsigned int   set;
+};
+struct set_window_touch_flags_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct get_window_touch_flags_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+};
+struct get_window_touch_flags_reply
+{
+    struct reply_header __header;
+    unsigned int   flags;
+    char __pad_12[4];
+};
+
+
+
+struct set_gesture_config_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+    unsigned int   count;
+    /* VARARG(config,bytes); */
+    char __pad_20[4];
+};
+struct set_gesture_config_reply
+{
+    struct reply_header __header;
+};
+
+
+
+struct get_gesture_config_request
+{
+    struct request_header __header;
+    user_handle_t  handle;
+    unsigned int   count;
+    char __pad_20[4];
+};
+struct get_gesture_config_reply
+{
+    struct reply_header __header;
+    unsigned int   count;
+    /* VARARG(config,bytes); */
+    char __pad_12[4];
+};
+
+
+
 struct set_parent_request
 {
     struct request_header __header;
@@ -6389,6 +6449,10 @@ enum request
     REQ_init_window_info,
     REQ_set_window_info,
     REQ_set_window_fnid,
+    REQ_set_window_touch_flags,
+    REQ_get_window_touch_flags,
+    REQ_set_gesture_config,
+    REQ_get_gesture_config,
     REQ_set_parent,
     REQ_get_window_parents,
     REQ_get_window_list,
@@ -6704,6 +6768,10 @@ union generic_request
     struct init_window_info_request init_window_info_request;
     struct set_window_info_request set_window_info_request;
     struct set_window_fnid_request set_window_fnid_request;
+    struct set_window_touch_flags_request set_window_touch_flags_request;
+    struct get_window_touch_flags_request get_window_touch_flags_request;
+    struct set_gesture_config_request set_gesture_config_request;
+    struct get_gesture_config_request get_gesture_config_request;
     struct set_parent_request set_parent_request;
     struct get_window_parents_request get_window_parents_request;
     struct get_window_list_request get_window_list_request;
@@ -7017,6 +7085,10 @@ union generic_reply
     struct init_window_info_reply init_window_info_reply;
     struct set_window_info_reply set_window_info_reply;
     struct set_window_fnid_reply set_window_fnid_reply;
+    struct set_window_touch_flags_reply set_window_touch_flags_reply;
+    struct get_window_touch_flags_reply get_window_touch_flags_reply;
+    struct set_gesture_config_reply set_gesture_config_reply;
+    struct get_gesture_config_reply get_gesture_config_reply;
     struct set_parent_reply set_parent_reply;
     struct get_window_parents_reply get_window_parents_reply;
     struct get_window_list_reply get_window_list_reply;
@@ -7177,6 +7249,6 @@ union generic_reply
     struct alpc_create_port_reply alpc_create_port_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 959
+#define SERVER_PROTOCOL_VERSION 960
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

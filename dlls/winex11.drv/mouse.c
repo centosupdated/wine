@@ -126,6 +126,7 @@ static Cursor create_cursor( HANDLE handle );
 
 #ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
 static BOOL xinput2_available;
+static BOOL touch_available;
 static BOOL broken_rawevents;
 #define MAKE_FUNCPTR(f) static typeof(f) * p##f
 MAKE_FUNCPTR(XIGetClientPointer);
@@ -274,6 +275,11 @@ void x11drv_xinput2_enable( Display *display, Window window )
     }
     else
     {
+        /* Select touch events for all devices: the touchscreen may be a
+         * floating slave device (e.g. under Xwayland it is reported as an
+         * unfloating slave), which an XIAllMasterDevices selection would
+         * miss. */
+        mask.deviceid = XIAllDevices;
         XISetMask( mask_bits, XI_TouchBegin );
         XISetMask( mask_bits, XI_TouchUpdate );
         XISetMask( mask_bits, XI_TouchEnd );
@@ -302,6 +308,10 @@ void x11drv_xinput2_disable( Display *display, Window window )
     {
         if (--x11drv_thread_data()->root_window_users) return;
         XISetMask( mask_bits, XI_DeviceChanged );
+    }
+    else
+    {
+        mask.deviceid = XIAllDevices;
     }
 
     pXISelectEvents( display, window, &mask, 1 );
@@ -337,7 +347,13 @@ void x11drv_xinput2_init( struct x11drv_thread_data *data )
     else
     {
         XIDeviceInfo *pointer_info = pXIQueryDevice( data->display, data->xinput2_pointer, &count );
+        int j;
+
         update_relative_valuators( pointer_info->classes, pointer_info->num_classes );
+        for (j = 0; j < pointer_info->num_classes; j++)
+        {
+            if (pointer_info->classes[j]->type == XITouchClass) touch_available = TRUE;
+        }
         pXIFreeDeviceInfo( pointer_info );
     }
 
@@ -1681,9 +1697,28 @@ static BOOL X11DRV_TouchEvent( HWND hwnd, XGenericEventCookie *xev )
     int flags = 0;
     POINT pos;
 
+    /* call_event_handler passes a null hwnd for generic events; resolve the
+     * target window from the event window (the window under the touch) so the
+     * synthesized click goes to the touched window instead of the focus window. */
+    if (!hwnd && event->event)
+    {
+        XFindContext( gdi_display, event->event, winContext, (char **)&hwnd );
+        if (!hwnd)
+        {
+            struct x11drv_thread_data *thread_data = x11drv_thread_data();
+            if (thread_data) XFindContext( thread_data->display, event->event, winContext, (char **)&hwnd );
+        }
+        TRACE( "resolved touch hwnd=%p from event window %lx\n", hwnd, event->event );
+    }
+
     pt = map_event_coords( hwnd, event->event, event->root, root, pt );
     pos.x = pt.x * 65535 / (virtual.right - virtual.left);
     pos.y = pt.y * 65535 / (virtual.bottom - virtual.top);
+
+    TRACE( "touch msg=%d detail %u hwnd=%p event_win=%lx root_win=%lx evd=%g,%g rootd=%g,%g pt=%d,%d pos=%d,%d virt=%d,%d\n",
+           event->evtype, event->detail, hwnd, event->event, event->root,
+           event->event_x, event->event_y, event->root_x, event->root_y,
+           pt.x, pt.y, pos.x, pos.y, virtual.right - virtual.left, virtual.bottom - virtual.top );
 
     switch (event->evtype)
     {
@@ -1786,4 +1821,15 @@ BOOL X11DRV_GenericEvent( HWND hwnd, XEvent *xev )
     }
 #endif
     return ret;
+}
+
+/***********************************************************************
+ *              X11DRV_GetTouchCapabilities
+ */
+UINT X11DRV_GetTouchCapabilities(void)
+{
+#ifdef HAVE_X11_EXTENSIONS_XINPUT2_H
+    if (touch_available) return MAKELONG( NID_INTEGRATED_TOUCH | NID_MULTI_INPUT | NID_READY, 20 );
+#endif
+    return 0;
 }

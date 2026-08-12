@@ -137,6 +137,37 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener =
     xdg_toplevel_handle_close
 };
 
+static void zxdg_toplevel_decoration_handle_configure(void *private,
+                                                      struct zxdg_toplevel_decoration_v1 *decoration,
+                                                      uint32_t mode)
+{
+    struct wayland_surface *surface;
+    struct wayland_win_data *data;
+    HWND hwnd = private;
+    BOOL changed = FALSE;
+
+    TRACE("hwnd=%p mode=%u\n", hwnd, mode);
+
+    if (!(data = wayland_win_data_get(hwnd))) return;
+    if ((surface = data->wayland_surface) && wayland_surface_is_toplevel(surface) &&
+        surface->xdg_toplevel_decoration == decoration && surface->decoration_mode != mode)
+    {
+        surface->decoration_mode = mode;
+        surface->decoration_frame_pending = TRUE;
+        changed = TRUE;
+    }
+    wayland_win_data_release(data);
+
+    /* A change in the effective decoration mode affects the visible rect and
+     * window geometry, so re-run the configure handling. */
+    if (changed) NtUserPostMessage(hwnd, WM_WAYLAND_CONFIGURE, 0, 0);
+}
+
+static const struct zxdg_toplevel_decoration_v1_listener zxdg_toplevel_decoration_listener =
+{
+    zxdg_toplevel_decoration_handle_configure
+};
+
 void wp_fractional_scale_handle_scale(void* user_data,
                                       struct wp_fractional_scale_v1 *fractional_scale_v1,
                                       uint32_t scale_fixed)
@@ -346,6 +377,22 @@ void wayland_surface_make_toplevel(struct wayland_surface *surface)
     if (!surface->xdg_toplevel) goto err;
     xdg_toplevel_add_listener(surface->xdg_toplevel, &xdg_toplevel_listener, surface->hwnd);
 
+    if (process_wayland.zxdg_decoration_manager_v1)
+    {
+        surface->xdg_toplevel_decoration =
+            zxdg_decoration_manager_v1_get_toplevel_decoration(
+                process_wayland.zxdg_decoration_manager_v1, surface->xdg_toplevel);
+        if (!surface->xdg_toplevel_decoration) goto err;
+        zxdg_toplevel_decoration_v1_add_listener(surface->xdg_toplevel_decoration,
+                                                 &zxdg_toplevel_decoration_listener,
+                                                 surface->hwnd);
+        /* Ask for server-side decorations so the compositor draws the
+         * system-themed title bar, like the window manager does on X11. */
+        zxdg_toplevel_decoration_v1_set_mode(surface->xdg_toplevel_decoration,
+                                             ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        surface->decoration_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+    }
+
     if (process_name)
         xdg_toplevel_set_app_id(surface->xdg_toplevel, process_name);
 
@@ -442,6 +489,12 @@ void wayland_surface_clear_role(struct wayland_surface *surface)
                 surface->xdg_toplevel, NULL);
             xdg_toplevel_icon_v1_destroy(surface->xdg_toplevel_icon);
             surface->xdg_toplevel_icon = NULL;
+        }
+
+        if (surface->xdg_toplevel_decoration)
+        {
+            zxdg_toplevel_decoration_v1_destroy(surface->xdg_toplevel_decoration);
+            surface->xdg_toplevel_decoration = NULL;
         }
 
         if (surface->xdg_toplevel)
@@ -675,9 +728,27 @@ static void wayland_surface_reconfigure_size(struct wayland_surface *surface,
     TRACE("hwnd=%p size=%dx%d\n", surface->hwnd, width, height);
 
     if (width != 0 && height != 0)
+    {
+        /* The buffer covers the visible rect rounded up to the nearest
+         * 128 pixels, so its aspect ratio can differ from that of the
+         * surface (visible rect / scale). Crop the buffer to the actual
+         * window content so scaling it to the surface size doesn't distort
+         * the image. */
+        int content_w = surface->window.rect.right - surface->window.rect.left;
+        int content_h = surface->window.rect.bottom - surface->window.rect.top;
+
+        wp_viewport_set_source(surface->wp_viewport,
+                               wl_fixed_from_int(0), wl_fixed_from_int(0),
+                               wl_fixed_from_int(content_w), wl_fixed_from_int(content_h));
         wp_viewport_set_destination(surface->wp_viewport, width, height);
+    }
     else
+    {
+        wp_viewport_set_source(surface->wp_viewport,
+                               wl_fixed_from_int(-1), wl_fixed_from_int(-1),
+                               wl_fixed_from_int(-1), wl_fixed_from_int(-1));
         wp_viewport_set_destination(surface->wp_viewport, -1, -1);
+    }
 }
 
 /**********************************************************************

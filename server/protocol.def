@@ -2730,6 +2730,40 @@ enum message_type
 @END
 
 
+/* Set or clear the touch flags of a window */
+@REQ(set_window_touch_flags)
+    user_handle_t  handle;        /* handle to the window */
+    unsigned int   flags;         /* touch flags to set or clear */
+    unsigned int   set;           /* set if nonzero, clear if zero */
+@END
+
+
+/* Get the touch flags of a window */
+@REQ(get_window_touch_flags)
+    user_handle_t  handle;        /* handle to the window */
+@REPLY
+    unsigned int   flags;         /* touch flags */
+@END
+
+
+/* Set the gesture configuration of a window */
+@REQ(set_gesture_config)
+    user_handle_t  handle;        /* handle to the window */
+    unsigned int   count;         /* number of config entries */
+    VARARG(config,bytes);         /* GESTURECONFIG array */
+@END
+
+
+/* Get the gesture configuration of a window */
+@REQ(get_gesture_config)
+    user_handle_t  handle;        /* handle to the window */
+    unsigned int   count;         /* number of config entries to retrieve */
+@REPLY
+    unsigned int   count;         /* number of config entries retrieved */
+    VARARG(config,bytes);         /* GESTURECONFIG array */
+@END
+
+
 /* Set the parent of a window */
 @REQ(set_parent)
     user_handle_t  handle;      /* handle to the window */

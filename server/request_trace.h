@@ -1779,6 +1779,42 @@ static void dump_set_window_fnid_request( const struct set_window_fnid_request *
     fprintf( stderr, ", atom=%04x", req->atom );
 }
 
+static void dump_set_window_touch_flags_request( const struct set_window_touch_flags_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+    fprintf( stderr, ", flags=%08x", req->flags );
+    fprintf( stderr, ", set=%08x", req->set );
+}
+
+static void dump_get_window_touch_flags_request( const struct get_window_touch_flags_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+}
+
+static void dump_get_window_touch_flags_reply( const struct get_window_touch_flags_reply *req )
+{
+    fprintf( stderr, " flags=%08x", req->flags );
+}
+
+static void dump_set_gesture_config_request( const struct set_gesture_config_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+    fprintf( stderr, ", count=%08x", req->count );
+    dump_varargs_bytes( ", config=", cur_size );
+}
+
+static void dump_get_gesture_config_request( const struct get_gesture_config_request *req )
+{
+    fprintf( stderr, " handle=%08x", req->handle );
+    fprintf( stderr, ", count=%08x", req->count );
+}
+
+static void dump_get_gesture_config_reply( const struct get_gesture_config_reply *req )
+{
+    fprintf( stderr, " count=%08x", req->count );
+    dump_varargs_bytes( ", config=", cur_size );
+}
+
 static void dump_set_parent_request( const struct set_parent_request *req )
 {
     fprintf( stderr, " handle=%08x", req->handle );
@@ -3689,6 +3725,10 @@ static const dump_func req_dumpers[REQ_NB_REQUESTS] =
     (dump_func)dump_init_window_info_request,
     (dump_func)dump_set_window_info_request,
     (dump_func)dump_set_window_fnid_request,
+    (dump_func)dump_set_window_touch_flags_request,
+    (dump_func)dump_get_window_touch_flags_request,
+    (dump_func)dump_set_gesture_config_request,
+    (dump_func)dump_get_gesture_config_request,
     (dump_func)dump_set_parent_request,
     (dump_func)dump_get_window_parents_request,
     (dump_func)dump_get_window_list_request,
@@ -4001,6 +4041,10 @@ static const dump_func reply_dumpers[REQ_NB_REQUESTS] =
     NULL,
     (dump_func)dump_set_window_info_reply,
     NULL,
+    NULL,
+    (dump_func)dump_get_window_touch_flags_reply,
+    NULL,
+    (dump_func)dump_get_gesture_config_reply,
     (dump_func)dump_set_parent_reply,
     (dump_func)dump_get_window_parents_reply,
     (dump_func)dump_get_window_list_reply,
@@ -4313,6 +4357,10 @@ static const char * const req_names[REQ_NB_REQUESTS] =
     "init_window_info",
     "set_window_info",
     "set_window_fnid",
+    "set_window_touch_flags",
+    "get_window_touch_flags",
+    "set_gesture_config",
+    "get_gesture_config",
     "set_parent",
     "get_window_parents",
     "get_window_list",

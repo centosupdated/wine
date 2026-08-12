@@ -940,3 +940,13 @@ void macdrv_release_capture(HWND hwnd, const macdrv_event *event)
             WARN("failed to post WM_CANCELMODE; error 0x%08x\n", RtlGetLastWin32Error());
     }
 }
+
+/***********************************************************************
+ *              macdrv_GetTouchCapabilities
+ */
+UINT macdrv_GetTouchCapabilities(void)
+{
+    /* DirectTouch support is compiled in; a real touch screen is required
+     * for events to arrive, but report the capability optimistically. */
+    return MAKELONG( NID_INTEGRATED_TOUCH | NID_MULTI_INPUT | NID_READY, 20 );
+}

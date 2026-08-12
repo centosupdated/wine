@@ -218,6 +218,7 @@ extern void X11DRV_SetCursor( HWND hwnd, HCURSOR handle );
 extern BOOL X11DRV_SetCursorPos( INT x, INT y );
 extern BOOL X11DRV_GetCursorPos( LPPOINT pos );
 extern BOOL X11DRV_ClipCursor( const RECT *clip, BOOL reset );
+extern UINT X11DRV_GetTouchCapabilities(void);
 extern void X11DRV_SystrayDockInit( HWND systray );
 extern BOOL X11DRV_SystrayDockInsert( HWND owner, UINT cx, UINT cy, void *icon );
 extern void X11DRV_SystrayDockClear( HWND hwnd );

@@ -804,6 +804,8 @@ static void keyboard_handle_enter(void *private, struct wl_keyboard *wl_keyboard
     keyboard->focused_hwnd = hwnd;
     pthread_mutex_unlock(&keyboard->mutex);
 
+    wayland_csd_set_active(hwnd, TRUE);
+
     NtUserPostMessage(keyboard->focused_hwnd, WM_INPUTLANGCHANGEREQUEST, 0 /*FIXME*/,
                       (LPARAM)keyboard_hkl);
 
@@ -841,6 +843,8 @@ static void keyboard_handle_leave(void *data, struct wl_keyboard *wl_keyboard,
     if (keyboard->focused_hwnd == hwnd)
         keyboard->focused_hwnd = NULL;
     pthread_mutex_unlock(&keyboard->mutex);
+
+    wayland_csd_set_active(hwnd, FALSE);
 
     /* The spec for the leave event tells us to treat all keys as released,
      * and for any key repetition to stop. */

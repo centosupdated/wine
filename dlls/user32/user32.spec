@@ -301,8 +301,8 @@
 @ stdcall -import ClipCursor(ptr) NtUserClipCursor
 @ stdcall CloseClipboard() NtUserCloseClipboard
 @ stdcall CloseDesktop(long) NtUserCloseDesktop
-@ stdcall CloseGestureInfoHandle(long)
-@ stdcall CloseTouchInputHandle(long)
+@ stdcall CloseGestureInfoHandle(long) NtUserCloseGestureInfoHandle
+@ stdcall CloseTouchInputHandle(long) NtUserCloseTouchInputHandle
 @ stdcall CloseWindow(long)
 @ stdcall CloseWindowStation(long) NtUserCloseWindowStation
 # @ stub ConsoleControl
@@ -567,9 +567,9 @@
 @ stdcall GetFocus()
 @ stdcall GetForegroundWindow() NtUserGetForegroundWindow
 @ stdcall GetGUIThreadInfo(long ptr) NtUserGetGUIThreadInfo
-@ stdcall GetGestureConfig(long long long ptr ptr long)
-@ stdcall GetGestureExtraArgs(long long ptr)
-@ stdcall GetGestureInfo(long ptr)
+@ stdcall GetGestureConfig(long long long ptr ptr long) NtUserGetGestureConfig
+@ stdcall GetGestureExtraArgs(long long ptr) NtUserGetGestureExtArgs
+@ stdcall GetGestureInfo(long ptr) NtUserGetGestureInfo
 @ stdcall GetGuiResources(long long)
 @ stdcall GetIconInfo(long ptr)
 @ stdcall GetIconInfoExA(long ptr)
@@ -686,7 +686,7 @@
 @ stdcall GetTitleBarInfo(long ptr) NtUserGetTitleBarInfo
 # @ stub GetTopLevelWindow
 @ stdcall GetTopWindow(long)
-@ stdcall GetTouchInputInfo(long long ptr long)
+@ stdcall GetTouchInputInfo(long long ptr long) NtUserGetTouchInputInfo
 # @ stub GetUnpredictedMessagePos
 @ stdcall GetUpdateRect(long ptr long) NtUserGetUpdateRect
 @ stdcall GetUpdateRgn(long long long) NtUserGetUpdateRgn
@@ -798,7 +798,7 @@
 # @ stub IsThreadDesktopComposited
 # @ stub IsThreadTSFEventAware
 # @ stub IsTopLevelWindow
-@ stdcall IsTouchWindow(long ptr)
+@ stdcall IsTouchWindow(long ptr) NtUserIsTouchWindow
 @ stdcall IsValidDpiAwarenessContext(long)
 @ stdcall IsWinEventHookInstalled(long)
 @ stdcall IsWindow(long)
@@ -978,7 +978,7 @@
 @ stdcall RegisterSystemThread(long long)
 @ stdcall RegisterTasklist(long)
 @ stdcall RegisterTouchHitTestingWindow(long long)
-@ stdcall RegisterTouchWindow(long long)
+@ stdcall RegisterTouchWindow(long long) NtUserRegisterTouchWindow
 @ stdcall RegisterUserApiHook(ptr ptr)
 @ stdcall RegisterWindowMessageA(str)
 @ stdcall RegisterWindowMessageW(wstr)
@@ -1046,7 +1046,7 @@
 # @ stub SetForegroundRedirectionForActivationObject
 @ stdcall SetForegroundWindow(long) NtUserSetForegroundWindow
 # @ stub SetFullscreenMagnifierOffsetsDWMUpdated
-@ stdcall SetGestureConfig(ptr long long ptr long)
+@ stdcall SetGestureConfig(ptr long long ptr long) NtUserSetGestureConfig
 @ stdcall SetInternalWindowPos(long long ptr ptr) NtUserSetInternalWindowPos
 @ stdcall SetKeyboardState(ptr) NtUserSetKeyboardState
 @ stdcall SetLastErrorEx(long long)
@@ -1184,7 +1184,7 @@
 @ stdcall UnregisterPowerSettingNotification(ptr)
 # @ stub UnregisterSessionPort
 @ stdcall UnregisterSuspendResumeNotification(ptr)
-@ stdcall UnregisterTouchWindow(long)
+@ stdcall UnregisterTouchWindow(long) NtUserUnregisterTouchWindow
 @ stdcall UnregisterUserApiHook()
 # @ stub UpdateDefaultDesktopThumbnail
 @ stdcall UpdateLayeredWindow(long long ptr ptr long ptr long ptr long)
