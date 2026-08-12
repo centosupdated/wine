@@ -168,11 +168,6 @@ static void pointer_handle_motion_internal(wl_fixed_t sx, wl_fixed_t sy)
 static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
                                   uint32_t time, wl_fixed_t sx, wl_fixed_t sy)
 {
-    struct wayland_pointer *pointer = &process_wayland.pointer;
-
-    /* Ignore absolute motion events if in relative mode. */
-    if (pointer->relative_mode) return;
-
     pointer_handle_motion_internal(sx, sy);
 }
 
