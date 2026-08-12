@@ -1625,7 +1625,7 @@ BOOL macdrv_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *styl
     wf = get_window_features_for_style(data, style, ex_style, FALSE);
     release_win_data(data);
 
-    *style_mask = ex_style = 0;
+    *style_mask = *ex_style_mask = 0;
     if (wf.title_bar)
     {
         *style_mask |= WS_CAPTION;
