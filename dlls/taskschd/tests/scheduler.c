@@ -1640,6 +1640,193 @@ static void create_action(ITaskDefinition *taskdef)
     IActionCollection_Release(actions);
 }
 
+static void test_trigger_collection(ITriggerCollection *trigger_col)
+{
+    ITrigger *trigger;
+    HRESULT hr;
+    LONG count;
+
+    /* Collection may already contain triggers parsed from XML */
+    hr = ITriggerCollection_Clear(trigger_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    hr = ITriggerCollection_get_Count(trigger_col, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    count = -1;
+    hr = ITriggerCollection_get_Count(trigger_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, &trigger);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    count = -1;
+    hr = ITriggerCollection_get_Count(trigger_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 2, "expected 2, got %ld\n", count);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 0, &trigger);
+    ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#lx\n", hr);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 3, &trigger);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, &trigger);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 2, &trigger);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    ITrigger_Release(trigger);
+
+    hr = ITriggerCollection_Clear(trigger_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    count = -1;
+    hr = ITriggerCollection_get_Count(trigger_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = ITriggerCollection_get_Item(trigger_col, 1, &trigger);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+}
+
+static void test_action_collection(IActionCollection *actions_col)
+{
+    IAction *action;
+    HRESULT hr;
+    LONG count;
+
+    /* Collection may already contain actions parsed from XML */
+    hr = IActionCollection_Clear(actions_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    hr = IActionCollection_get_Count(actions_col, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    count = -1;
+    hr = IActionCollection_get_Count(actions_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = IActionCollection_get_Item(actions_col, 1, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    hr = IActionCollection_get_Item(actions_col, 1, &action);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = IActionCollection_Create(actions_col, TASK_ACTION_EXEC, &action);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    hr = IActionCollection_Create(actions_col, TASK_ACTION_EXEC, &action);
+    ok(hr == S_OK, "Create failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    count = -1;
+    hr = IActionCollection_get_Count(actions_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 2, "expected 2, got %ld\n", count);
+
+    hr = IActionCollection_get_Item(actions_col, 0, &action);
+    ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#lx\n", hr);
+
+    hr = IActionCollection_get_Item(actions_col, 3, &action);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+
+    hr = IActionCollection_get_Item(actions_col, 1, &action);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    hr = IActionCollection_get_Item(actions_col, 2, &action);
+    ok(hr == S_OK, "get_Item failed: %08lx\n", hr);
+    IAction_Release(action);
+
+    hr = IActionCollection_Clear(actions_col);
+    ok(hr == S_OK, "Clear failed: %08lx\n", hr);
+
+    count = -1;
+    hr = IActionCollection_get_Count(actions_col, &count);
+    ok(hr == S_OK, "get_Count failed: %08lx\n", hr);
+    ok(count == 0, "expected 0, got %ld\n", count);
+
+    hr = IActionCollection_get_Item(actions_col, 1, &action);
+    ok(hr == E_FAIL, "expected E_FAIL, got %#lx\n", hr);
+}
+
+static void test_principal(IPrincipal *principal)
+{
+    static const BSTR userid = (BSTR)L"TestUser";
+    TASK_LOGON_TYPE logon_type;
+    HRESULT hr;
+    BSTR bstr;
+
+    hr = IPrincipal_get_UserId(principal, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    bstr = (BSTR)0xdeadbeef;
+    hr = IPrincipal_get_UserId(principal, &bstr);
+    ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
+    ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IPrincipal_put_UserId(principal, userid);
+    ok(hr == S_OK, "put_UserId failed: %08lx\n", hr);
+
+    bstr = NULL;
+    hr = IPrincipal_get_UserId(principal, &bstr);
+    ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
+    ok(bstr != NULL, "UserId not set\n");
+    ok(!lstrcmpW(bstr, userid), "expected %s, got %s\n", wine_dbgstr_w(userid), wine_dbgstr_w(bstr));
+    SysFreeString(bstr);
+
+    hr = IPrincipal_put_UserId(principal, NULL);
+    ok(hr == S_OK, "put_UserId failed: %08lx\n", hr);
+
+    bstr = (BSTR)0xdeadbeef;
+    hr = IPrincipal_get_UserId(principal, &bstr);
+    ok(hr == S_OK, "get_UserId failed: %08lx\n", hr);
+    ok(bstr == NULL, "expected NULL, got %s\n", wine_dbgstr_w(bstr));
+
+    hr = IPrincipal_get_LogonType(principal, NULL);
+    ok(hr == E_POINTER, "expected E_POINTER, got %#lx\n", hr);
+
+    logon_type = 0xdeadbeef;
+    hr = IPrincipal_get_LogonType(principal, &logon_type);
+    ok(hr == S_OK, "get_LogonType failed: %08lx\n", hr);
+    ok(logon_type == TASK_LOGON_INTERACTIVE_TOKEN, "expected TASK_LOGON_INTERACTIVE_TOKEN, got %u\n", logon_type);
+
+    hr = IPrincipal_put_LogonType(principal, TASK_LOGON_NONE);
+    ok(hr == E_INVALIDARG, "expected E_INVALIDARG, got %#lx\n", hr);
+
+    hr = IPrincipal_put_LogonType(principal, TASK_LOGON_PASSWORD);
+    ok(hr == S_OK, "put_LogonType failed: %08lx\n", hr);
+
+    logon_type = 0xdeadbeef;
+    hr = IPrincipal_get_LogonType(principal, &logon_type);
+    ok(hr == S_OK, "get_LogonType failed: %08lx\n", hr);
+    ok(logon_type == TASK_LOGON_PASSWORD, "expected TASK_LOGON_PASSWORD, got %u\n", logon_type);
+
+    hr = IPrincipal_put_LogonType(principal, TASK_LOGON_INTERACTIVE_TOKEN);
+    ok(hr == S_OK, "put_LogonType failed: %08lx\n", hr);
+
+    logon_type = 0xdeadbeef;
+    hr = IPrincipal_get_LogonType(principal, &logon_type);
+    ok(hr == S_OK, "get_LogonType failed: %08lx\n", hr);
+    ok(logon_type == TASK_LOGON_INTERACTIVE_TOKEN, "expected TASK_LOGON_INTERACTIVE_TOKEN, got %u\n", logon_type);
+}
+
 static void test_TaskDefinition(void)
 {
     static WCHAR xml0[] = L"";
@@ -1742,6 +1929,8 @@ static void test_TaskDefinition(void)
         VARIANT_FALSE, VARIANT_FALSE, VARIANT_TRUE, VARIANT_TRUE, VARIANT_FALSE, VARIANT_TRUE,
         VARIANT_TRUE, VARIANT_TRUE };
     ITriggerCollection *trigger_col, *trigger_col2;
+    IActionCollection *actions_col;
+    IPrincipal *principal;
     HRESULT hr;
     ITaskService *service;
     ITaskDefinition *taskdef;
@@ -1936,6 +2125,8 @@ static void test_TaskDefinition(void)
     ok(hr == S_OK, "get_Triggers failed: %08lx\n", hr);
     ok(trigger_col != NULL, "Triggers = NULL\n");
 
+    test_trigger_collection(trigger_col);
+
     hr = ITriggerCollection_Create(trigger_col, TASK_TRIGGER_DAILY, &trigger);
     ok(hr == S_OK, "Create failed: %08lx\n", hr);
     ok(trigger != NULL, "trigger = NULL\n");
@@ -1959,6 +2150,18 @@ static void test_TaskDefinition(void)
     ok(hr == S_OK, "get_Triggers failed: %08lx\n", hr);
     ok(trigger_col == trigger_col2, "Mismatched triggers\n");
     ITriggerCollection_Release(trigger_col2);
+
+    hr = ITaskDefinition_get_Actions(taskdef, &actions_col);
+    ok(hr == S_OK, "get_Actions failed: %08lx\n", hr);
+    ok(actions_col != NULL, "Actions = NULL\n");
+    test_action_collection(actions_col);
+    IActionCollection_Release(actions_col);
+
+    hr = ITaskDefinition_get_Principal(taskdef, &principal);
+    ok(hr == S_OK, "get_Principal failed: %08lx\n", hr);
+    ok(principal != NULL, "Principal = NULL\n");
+    test_principal(principal);
+    IPrincipal_Release(principal);
 
     IRegistrationInfo_Release(reginfo);
     ITaskDefinition_Release(taskdef);

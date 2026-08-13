@@ -1189,6 +1189,8 @@ typedef struct
 {
     ITriggerCollection ITriggerCollection_iface;
     LONG ref;
+    ITrigger **list;
+    LONG count;
 } trigger_collection;
 
 static inline trigger_collection *impl_from_ITriggerCollection(ITriggerCollection *iface)
@@ -1226,6 +1228,16 @@ static ULONG WINAPI TriggerCollection_AddRef(ITriggerCollection *iface)
     return ref;
 }
 
+static void free_triggers_list(ITrigger **list, LONG count)
+{
+    LONG i;
+
+    for (i = 0; i < count; i++)
+        ITrigger_Release(list[i]);
+
+    free(list);
+}
+
 static ULONG WINAPI TriggerCollection_Release(ITriggerCollection *iface)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
@@ -1234,7 +1246,10 @@ static ULONG WINAPI TriggerCollection_Release(ITriggerCollection *iface)
     TRACE("(%p) ref=%ld\n", This, ref);
 
     if(!ref)
+    {
+        free_triggers_list(This->list, This->count);
         free(This);
+    }
 
     return ref;
 }
@@ -1273,15 +1288,34 @@ static HRESULT WINAPI TriggerCollection_Invoke(ITriggerCollection *iface, DISPID
 static HRESULT WINAPI TriggerCollection_get_Count(ITriggerCollection *iface, LONG *count)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
-    FIXME("(%p)->(%p)\n", This, count);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%p)\n", This, count);
+
+    if (!count) return E_POINTER;
+
+    *count = This->count;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI TriggerCollection_get_Item(ITriggerCollection *iface, LONG index, ITrigger **trigger)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
-    FIXME("(%p)->(%ld %p)\n", This, index, trigger);
-    return E_NOTIMPL;
+
+    TRACE("(%p)->(%ld %p)\n", This, index, trigger);
+
+    if (!trigger) return E_POINTER;
+
+    /* collections are 1 based */
+    if (index < 1)
+        return E_INVALIDARG;
+    if (index > This->count)
+        return E_FAIL;
+
+    *trigger = This->list[index - 1];
+    ITrigger_AddRef(*trigger);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI TriggerCollection_get__NewEnum(ITriggerCollection *iface, IUnknown **penum)
@@ -1294,22 +1328,41 @@ static HRESULT WINAPI TriggerCollection_get__NewEnum(ITriggerCollection *iface, 
 static HRESULT WINAPI TriggerCollection_Create(ITriggerCollection *iface, TASK_TRIGGER_TYPE2 type, ITrigger **trigger)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
+    HRESULT hr;
 
     TRACE("(%p)->(%d %p)\n", This, type, trigger);
 
-    switch(type) {
+    switch (type)
+    {
     case TASK_TRIGGER_DAILY:
-        return DailyTrigger_create(trigger);
+        hr = DailyTrigger_create(trigger);
+        break;
     case TASK_TRIGGER_REGISTRATION:
-        return RegistrationTrigger_create(trigger);
+        hr = RegistrationTrigger_create(trigger);
+        break;
     case TASK_TRIGGER_LOGON:
-        return LogonTrigger_create(trigger);
+        hr = LogonTrigger_create(trigger);
+        break;
     default:
         FIXME("Unimplemented type %d\n", type);
         return E_NOTIMPL;
     }
 
-    return S_OK;
+    if (SUCCEEDED(hr))
+    {
+        ITrigger **new_array = realloc(This->list, (This->count + 1) * sizeof(*new_array));
+        if (!new_array)
+        {
+            ITrigger_Release(*trigger);
+            *trigger = NULL;
+            return E_OUTOFMEMORY;
+        }
+        This->list = new_array;
+        This->list[This->count++] = *trigger;
+        ITrigger_AddRef(*trigger);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI TriggerCollection_Remove(ITriggerCollection *iface, VARIANT index)
@@ -1322,8 +1375,14 @@ static HRESULT WINAPI TriggerCollection_Remove(ITriggerCollection *iface, VARIAN
 static HRESULT WINAPI TriggerCollection_Clear(ITriggerCollection *iface)
 {
     trigger_collection *This = impl_from_ITriggerCollection(iface);
-    FIXME("(%p)\n", This);
-    return E_NOTIMPL;
+
+    TRACE("(%p)\n", This);
+
+    free_triggers_list(This->list, This->count);
+    This->list = NULL;
+    This->count = 0;
+
+    return S_OK;
 }
 
 static const ITriggerCollectionVtbl TriggerCollection_vtbl = {
@@ -2342,6 +2401,8 @@ typedef struct
 {
     IPrincipal IPrincipal_iface;
     LONG ref;
+    BSTR user_id;
+    TASK_LOGON_TYPE logon_type;
 } Principal;
 
 static inline Principal *impl_from_IPrincipal(IPrincipal *iface)
@@ -2363,6 +2424,8 @@ static ULONG WINAPI Principal_Release(IPrincipal *iface)
     if (!ref)
     {
         TRACE("destroying %p\n", iface);
+        if (principal->user_id)
+            SysFreeString(principal->user_id);
         free(principal);
     }
 
@@ -2442,26 +2505,66 @@ static HRESULT WINAPI Principal_put_DisplayName(IPrincipal *iface, BSTR name)
 
 static HRESULT WINAPI Principal_get_UserId(IPrincipal *iface, BSTR *user_id)
 {
-    FIXME("%p,%p: stub\n", iface, user_id);
-    return E_NOTIMPL;
+    Principal *principal = impl_from_IPrincipal(iface);
+
+    TRACE("%p,%p\n", iface, user_id);
+
+    if (!user_id) return E_POINTER;
+
+    if (!principal->user_id)
+        *user_id = NULL;
+    else
+    {
+        *user_id = SysAllocString(principal->user_id);
+        if (!*user_id) return E_OUTOFMEMORY;
+    }
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Principal_put_UserId(IPrincipal *iface, BSTR user_id)
 {
-    FIXME("%p,%s: stub\n", iface, debugstr_w(user_id));
+    Principal *principal = impl_from_IPrincipal(iface);
+    BSTR copy = NULL;
+
+    TRACE("%p,%s\n", iface, debugstr_w(user_id));
+
+    if (user_id)
+    {
+        copy = SysAllocString(user_id);
+        if (!copy) return E_OUTOFMEMORY;
+    }
+
+    if (principal->user_id)
+        SysFreeString(principal->user_id);
+
+    principal->user_id = copy;
     return S_OK;
 }
 
 static HRESULT WINAPI Principal_get_LogonType(IPrincipal *iface, TASK_LOGON_TYPE *logon_type)
 {
-    FIXME("%p,%p: stub\n", iface, logon_type);
-    return E_NOTIMPL;
+    Principal *principal = impl_from_IPrincipal(iface);
+
+    TRACE("%p,%p\n", iface, logon_type);
+
+    if (!logon_type) return E_POINTER;
+
+    *logon_type = principal->logon_type;
+    return S_OK;
 }
 
 static HRESULT WINAPI Principal_put_LogonType(IPrincipal *iface, TASK_LOGON_TYPE logon_type)
 {
-    FIXME("%p,%u: stub\n", iface, logon_type);
-    return E_NOTIMPL;
+    Principal *principal = impl_from_IPrincipal(iface);
+
+    TRACE("%p,%u\n", iface, logon_type);
+
+    if (logon_type == TASK_LOGON_NONE)
+        return E_INVALIDARG;
+
+    principal->logon_type = logon_type;
+    return S_OK;
 }
 
 static HRESULT WINAPI Principal_get_GroupId(IPrincipal *iface, BSTR *group_id)
@@ -2520,6 +2623,8 @@ static HRESULT Principal_create(IPrincipal **obj)
 
     principal->IPrincipal_iface.lpVtbl = &Principal_vtbl;
     principal->ref = 1;
+    principal->user_id = NULL;
+    principal->logon_type = TASK_LOGON_INTERACTIVE_TOKEN;
 
     *obj = &principal->IPrincipal_iface;
 
@@ -2783,6 +2888,8 @@ typedef struct
 {
     IActionCollection IActionCollection_iface;
     LONG ref;
+    IAction **list;
+    LONG count;
 } Actions;
 
 static inline Actions *impl_from_IActionCollection(IActionCollection *iface)
@@ -2796,6 +2903,16 @@ static ULONG WINAPI Actions_AddRef(IActionCollection *iface)
     return InterlockedIncrement(&actions->ref);
 }
 
+static void free_list(IAction **list, LONG count)
+{
+    LONG i;
+
+    for (i = 0; i < count; i++)
+        IAction_Release(list[i]);
+
+    free(list);
+}
+
 static ULONG WINAPI Actions_Release(IActionCollection *iface)
 {
     Actions *actions = impl_from_IActionCollection(iface);
@@ -2804,6 +2921,7 @@ static ULONG WINAPI Actions_Release(IActionCollection *iface)
     if (!ref)
     {
         TRACE("destroying %p\n", iface);
+        free_list(actions->list, actions->count);
         free(actions);
     }
 
@@ -2859,14 +2977,35 @@ static HRESULT WINAPI Actions_Invoke(IActionCollection *iface, DISPID dispid, RE
 
 static HRESULT WINAPI Actions_get_Count(IActionCollection *iface, LONG *count)
 {
-    FIXME("%p,%p: stub\n", iface, count);
-    return E_NOTIMPL;
+    Actions *actions = impl_from_IActionCollection(iface);
+
+    TRACE("%p,%p\n", iface, count);
+
+    if (!count) return E_POINTER;
+
+    *count = actions->count;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Actions_get_Item(IActionCollection *iface, LONG index, IAction **action)
 {
-    FIXME("%p,%ld,%p: stub\n", iface, index, action);
-    return E_NOTIMPL;
+    Actions *actions = impl_from_IActionCollection(iface);
+
+    TRACE("%p,%ld,%p\n", iface, index, action);
+
+    if (!action) return E_POINTER;
+
+    /* collections are 1 based */
+    if (index < 1)
+        return E_INVALIDARG;
+    if (index > actions->count)
+        return E_FAIL;
+
+    *action = actions->list[index - 1];
+    IAction_AddRef(*action);
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Actions_get__NewEnum(IActionCollection *iface, IUnknown **penum)
@@ -2889,17 +3028,37 @@ static HRESULT WINAPI Actions_put_XmlText(IActionCollection *iface, BSTR xml)
 
 static HRESULT WINAPI Actions_Create(IActionCollection *iface, TASK_ACTION_TYPE type, IAction **action)
 {
+    Actions *actions = impl_from_IActionCollection(iface);
+    HRESULT hr;
+
     TRACE("%p,%u,%p\n", iface, type, action);
 
     switch (type)
     {
     case TASK_ACTION_EXEC:
-        return ExecAction_create((IExecAction **)action);
+        hr = ExecAction_create((IExecAction **)action);
+        break;
 
     default:
         FIXME("unimplemented type %u\n", type);
         return E_NOTIMPL;
     }
+
+    if (SUCCEEDED(hr))
+    {
+        IAction **new_array = realloc(actions->list, (actions->count + 1) * sizeof(*new_array));
+        if (!new_array)
+        {
+            IAction_Release(*action);
+            *action = NULL;
+            return E_OUTOFMEMORY;
+        }
+        actions->list = new_array;
+        actions->list[actions->count++] = *action;
+        IAction_AddRef(*action);
+    }
+
+    return hr;
 }
 
 static HRESULT WINAPI Actions_Remove(IActionCollection *iface, VARIANT index)
@@ -2910,8 +3069,15 @@ static HRESULT WINAPI Actions_Remove(IActionCollection *iface, VARIANT index)
 
 static HRESULT WINAPI Actions_Clear(IActionCollection *iface)
 {
-    FIXME("%p: stub\n", iface);
-    return E_NOTIMPL;
+    Actions *actions = impl_from_IActionCollection(iface);
+
+    TRACE("%p\n", iface);
+
+    free_list(actions->list, actions->count);
+    actions->list = NULL;
+    actions->count = 0;
+
+    return S_OK;
 }
 
 static HRESULT WINAPI Actions_get_Context(IActionCollection *iface, BSTR *ctx)
@@ -2956,6 +3122,8 @@ static HRESULT Actions_create(IActionCollection **obj)
 
     actions->IActionCollection_iface.lpVtbl = &Actions_vtbl;
     actions->ref = 1;
+    actions->list = NULL;
+    actions->count = 0;
 
     *obj = &actions->IActionCollection_iface;
 
@@ -3115,6 +3283,8 @@ static HRESULT WINAPI TaskDefinition_get_Triggers(ITaskDefinition *iface, ITrigg
 
         collection->ITriggerCollection_iface.lpVtbl = &TriggerCollection_vtbl;
         collection->ref = 1;
+        collection->list = NULL;
+        collection->count = 0;
         This->triggers = &collection->ITriggerCollection_iface;
     }
 
@@ -3527,7 +3697,8 @@ static HRESULT write_principal(IStream *stream, IPrincipal *principal)
         if (hr != S_OK) return hr;
     }
     hr = IPrincipal_get_UserId(principal, &bstr);
-    if (hr == S_OK && lstrlenW(bstr))
+    /* IPrincipal_get_UserId returns S_OK with bstr == NULL if UserId has not been set beforehand */
+    if (hr == S_OK && bstr && *bstr)
     {
         hr = write_text_value(stream, L"UserId", bstr);
         SysFreeString(bstr);
