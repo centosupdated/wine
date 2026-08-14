@@ -3351,6 +3351,21 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
     limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
     if (!limit_high) limit_high = (ULONG_PTR)user_space_limit;
 
+    /* executables that opt into high-entropy ASLR are mapped high, like on Windows */
+
+    if (is_win64 && !(image_info->image_charact & IMAGE_FILE_DLL) &&
+        (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated) &&
+        (image_info->dll_charact & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA))
+    {
+        start = max( limit_low, high_entropy_low );
+        end = min( limit_high, high_entropy_high );
+        if (start < end)
+        {
+            status = map_view( view_ret, NULL, size, 0, vprot, start, end, 0 );
+            if (!status) return status;
+        }
+    }
+
     /* first try the specified base */
 
     if (image_info->map_addr)
