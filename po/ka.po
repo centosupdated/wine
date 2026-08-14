@@ -17500,8 +17500,9 @@ msgid "Mem Usage"
 msgstr "მეხს. გამოყენება"
 
 #: programs/tasklist/tasklist.rc:35
+msgctxt "unit: kibibytes"
 msgid "K"
-msgstr "K"
+msgstr "კ"
 
 #: programs/tasklist/tasklist.rc:36
 msgid "ERROR: Invalid syntax\n"

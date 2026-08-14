@@ -18013,6 +18013,7 @@ msgid "Mem Usage"
 msgstr "内存占用"
 
 #: programs/tasklist/tasklist.rc:35
+msgctxt "unit: kibibytes"
 msgid "K"
 msgstr "K"
 

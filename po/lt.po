@@ -18175,6 +18175,7 @@ msgid "Mem Usage"
 msgstr "Atm naudojimas"
 
 #: programs/tasklist/tasklist.rc:35
+msgctxt "unit: kibibytes"
 msgid "K"
 msgstr "K"
 

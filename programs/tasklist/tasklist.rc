@@ -31,7 +31,7 @@ STRINGTABLE
     STRING_SESSION_NAME,            "Session Name"
     STRING_SESSION_NUMBER,          "Session#"
     STRING_MEM_USAGE,               "Mem Usage"
-    STRING_K,                       "K"
+    STRING_K,                       "#msgctxt#unit: kibibytes#K"
     STRING_INVALID_SYNTAX,          "ERROR: Invalid syntax\n"
     STRING_FILTER_NOT_RECOGNIZED,   "ERROR: The search filter cannot be recognized.\n"
 }
