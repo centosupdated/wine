@@ -131,3 +131,5 @@ extern IMFAttributes *topology_node_transform_async_get_attributes(IMFTopologyNo
 extern HRESULT stream_sink_get_device_manager(IMFStreamSink *stream_sink, IUnknown **device_manager);
 
 extern HRESULT enum_audio_capture_sources(IMFAttributes *attributes, IMFActivate ***sources, UINT32 *ret_count);
+
+HRESULT create_constant_time_source(IMFPresentationTimeSource **time_source);

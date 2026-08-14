@@ -238,6 +238,7 @@ enum presentation_flags
 {
     SESSION_FLAG_SOURCES_SUBSCRIBED = 0x1,
     SESSION_FLAG_PRESENTATION_CLOCK_SET = 0x2,
+    SESSION_FLAG_TIME_SOURCE_SET = 0x4,
     SESSION_FLAG_NEEDS_PREROLL = 0x8,
     SESSION_FLAG_SOURCE_SHUTDOWN = 0x10,
     SESSION_FLAG_PENDING_RATE_CHANGE = 0x20,
@@ -282,6 +283,7 @@ struct media_session
         float rate;
 
         BOOL thin_committed;
+        BOOL sink_has_clock;
     } presentation;
     struct list topologies;
     struct list removed_topologies;
@@ -1144,6 +1146,7 @@ static void session_start(struct media_session *session, const GUID *time_format
     /* No position change - nothing to do. */
     if (session->state == SESSION_STATE_STARTED && keep_position)
     {
+        IMFPresentationClock_Start(session->clock, PRESENTATION_CURRENT_POSITION);
         session_command_complete_with_event(session, MESessionStarted, S_OK, NULL);
         return;
     }
@@ -1527,22 +1530,66 @@ static void session_set_consumed_clock(IUnknown *object, IMFPresentationClock *c
     }
 }
 
+static MFCLOCK_STATE session_get_presentation_time(struct media_session *session, MFTIME *time)
+{
+    MFCLOCK_STATE state = MFCLOCK_STATE_INVALID;
+    IMFPresentationTimeSource *time_source;
+    MFTIME systime;
+
+    if (FAILED(IMFPresentationClock_GetTimeSource(session->clock, &time_source)))
+        return state;
+
+    IMFPresentationTimeSource_GetState(time_source, 0, &state);
+    if ((state == MFCLOCK_STATE_PAUSED || state == MFCLOCK_STATE_RUNNING)
+            && FAILED(IMFPresentationTimeSource_GetCorrelatedTime(time_source, 0, time, &systime)))
+        state = MFCLOCK_STATE_INVALID;
+
+    IMFPresentationTimeSource_Release(time_source);
+
+    return state;
+}
+
+static void time_source_restore_presentation_time(IMFPresentationTimeSource *time_source, MFCLOCK_STATE state, MFTIME time)
+{
+    IMFClockStateSink *sink;
+
+    IMFPresentationTimeSource_QueryInterface(time_source, &IID_IMFClockStateSink, (void **)&sink);
+    IMFClockStateSink_OnClockStart(sink, 0, time);
+    if (state != MFCLOCK_STATE_RUNNING)
+        IMFClockStateSink_OnClockPause(sink, 0);
+    IMFClockStateSink_Release(sink);
+}
+
 static void session_set_presentation_clock(struct media_session *session)
 {
     IMFPresentationTimeSource *time_source = NULL;
+    MFCLOCK_STATE state = MFCLOCK_STATE_INVALID;
     struct media_source *source;
     struct media_sink *sink;
     struct topo_node *node;
+    MFTIME time;
     HRESULT hr;
 
-    if (!(session->presentation.flags & SESSION_FLAG_PRESENTATION_CLOCK_SET))
+    if (!(session->presentation.flags & SESSION_FLAG_TIME_SOURCE_SET))
     {
+        session->presentation.sink_has_clock = FALSE;
+
         /* Attempt to get time source from the sinks. */
         LIST_FOR_EACH_ENTRY(sink, &session->presentation.sinks, struct media_sink, entry)
         {
             if (SUCCEEDED(IMFMediaSink_QueryInterface(sink->sink, &IID_IMFPresentationTimeSource,
                     (void **)&time_source)))
-                 break;
+            {
+                session->presentation.sink_has_clock = TRUE;
+                break;
+            }
+        }
+
+        if (!time_source)
+        {
+            if (session->presentation.rate == 0.0f && FAILED(hr = create_constant_time_source(&time_source)))
+                WARN("Failed to create time source for scrubbing, hr %#lx.\n", hr);
+            state = session_get_presentation_time(session, &time);
         }
 
         if (time_source)
@@ -1551,11 +1598,19 @@ static void session_set_presentation_clock(struct media_session *session)
             IMFPresentationTimeSource_Release(time_source);
         }
         else
-            hr = IMFPresentationClock_SetTimeSource(session->clock, session->system_time_source);
+            hr = IMFPresentationClock_SetTimeSource(session->clock, time_source = session->system_time_source);
+
+        if (state == MFCLOCK_STATE_PAUSED || state == MFCLOCK_STATE_RUNNING)
+            time_source_restore_presentation_time(time_source, state, time);
 
         if (FAILED(hr))
             WARN("Failed to set time source, hr %#lx.\n", hr);
 
+        session->presentation.flags |= SESSION_FLAG_TIME_SOURCE_SET;
+    }
+
+    if (!(session->presentation.flags & SESSION_FLAG_PRESENTATION_CLOCK_SET))
+    {
         /* Set clock for all topology nodes. */
         LIST_FOR_EACH_ENTRY(source, &session->presentation.sources, struct media_source, entry)
         {
@@ -1598,6 +1653,9 @@ static void session_set_rate(struct media_session *session, BOOL thin, float rat
 
     if (SUCCEEDED(hr))
         hr = IMFRateControl_GetRate(session->clock_rate_control, NULL, &clock_rate);
+
+    if ((rate != 0.0f) != (clock_rate != 0.0f) && !session->presentation.sink_has_clock)
+        session->presentation.flags &= ~SESSION_FLAG_TIME_SOURCE_SET;
 
     if (SUCCEEDED(hr) && (rate != clock_rate || thin != session->presentation.thin_committed) && SUCCEEDED(hr = session_subscribe_sources(session)))
     {

@@ -91,6 +91,7 @@ struct sample_grabber
     CRITICAL_SECTION cs;
     UINT32 samples_queued;
     UINT32 pending_sample_deliveries;
+    BOOL pending_scrub;
 };
 
 static IMFSampleGrabberSinkCallback *sample_grabber_get_callback(const struct sample_grabber *sink)
@@ -337,6 +338,15 @@ static HRESULT sample_grabber_report_sample(struct sample_grabber *grabber, IMFS
         if (SUCCEEDED(hr = IMFMediaBuffer_Lock(buffer, &data, NULL, &size)))
         {
             *sample_delivered = TRUE;
+
+            if (grabber->pending_scrub && sample_delivered)
+            {
+                /* Sent here because if it were sent when setting state, it could arrive and trigger
+                 * a MESessionScrubSampleComplete before the session sends MESessionStarted. */
+                IMFStreamSink_QueueEvent(&grabber->IMFStreamSink_iface, MEStreamSinkScrubSampleComplete,
+                        &GUID_NULL, S_OK, NULL);
+                grabber->pending_scrub = FALSE;
+            }
 
             if (grabber->callback2)
             {
@@ -1184,8 +1194,7 @@ static HRESULT sample_grabber_set_state(struct sample_grabber *grabber, enum sin
             if (do_callback)
             {
                 if (grabber->rate == 0.0f && state == SINK_STATE_RUNNING)
-                    IMFStreamSink_QueueEvent(&grabber->IMFStreamSink_iface, MEStreamSinkScrubSampleComplete,
-                            &GUID_NULL, S_OK, NULL);
+                    grabber->pending_scrub = TRUE;
 
                 IMFStreamSink_QueueEvent(&grabber->IMFStreamSink_iface, events[state], &GUID_NULL, S_OK, NULL);
             }
