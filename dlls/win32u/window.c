@@ -3974,7 +3974,7 @@ static BOOL fixup_swp_flags( WINDOWPOS *winpos, const RECT *old_window_rect, int
  */
 static HWND swp_owner_popups( HWND hwnd, HWND after )
 {
-    HWND owner, *list = NULL;
+    HWND owner, *list = NULL, initial_after = after;
     unsigned int i;
 
     TRACE( "(%p) after = %p\n", hwnd, after );
@@ -4044,6 +4044,8 @@ static HWND swp_owner_popups( HWND hwnd, HWND after )
 
 done:
     free( list );
+
+    if(after == hwnd) after = initial_after;  /* restore initial after value if it was changed to the window itself */
     return after;
 }
 

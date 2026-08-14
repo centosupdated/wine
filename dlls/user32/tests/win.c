@@ -12060,7 +12060,6 @@ static void reset_window_state(HWND *state, int n)
         if (state[i])
         {
             swp_after(state[i], HWND_NOTOPMOST);
-            todo_wine_if(i == 5) /* FIXME: remove once Wine is fixed */
             ok(!is_topmost(state[i]), "%d: hwnd %p is still topmost\n", i, state[i]);
             swp_after(state[i], HWND_TOP);
         }
@@ -12287,7 +12286,6 @@ static void test_topmost(void)
     ok(!is_topmost(hwnd), "hwnd should NOT be topmost\n");
     ok(!is_topmost(hwnd_child), "child should NOT be topmost\n");
     ok(!is_topmost(hwnd_child2), "child2 should NOT be topmost\n");
-    todo_wine
     ok(!is_topmost(hwnd_grandchild), "grandchild should NOT be topmost\n");
     check_z_order(hwnd, hwnd2, 0, owner, FALSE);
     check_z_order(hwnd_child, hwnd_child2, 0, hwnd, FALSE);
