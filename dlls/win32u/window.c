@@ -5937,8 +5937,6 @@ HWND WINAPI NtUserCreateWindowEx( DWORD ex_style, UNICODE_STRING *class_name,
     win->max_pos.x = win->max_pos.y = -1;
     SetRect( &win->normal_rect, cs.x, cs.y, cs.x + cs.cx, cs.y + cs.cy );
 
-    if (win->dwStyle & WS_SYSMENU) NtUserSetSystemMenu( hwnd, 0 );
-
     win->imc = get_default_input_context();
 
     /* call the WH_CBT hook */
