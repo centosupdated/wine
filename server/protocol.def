@@ -2427,8 +2427,9 @@ enum message_type
     int             new_x;     /* new cursor position */
     int             new_y;
 @END
-#define SEND_HWMSG_INJECTED    0x01  /* message is injected from application */
-#define SEND_HWMSG_RAWINPUT    0x02  /* don't generate WM_INPUT x / y updates */
+#define SEND_HWMSG_INJECTED     0x01  /* message is injected from application */
+#define SEND_HWMSG_RAWINPUT     0x02  /* don't generate WM_INPUT x / y updates */
+#define SEND_HWMSG_SKIP_LL_HOOK 0x04  /* let hardware input bypass low-level hooks */
 
 
 /* Get a message from the current queue */

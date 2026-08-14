@@ -3167,8 +3167,9 @@ struct send_hardware_message_reply
     int             new_y;
     char __pad_28[4];
 };
-#define SEND_HWMSG_INJECTED    0x01
-#define SEND_HWMSG_RAWINPUT    0x02
+#define SEND_HWMSG_INJECTED     0x01
+#define SEND_HWMSG_RAWINPUT     0x02
+#define SEND_HWMSG_SKIP_LL_HOOK 0x04
 
 
 
@@ -7177,6 +7178,6 @@ union generic_reply
     struct alpc_create_port_reply alpc_create_port_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 959
+#define SERVER_PROTOCOL_VERSION 960
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

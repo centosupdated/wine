@@ -23,6 +23,7 @@
 
 #include "winbase.h"
 #include "ntuser.h"
+#include "wine/server.h"
 
 #define MAX_ATOM_LEN  255
 
@@ -2788,6 +2789,62 @@ static void test_wndproc_hook(void)
     UnregisterClassW( L"TestLParamClass", NULL );
 }
 
+static int ll_hook_call_count;
+
+static LRESULT CALLBACK ll_keyboard_event_count(int code, WPARAM wparam, LPARAM lparam)
+{
+    if (code == HC_ACTION) ll_hook_call_count++;
+
+    return CallNextHookEx( 0, code, wparam, lparam );
+}
+
+static void test_keyboard_ll_hook_skip(void)
+{
+    INPUT input = {.type = INPUT_KEYBOARD, .ki = {.wVk = VK_RETURN}};
+    NTSTATUS status;
+    HHOOK hook;
+    HWND hwnd;
+    BOOL ret;
+
+    if (!winetest_platform_is_wine)
+    {
+        win_skip( "NtUserSendHardwareInput and SEND_HWMSG_SKIP_LL_HOOK are Wine extensions\n" );
+        return;
+    }
+
+    hwnd = CreateWindowW( L"static", NULL, WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, NULL, NULL, NULL, NULL );
+    ok( !!hwnd, "CreateWindowW failed: %lu\n", GetLastError() );
+    flush_events();
+    hook = SetWindowsHookExW( WH_KEYBOARD_LL, ll_keyboard_event_count, GetModuleHandleW( NULL ), 0 );
+    ok( !!hook, "SetWindowsHookExW failed: %lu\n", GetLastError() );
+
+    /* NtUserSendHardwareInput is declared BOOL but returns an NTSTATUS; zero means success. */
+    /* The control test to verify the hook runs under normal usage */
+    ll_hook_call_count = 0;
+    status = NtUserSendHardwareInput( hwnd, 0, &input, 0 );
+    ok( !status, "NtUserSendHardwareInput returned %#lx\n", status );
+    input.ki.dwFlags = KEYEVENTF_KEYUP;
+    status = NtUserSendHardwareInput( hwnd, 0, &input, 0 );
+    ok( !status, "NtUserSendHardwareInput returned %#lx\n", status );
+    flush_events();
+    ok( ll_hook_call_count == 2, "got ll_hook_call_count %d\n", ll_hook_call_count );
+
+    /* The bugfix test to verify the hook is skipped when flagged to skip */
+    ll_hook_call_count = 0;
+    input.ki.dwFlags = 0;
+    status = NtUserSendHardwareInput( hwnd, SEND_HWMSG_SKIP_LL_HOOK, &input, 0 );
+    ok( !status, "NtUserSendHardwareInput returned %#lx\n", status );
+    input.ki.dwFlags = KEYEVENTF_KEYUP;
+    status = NtUserSendHardwareInput( hwnd, SEND_HWMSG_SKIP_LL_HOOK, &input, 0 );
+    ok( !status, "NtUserSendHardwareInput returned %#lx\n", status );
+    flush_events();
+    ok( !ll_hook_call_count, "got ll_hook_call_count %d\n", ll_hook_call_count );
+
+    ret = UnhookWindowsHookEx( hook );
+    ok( ret, "UnhookWindowsHookEx failed: %lu\n", GetLastError() );
+    DestroyWindow( hwnd );
+}
+
 static DWORD get_real_dpi(void)
 {
     DPI_AWARENESS_CONTEXT ctx;
@@ -3106,6 +3163,7 @@ START_TEST(win32u)
     test_timer();
     test_inter_process_messages( argv[0] );
     test_wndproc_hook();
+    test_keyboard_ll_hook_skip();
 
     test_NtUserCloseWindowStation();
     test_NtUserDisplayConfigGetDeviceInfo();
