@@ -509,6 +509,7 @@ static CVReturn WineDisplayLinkCallback(CVDisplayLinkRef displayLink, const CVTi
             [self setWantsLayer:YES];
             [self setLayerRetinaProperties:retina_on];
             [self setAutoresizesSubviews:NO];
+            [self setAcceptsTouchEvents:YES];
         }
         return self;
     }

@@ -76,6 +76,9 @@ enum {
     NSTimeInterval lastScrollTime;
     double accumScrollX, accumScrollY;
 
+    NSMutableDictionary* touchIDs;   /* NSTouch identity -> touch id */
+    unsigned int nextTouchID;
+
     NSMutableDictionary* originalDisplayModes;
     NSMutableDictionary* latentDisplayModes;
     BOOL displaysCapturedForFullscreen;
@@ -135,6 +138,9 @@ enum {
 
     - (BOOL) handleEvent:(NSEvent*)anEvent;
     - (void) didSendEvent:(NSEvent*)anEvent;
+    - (void) handleTouch:(NSEvent*)anEvent;
+    - (int) touchIDForTouch:(NSTouch*)touch;
+    - (void) releaseTouchID:(NSTouch*)touch;
 
 @end
 

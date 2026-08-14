@@ -28,6 +28,14 @@
 #include <poll.h>
 #include <limits.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#ifndef WHEEL_DELTA
+#define WHEEL_DELTA 120
+#endif
+
 #include "ntstatus.h"
 #include "windef.h"
 #include "winbase.h"
@@ -731,12 +739,16 @@ static inline int filter_contains_hw_range( unsigned int first, unsigned int las
     /* hardware message ranges are (in numerical order):
      *   WM_NCMOUSEFIRST .. WM_NCMOUSELAST
      *   WM_INPUT_DEVICE_CHANGE .. WM_KEYLAST
+     *   WM_GESTURE
      *   WM_MOUSEFIRST .. WM_MOUSELAST
+     *   WM_TOUCH .. WM_POINTERLEAVE
      */
     if (last < WM_NCMOUSEFIRST) return 0;
     if (first > WM_NCMOUSELAST && last < WM_INPUT_DEVICE_CHANGE) return 0;
-    if (first > WM_KEYLAST && last < WM_MOUSEFIRST) return 0;
-    if (first > WM_MOUSELAST) return 0;
+    if (first > WM_KEYLAST && last < WM_GESTURE) return 0;
+    if (first > WM_GESTURE && last < WM_MOUSEFIRST) return 0;
+    if (first > WM_MOUSELAST && last < WM_TOUCH) return 0;
+    if (first > WM_POINTERLEAVE) return 0;
     return 1;
 }
 
@@ -744,6 +756,7 @@ static inline int filter_contains_hw_range( unsigned int first, unsigned int las
 static inline int get_hardware_msg_bit( unsigned int message )
 {
     if (message >= WM_POINTERUPDATE && message <= WM_POINTERLEAVE) return QS_POINTER;
+    if (message == WM_TOUCH || message == WM_GESTURE) return QS_TOUCH;
     if (message == WM_INPUT_DEVICE_CHANGE || message == WM_INPUT) return QS_RAWINPUT;
     if (message == WM_MOUSEMOVE || message == WM_NCMOUSEMOVE) return QS_MOUSEMOVE;
     if (message >= WM_KEYFIRST && message <= WM_KEYLAST) return QS_KEY;
@@ -1746,6 +1759,7 @@ static user_handle_t find_hardware_message_window( struct desktop *desktop, stru
     switch (get_hardware_msg_bit( msg->msg ))
     {
     case QS_POINTER:
+    case QS_TOUCH:
     case QS_RAWINPUT:
     case QS_HARDWARE:
         if (!(win = msg->win) && input) win = input_shm->focus;
@@ -2463,15 +2477,119 @@ struct pointer
     struct desktop *desktop;
     user_handle_t win;
     int primary;
+    unsigned int synthetic_updates;  /* consecutive timed WM_POINTERUPDATE, to detect stale touches */
+    int long_press_sent;             /* press-and-hold right click already synthesized */
+    int click_pending;               /* a left click is pending until the tap is confirmed */
+    int drag_press_sent;             /* a left button press was synthesized for a press-and-drag */
+    unsigned int down_lparam;        /* lparam position at touch down, to detect drag movement */
+    unsigned int down_time;          /* tick count when the touch started */
     union hw_input input;
 };
 
+/* if a touch produces this many consecutive timed WM_POINTERUPDATE without any
+ * real driver input (and no WM_POINTERUP), treat it as a lost touch end and
+ * release it (~5s at 16ms/update) */
+#define STALE_POINTER_MAX_UPDATES 312
+
+/* press-and-hold for this many ms before synthesizing a right click */
+#define LONG_PRESS_MS 800
+
+/* a second finger that lands and lifts again within this many ms while another
+ * finger stays down is a "stick + tap" right click gesture */
+#define SECOND_TAP_MS 250
+
+/* a first finger must be held for at least this long before a second finger
+ * tap is recognized as a GID_PRESSANDTAP instead of a GID_TWOFINGERTAP */
+#define PRESS_AND_TAP_HOLD_MS 150
+
+/* after the touch moves this far (in 1/65535 screen fraction units) from the
+ * down position, treat it as a drag instead of a tap or a long press */
+#define DRAG_MOVE_THRESHOLD 300
+
+/* a touch that moves more than this far (in 1/65535 units) from the down
+ * position is no longer considered still, so the long-press clock is reset */
+#define STILL_MOVE_THRESHOLD 80
+
 static void queue_pointer_message( struct pointer *pointer, int repeated );
+
+/* queue a synthetic mouse message at the touch position of a pointer */
+static void send_pointer_mouse_message( struct pointer *pointer, unsigned int msg )
+{
+    struct desktop *desktop = pointer->desktop;
+    struct hw_msg_source source = { IMDT_UNAVAILABLE, IMDT_TOUCH };
+    const union hw_input *input = &pointer->input;
+    struct rectangle top_rect;
+    struct message *m;
+
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
+    if (!(m = alloc_hardware_message( 0xff515700, source, get_tick_count(), 0 ))) return;
+    m->win    = get_user_full_handle( pointer->win );
+    m->msg    = msg;
+    m->wparam = 0;
+    m->lparam = 0;
+    m->x      = LOWORD(input->hw.lparam) * (top_rect.right - top_rect.left) / 65535;
+    m->y      = HIWORD(input->hw.lparam) * (top_rect.bottom - top_rect.top) / 65535;
+    queue_hardware_message( desktop, m, 0 );
+}
+
+/* synthesize a right click (WM_RBUTTONDOWN / WM_RBUTTONUP) at the touch position,
+ * emulating the press-and-hold gesture */
+static void send_pointer_right_click( struct pointer *pointer )
+{
+    unsigned int i;
+    static const unsigned int messages[] = { WM_RBUTTONDOWN, WM_RBUTTONUP };
+
+    for (i = 0; i < ARRAY_SIZE(messages); i++)
+        send_pointer_mouse_message( pointer, messages[i] );
+}
 
 static void pointer_message_timeout( void *private )
 {
     struct pointer *pointer = private;
+
+    if (++pointer->synthetic_updates > STALE_POINTER_MAX_UPDATES)
+    {
+        /* the driver never delivered the matching WM_POINTERUP (the touch end
+         * was lost), so synthesize it to release the button and stop flooding
+         * the queue; queue_pointer_message also frees the pointer */
+        pointer->input.hw.msg = WM_POINTERUP;
+        queue_pointer_message( pointer, 0 );
+        return;
+    }
+    if (!pointer->long_press_sent && pointer->click_pending &&
+        get_tick_count() - pointer->down_time >= LONG_PRESS_MS)
+    {
+        /* press-and-hold gesture -> right click, not a left click */
+        if (pointer->drag_press_sent)
+        {
+            /* release the left button that the drag press synthesized */
+            send_pointer_mouse_message( pointer, WM_LBUTTONUP );
+            pointer->drag_press_sent = 0;
+        }
+        pointer->long_press_sent = 1;
+        pointer->click_pending = 0;
+        send_pointer_right_click( pointer );
+    }
     queue_pointer_message( pointer, 1 );
+}
+
+/* queue a synthetic mouse message from a touch pointer (used for tap clicks,
+ * scroll wheels and right-click emulation) */
+static void queue_pointer_mouse( struct desktop *desktop, user_handle_t win, unsigned int msg,
+                                 int x, int y, unsigned int wparam )
+{
+    struct hw_msg_source source = { IMDT_UNAVAILABLE, IMDT_TOUCH };
+    struct message *m = alloc_hardware_message( 0xff515700, source, get_tick_count(), 0 );
+
+    if (!m) return;
+    m->win    = get_user_full_handle( win );
+    m->msg    = msg;
+    m->wparam = wparam;
+    m->lparam = 0;
+    m->x      = x;
+    m->y      = y;
+    if (!send_hook_ll_message( desktop, m, WH_MOUSE_LL, 0, NULL ))
+        queue_hardware_message( desktop, m, 0 );
 }
 
 static void queue_pointer_message( struct pointer *pointer, int repeated )
@@ -2493,7 +2611,9 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
     struct message *msg;
     int x, y;
 
-    get_virtual_screen_rect( desktop, &top_rect, 0 );
+    /* the drivers encode touch positions as a fraction of the raw physical
+     * screen, so decode them with the raw rect to keep coordinates consistent */
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
     x = LOWORD(input->hw.lparam) * (top_rect.right - top_rect.left) / 65535;
     y = HIWORD(input->hw.lparam) * (top_rect.bottom - top_rect.top) / 65535;
 
@@ -2513,21 +2633,59 @@ static void queue_pointer_message( struct pointer *pointer, int repeated )
         queue_hardware_message( desktop, msg, 1 );
     }
 
-    if (!repeated && pointer->primary && (msg = alloc_hardware_message( 0xff515700, source, time, 0 )))
+    if (!repeated && pointer->primary)
     {
-        unsigned int message = WM_MOUSEMOVE;
-        if (input->hw.msg == WM_POINTERDOWN) message = WM_LBUTTONDOWN;
-        else if (input->hw.msg == WM_POINTERUP) message = WM_LBUTTONUP;
+        if (input->hw.msg == WM_POINTERDOWN)
+        {
+            /* delay the left click until we know this is a tap rather than a
+             * two-finger scroll/zoom or a press-and-hold */
+            pointer->click_pending = 1;
+            pointer->down_lparam = input->hw.lparam;
+            pointer->down_time = get_tick_count();
+        }
+        else if (input->hw.msg == WM_POINTERUP)
+        {
+            if (pointer->drag_press_sent)
+            {
+                /* a drag press was synthesized earlier: release the button */
+                queue_pointer_mouse( desktop, win, WM_LBUTTONUP, x, y, 0 );
+                pointer->drag_press_sent = 0;
+            }
+            else if (pointer->click_pending)
+            {
+                /* confirmed tap: send a full click */
+                queue_pointer_mouse( desktop, win, WM_LBUTTONDOWN, x, y, 0 );
+                queue_pointer_mouse( desktop, win, WM_LBUTTONUP, x, y, 0 );
+            }
+            pointer->click_pending = 0;
+        }
+        else  /* WM_POINTERUPDATE */
+        {
+            /* if the finger moved away from the down position it's a drag, so
+             * press the left button at the down position (where the finger
+             * first touched, e.g. on a splitter) and let subsequent motion
+             * drag; otherwise keep the click pending for a possible long-press
+             * right click.  A finger that drifts beyond the still threshold is
+             * no longer a press-and-hold, so reset the long-press clock. */
+            int dx = abs((short)LOWORD(input->hw.lparam) - (short)LOWORD(pointer->down_lparam));
+            int dy = abs((short)HIWORD(input->hw.lparam) - (short)HIWORD(pointer->down_lparam));
 
-        msg->win       = get_user_full_handle( win );
-        msg->msg       = message;
-        msg->wparam    = 0;
-        msg->lparam    = 0;
-        msg->x         = x;
-        msg->y         = y;
+            if (dx > STILL_MOVE_THRESHOLD || dy > STILL_MOVE_THRESHOLD)
+                pointer->down_time = get_tick_count();
 
-        if (!send_hook_ll_message( desktop, msg, WH_MOUSE_LL, 0, NULL ))
-            queue_hardware_message( desktop, msg, 0 );
+            if (pointer->click_pending && !pointer->drag_press_sent && !pointer->long_press_sent &&
+                (dx > DRAG_MOVE_THRESHOLD || dy > DRAG_MOVE_THRESHOLD))
+            {
+                int down_x, down_y;
+
+                down_x = LOWORD(pointer->down_lparam) * (top_rect.right - top_rect.left) / 65535;
+                down_y = HIWORD(pointer->down_lparam) * (top_rect.bottom - top_rect.top) / 65535;
+                pointer->drag_press_sent = 1;
+                pointer->click_pending = 0;
+                queue_pointer_mouse( desktop, win, WM_LBUTTONDOWN, down_x, down_y, 0 );
+            }
+            queue_pointer_mouse( desktop, win, WM_MOUSEMOVE, x, y, 0 );
+        }
     }
 
     if (input->hw.msg != WM_POINTERUP)
@@ -2554,9 +2712,487 @@ static struct pointer *find_pointer_from_id( struct desktop *desktop, unsigned i
     pointer->timeout = NULL;
     pointer->desktop = desktop;
     pointer->primary = list_empty( &desktop->pointers );
+    pointer->long_press_sent = 0;
+    pointer->click_pending = 0;
+    pointer->drag_press_sent = 0;
+    pointer->down_lparam = 0;
+    pointer->down_time = 0;
     list_add_tail( &desktop->pointers, &pointer->entry );
 
     return pointer;
+}
+
+/* release pointers whose touch end was lost (no real input for a long time);
+ * synthesizes the missing WM_POINTERUP so the app sees the button release,
+ * then frees the pointer so the next touch can become primary again */
+static void free_stale_pointers( struct desktop *desktop )
+{
+    struct pointer *pointer, *next;
+
+    LIST_FOR_EACH_ENTRY_SAFE( pointer, next, &desktop->pointers, struct pointer, entry )
+    {
+        if (pointer->synthetic_updates > STALE_POINTER_MAX_UPDATES)
+        {
+            if (pointer->timeout) remove_timeout_user( pointer->timeout );
+            pointer->input.hw.msg = WM_POINTERUP;
+            queue_pointer_message( pointer, 0 );  /* sends UP + frees the pointer */
+        }
+    }
+}
+
+/* queue a WM_TOUCH message for the touch contact described by 'changed' */
+static void queue_touch_message( struct desktop *desktop, struct pointer *changed )
+{
+    desktop_shm_t *desktop_shm = desktop->shared;
+    struct hw_msg_source source = { IMDT_TOUCH, IMO_HARDWARE };
+    struct message *msg;
+    struct pointer *p;
+    TOUCHINPUT *data;
+    struct rectangle top_rect;
+    unsigned int count = 0, i = 0;
+
+    LIST_FOR_EACH_ENTRY( p, &desktop->pointers, struct pointer, entry ) count++;
+    if (!count) return;
+
+    if (!(msg = alloc_hardware_message( 0, source, get_tick_count(), count * sizeof(TOUCHINPUT) ))) return;
+
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
+    data = (TOUCHINPUT *)((char *)msg->data + sizeof(struct hardware_msg_data));
+
+    LIST_FOR_EACH_ENTRY( p, &desktop->pointers, struct pointer, entry )
+    {
+        DWORD flags = TOUCHEVENTF_INRANGE | TOUCHEVENTF_MOVE;
+        int x = LOWORD( p->input.hw.lparam ) * (top_rect.right - top_rect.left) / 65535;
+        int y = HIWORD( p->input.hw.lparam ) * (top_rect.bottom - top_rect.top) / 65535;
+
+        if (p == changed)
+        {
+            if (p->input.hw.msg == WM_POINTERDOWN) flags = TOUCHEVENTF_INRANGE | TOUCHEVENTF_DOWN;
+            else if (p->input.hw.msg == WM_POINTERUP) flags = TOUCHEVENTF_UP;
+            else flags = TOUCHEVENTF_INRANGE | TOUCHEVENTF_MOVE;
+        }
+
+        if (i == 0) flags |= TOUCHEVENTF_PRIMARY;
+
+        data[i].x = x * 100;
+        data[i].y = y * 100;
+        data[i].hSource = 0;
+        data[i].dwID = LOWORD( p->input.hw.wparam );
+        data[i].dwFlags = flags;
+        data[i].dwTime = msg->time;
+        data[i].dwExtraInfo = 0;
+        data[i].cxContact = 1;
+        data[i].cyContact = 1;
+        i++;
+    }
+
+    msg->win       = get_user_full_handle( changed->win );
+    msg->msg       = WM_TOUCH;
+    msg->wparam    = count;
+    msg->lparam    = 0;
+    msg->x         = desktop_shm->cursor.x;
+    msg->y         = desktop_shm->cursor.y;
+
+    queue_hardware_message( desktop, msg, 1 );
+}
+
+static unsigned int gesture_sequence_id;
+
+/* queue a WM_GESTURE message */
+static void queue_gesture_message( struct desktop *desktop, user_handle_t win,
+                                   unsigned int flags, unsigned int gesture_id, POINT pt,
+                                   ULONGLONG arguments, unsigned int sequence_id )
+{
+    struct hw_msg_source source = { IMDT_TOUCH, IMO_HARDWARE };
+    struct message *msg;
+    GESTUREINFO *info;
+
+    if (!(msg = alloc_hardware_message( 0, source, get_tick_count(), sizeof(GESTUREINFO) ))) return;
+
+    info = (GESTUREINFO *)((char *)msg->data + sizeof(struct hardware_msg_data));
+    info->cbSize      = sizeof(GESTUREINFO);
+    info->dwFlags     = flags;
+    info->dwID        = gesture_id;
+    info->hwndTarget  = 0;
+    info->ptsLocation.x = pt.x;
+    info->ptsLocation.y = pt.y;
+    info->dwInstanceID  = 0;
+    info->dwSequenceID  = sequence_id;
+    info->ullArguments  = arguments;
+    info->cbExtraArgs   = 0;
+
+    msg->win    = get_user_full_handle( win );
+    msg->msg    = WM_GESTURE;
+    msg->wparam = 0;
+    msg->lparam = 0;
+    msg->x      = pt.x;
+    msg->y      = pt.y;
+
+    queue_hardware_message( desktop, msg, 1 );
+}
+
+/* recognize gestures from the touch contacts and queue WM_GESTURE messages */
+
+/* reset the WM_GESTURE recognition state, leaving the legacy gesture state
+ * (scroll/zoom, stick + tap) untouched since it may be shared with the legacy
+ * mouse synthesis path */
+static void reset_gesture_state( struct gesture_state *gesture )
+{
+    gesture->active = 0;
+    gesture->sequence_id = 0;
+    gesture->win = 0;
+    gesture->contact_count = 0;
+    gesture->gfirst_down_time = 0;
+    gesture->gsecond_id = 0;
+    gesture->gsecond_down_time = 0;
+    gesture->gtwo_tap = 0;
+}
+
+static void update_gesture( struct desktop *desktop, struct pointer *changed )
+{
+    struct gesture_state *gesture = &desktop->gesture;
+    struct rectangle top_rect;
+    struct pointer *p;
+    unsigned int count = 0, i;
+    int pos[2][2];
+    POINT pt;
+
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
+
+    /* collect the positions of the active (not yet lifted) contacts */
+    LIST_FOR_EACH_ENTRY( p, &desktop->pointers, struct pointer, entry )
+    {
+        if (p->input.hw.msg == WM_POINTERUP) continue;
+        if (count >= 2) break;
+        pos[count][0] = LOWORD( p->input.hw.lparam ) * (top_rect.right - top_rect.left) / 65535;
+        pos[count][1] = HIWORD( p->input.hw.lparam ) * (top_rect.bottom - top_rect.top) / 65535;
+        count++;
+    }
+
+    /* no more contacts: a two-finger tap completes when both fingers lifted */
+    if (!count)
+    {
+        if (gesture->active)
+        {
+            if (gesture->gtwo_tap && window_gesture_is_enabled( gesture->win, GID_TWOFINGERTAP ))
+            {
+                int dx = gesture->gx[1] - gesture->gx[0], dy = gesture->gy[1] - gesture->gy[0];
+                pt.x = (gesture->gx[0] + gesture->gx[1]) / 2;
+                pt.y = (gesture->gy[0] + gesture->gy[1]) / 2;
+                queue_gesture_message( desktop, gesture->win, 0, GID_TWOFINGERTAP, pt,
+                                       dx * dx + dy * dy, gesture->sequence_id );
+            }
+            pt.x = gesture->glast_x[0]; pt.y = gesture->glast_y[0];
+            queue_gesture_message( desktop, gesture->win, GF_END, GID_END, pt, 0, gesture->sequence_id );
+        }
+        reset_gesture_state( gesture );
+        return;
+    }
+
+    if (!gesture->active)
+    {
+        if (count >= 2)
+        {
+            /* start a two-finger gesture when the second contact lands; if the
+             * first finger was already held this may be a press-and-tap, and
+             * if both landed together it may be a two-finger tap */
+            gesture->active = 1;
+            gesture->sequence_id = ++gesture_sequence_id;
+            gesture->win = changed->win;
+            gesture->contact_count = 2;
+            gesture->gdistance = gesture->glast_distance = 0;
+            gesture->gpan_x = gesture->gpan_y = 0;
+            gesture->gtwo_tap = 0;
+            for (i = 0; i < count; i++)
+            {
+                gesture->gx[i] = gesture->glast_x[i] = pos[i][0];
+                gesture->gy[i] = gesture->glast_y[i] = pos[i][1];
+            }
+            gesture->glast_pan_x = (pos[0][0] + pos[1][0]) / 2;
+            gesture->glast_pan_y = (pos[0][1] + pos[1][1]) / 2;
+            gesture->gtime = get_tick_count();
+            gesture->gsecond_id = LOWORD( changed->input.hw.wparam );
+            gesture->gsecond_down_time = get_tick_count();
+            gesture->gstick_x = pos[0][0];
+            gesture->gstick_y = pos[0][1];
+            pt.x = pos[0][0]; pt.y = pos[0][1];
+            queue_gesture_message( desktop, changed->win, GF_BEGIN, GID_BEGIN, pt, 0, gesture->sequence_id );
+        }
+        else
+        {
+            /* remember the single contact position; this is the first finger
+             * that may be held for a press-and-tap */
+            gesture->glast_x[0] = pos[0][0];
+            gesture->glast_y[0] = pos[0][1];
+            gesture->gfirst_down_time = get_tick_count();
+            gesture->gstick_x = pos[0][0];
+            gesture->gstick_y = pos[0][1];
+        }
+        return;
+    }
+
+    if (gesture->contact_count == 1)
+    {
+        /* single-finger pan */
+        if (count < 1)
+        {
+            pt.x = gesture->glast_x[0]; pt.y = gesture->glast_y[0];
+            queue_gesture_message( desktop, gesture->win, GF_END, GID_END, pt, 0, gesture->sequence_id );
+            reset_gesture_state( gesture );
+            return;
+        }
+        if (window_gesture_is_enabled( gesture->win, GID_PAN ))
+        {
+            gesture->gpan_x += pos[0][0] - gesture->glast_x[0];
+            gesture->gpan_y += pos[0][1] - gesture->glast_y[0];
+            pt.x = pos[0][0]; pt.y = pos[0][1];
+            queue_gesture_message( desktop, gesture->win, 0, GID_PAN, pt,
+                                   MAKELONG( gesture->gpan_x, gesture->gpan_y ), gesture->sequence_id );
+        }
+        gesture->glast_x[0] = pos[0][0];
+        gesture->glast_y[0] = pos[0][1];
+        return;
+    }
+
+    /* two-finger gesture in progress */
+    if (count < 2)
+    {
+        /* one finger lifted; if the second finger tapped while the first was
+         * held it's a press-and-tap, otherwise wait for both to lift for a
+         * two-finger tap */
+        if (gesture->gtwo_tap)
+        {
+            pt.x = gesture->glast_x[0]; pt.y = gesture->glast_y[0];
+            queue_gesture_message( desktop, gesture->win, GF_END, GID_END, pt, 0, gesture->sequence_id );
+            reset_gesture_state( gesture );
+            return;
+        }
+        if (LOWORD( changed->input.hw.wparam ) == gesture->gsecond_id &&
+            get_tick_count() - gesture->gsecond_down_time < SECOND_TAP_MS &&
+            get_tick_count() - gesture->gfirst_down_time >= PRESS_AND_TAP_HOLD_MS)
+        {
+            /* the second finger tapped while the first was held: press-and-tap */
+            if (window_gesture_is_enabled( gesture->win, GID_PRESSANDTAP ))
+            {
+                int dx = gesture->gx[1] - gesture->gstick_x, dy = gesture->gy[1] - gesture->gstick_y;
+                pt.x = gesture->gstick_x; pt.y = gesture->gstick_y;
+                queue_gesture_message( desktop, gesture->win, 0, GID_PRESSANDTAP, pt,
+                                       MAKELONG( dx, dy ), gesture->sequence_id );
+            }
+            pt.x = gesture->glast_x[0]; pt.y = gesture->glast_y[0];
+            queue_gesture_message( desktop, gesture->win, GF_END, GID_END, pt, 0, gesture->sequence_id );
+            reset_gesture_state( gesture );
+            return;
+        }
+        /* the first finger lifted, or the gesture is no longer a tap */
+        gesture->gtwo_tap = (get_tick_count() - gesture->gtime < SECOND_TAP_MS);
+        pt.x = gesture->glast_x[0]; pt.y = gesture->glast_y[0];
+        queue_gesture_message( desktop, gesture->win, GF_END, GID_END, pt, 0, gesture->sequence_id );
+        reset_gesture_state( gesture );
+        return;
+    }
+
+    {
+        int dx = pos[1][0] - pos[0][0], dy = pos[1][1] - pos[0][1];
+        int distance2 = dx * dx + dy * dy;   /* squared distance between contacts */
+        int prev_dx = gesture->glast_x[1] - gesture->glast_x[0], prev_dy = gesture->glast_y[1] - gesture->glast_y[0];
+        int centroid_x = (pos[0][0] + pos[1][0]) / 2, centroid_y = (pos[0][1] + pos[1][1]) / 2;
+        int prev_len2 = prev_dx * prev_dx + prev_dy * prev_dy;
+        int cross = prev_dx * dy - prev_dy * dx;   /* sin(angle delta) * |prev| * |cur| */
+
+        /* fingers moving enough cancels a two-finger tap */
+        if (distance2 != gesture->glast_distance && abs( distance2 - gesture->glast_distance ) > 2000)
+            gesture->gtwo_tap = 0;
+
+        if (window_gesture_is_enabled( gesture->win, GID_ZOOM ) && gesture->glast_distance &&
+            distance2 != gesture->glast_distance &&
+            (distance2 > gesture->glast_distance ? distance2 - gesture->glast_distance :
+             gesture->glast_distance - distance2) > 200)
+        {
+            pt.x = centroid_x; pt.y = centroid_y;
+            queue_gesture_message( desktop, gesture->win, 0, GID_ZOOM, pt, distance2, gesture->sequence_id );
+        }
+        if (window_gesture_is_enabled( gesture->win, GID_ROTATE ) && prev_len2 &&
+            abs( cross ) * 1000 / prev_len2 > 8)
+        {
+            /* approximate the angle delta (radians) for small angles as cross / |prev|^2 */
+            double angle_delta = (double)cross / prev_len2;
+            pt.x = centroid_x; pt.y = centroid_y;
+            queue_gesture_message( desktop, gesture->win, 0, GID_ROTATE, pt,
+                                   (ULONGLONG)GID_ROTATE_ANGLE_TO_ARGUMENT( angle_delta ), gesture->sequence_id );
+        }
+        if (window_gesture_is_enabled( gesture->win, GID_PAN ) &&
+            (centroid_x != gesture->glast_pan_x || centroid_y != gesture->glast_pan_y))
+        {
+            gesture->gpan_x += centroid_x - gesture->glast_pan_x;
+            gesture->gpan_y += centroid_y - gesture->glast_pan_y;
+            pt.x = centroid_x; pt.y = centroid_y;
+            queue_gesture_message( desktop, gesture->win, 0, GID_PAN, pt,
+                                   MAKELONG( gesture->gpan_x, gesture->gpan_y ), gesture->sequence_id );
+        }
+
+        gesture->glast_distance = distance2;
+        gesture->glast_pan_x = centroid_x;
+        gesture->glast_pan_y = centroid_y;
+        for (i = 0; i < count; i++)
+        {
+            gesture->glast_x[i] = gesture->gx[i];
+            gesture->glast_y[i] = gesture->gy[i];
+            gesture->gx[i] = pos[i][0];
+            gesture->gy[i] = pos[i][1];
+        }
+    }
+}
+
+/* two-finger scroll / pinch zoom for windows that don't use WM_GESTURE.
+ * Windows turns these into mouse wheel events for legacy apps. */
+static void update_legacy_gesture( struct desktop *desktop, struct pointer *changed )
+{
+    struct gesture_state *gesture = &desktop->gesture;
+    struct rectangle top_rect;
+    struct pointer *p;
+    unsigned int count = 0, i;
+    int pos[2][2];
+    int centroid_x, centroid_y, dx, dy, distance2;
+
+    get_virtual_screen_rect( desktop, &top_rect, 1 );
+
+    LIST_FOR_EACH_ENTRY( p, &desktop->pointers, struct pointer, entry )
+    {
+        if (p->input.hw.msg == WM_POINTERUP) continue;
+        if (count >= 2) break;
+        pos[count][0] = LOWORD( p->input.hw.lparam ) * (top_rect.right - top_rect.left) / 65535;
+        pos[count][1] = HIWORD( p->input.hw.lparam ) * (top_rect.bottom - top_rect.top) / 65535;
+        count++;
+    }
+
+    if (count < 2)
+    {
+        /* if a second finger landed while the first was held and lifted again
+         * within SECOND_TAP_MS, it's a "stick + tap" right click */
+        if (gesture->second_down_time && count == 1 &&
+            get_tick_count() - gesture->second_down_time < SECOND_TAP_MS)
+        {
+            /* the remaining contact should be the held (first) finger, near
+             * the position recorded when the second finger landed */
+            if (abs(pos[0][0] - gesture->stick_x) < 60 && abs(pos[0][1] - gesture->stick_y) < 60)
+            {
+                LIST_FOR_EACH_ENTRY( p, &desktop->pointers, struct pointer, entry )
+                {
+                    if (p->input.hw.msg == WM_POINTERUP) continue;
+                    p->click_pending = 0;
+                    p->long_press_sent = 1;
+                    if (p->drag_press_sent)
+                    {
+                        send_pointer_mouse_message( p, WM_LBUTTONUP );
+                        p->drag_press_sent = 0;
+                    }
+                    send_pointer_mouse_message( p, WM_RBUTTONDOWN );
+                    send_pointer_mouse_message( p, WM_RBUTTONUP );
+                    break;
+                }
+            }
+        }
+        gesture->second_down_time = 0;
+        gesture->legacy_active = 0;
+        gesture->scroll_x = gesture->scroll_y = gesture->zoom_acc = 0;
+        return;
+    }
+
+    if (!gesture->legacy_active)
+    {
+        gesture->legacy_active = 1;
+        gesture->scroll_x = gesture->scroll_y = gesture->zoom_acc = 0;
+        /* a second finger landed while the first was already down; remember
+         * the first finger's position and when the second landed so a quick
+         * second-finger tap can be detected as a right click */
+        gesture->stick_x = pos[0][0];
+        gesture->stick_y = pos[0][1];
+        gesture->second_down_time = get_tick_count();
+        /* two-finger gesture: cancel any pending tap click, long press and
+         * drag press so the gesture doesn't leave a button held */
+        LIST_FOR_EACH_ENTRY( p, &desktop->pointers, struct pointer, entry )
+        {
+            if (p->drag_press_sent)
+            {
+                send_pointer_mouse_message( p, WM_LBUTTONUP );
+                p->drag_press_sent = 0;
+            }
+            p->click_pending = 0;
+            p->long_press_sent = 1;
+        }
+        for (i = 0; i < 2; i++)
+        {
+            gesture->last_x[i] = pos[i][0];
+            gesture->last_y[i] = pos[i][1];
+        }
+        gesture->last_distance = 0;
+        gesture->last_pan_x = (pos[0][0] + pos[1][0]) / 2;
+        gesture->last_pan_y = (pos[0][1] + pos[1][1]) / 2;
+        return;
+    }
+
+    centroid_x = (pos[0][0] + pos[1][0]) / 2;
+    centroid_y = (pos[0][1] + pos[1][1]) / 2;
+    dx = pos[1][0] - pos[0][0];
+    dy = pos[1][1] - pos[0][1];
+    distance2 = dx * dx + dy * dy;
+
+    /* pinch zoom: distance change -> Ctrl + wheel */
+    if (gesture->last_distance)
+    {
+        gesture->zoom_acc += distance2 - gesture->last_distance;
+        while (gesture->zoom_acc > 5000)
+        {
+            queue_pointer_mouse( desktop, changed->win, WM_MOUSEWHEEL, centroid_x, centroid_y,
+                                 (WHEEL_DELTA << 16) | MK_CONTROL );
+            gesture->zoom_acc -= 5000;
+        }
+        while (gesture->zoom_acc < -5000)
+        {
+            queue_pointer_mouse( desktop, changed->win, WM_MOUSEWHEEL, centroid_x, centroid_y,
+                                 (-(WHEEL_DELTA << 16)) | MK_CONTROL );
+            gesture->zoom_acc += 5000;
+        }
+    }
+
+    /* two-finger scroll: centroid movement -> wheel */
+    gesture->scroll_x += centroid_x - gesture->last_pan_x;
+    gesture->scroll_y += centroid_y - gesture->last_pan_y;
+
+    while (gesture->scroll_y > 25)
+    {
+        queue_pointer_mouse( desktop, changed->win, WM_MOUSEWHEEL, centroid_x, centroid_y,
+                             (-(WHEEL_DELTA << 16)) );
+        gesture->scroll_y -= 25;
+    }
+    while (gesture->scroll_y < -25)
+    {
+        queue_pointer_mouse( desktop, changed->win, WM_MOUSEWHEEL, centroid_x, centroid_y,
+                             (WHEEL_DELTA << 16) );
+        gesture->scroll_y += 25;
+    }
+    while (gesture->scroll_x > 25)
+    {
+        queue_pointer_mouse( desktop, changed->win, WM_MOUSEHWHEEL, centroid_x, centroid_y,
+                             (-(WHEEL_DELTA << 16)) );
+        gesture->scroll_x -= 25;
+    }
+    while (gesture->scroll_x < -25)
+    {
+        queue_pointer_mouse( desktop, changed->win, WM_MOUSEHWHEEL, centroid_x, centroid_y,
+                             (WHEEL_DELTA << 16) );
+        gesture->scroll_x += 25;
+    }
+
+    gesture->last_distance = distance2;
+    gesture->last_pan_x = centroid_x;
+    gesture->last_pan_y = centroid_y;
+    for (i = 0; i < 2; i++)
+    {
+        gesture->last_x[i] = pos[i][0];
+        gesture->last_y[i] = pos[i][1];
+    }
 }
 
 /* queue a hardware message for a custom type of event */
@@ -2593,12 +3229,39 @@ static void queue_custom_hardware_message( struct desktop *desktop, user_handle_
 
     if (input->hw.msg == WM_POINTERDOWN || input->hw.msg == WM_POINTERUP || input->hw.msg == WM_POINTERUPDATE)
     {
+        BOOL gesture_enabled = window_gesture_is_enabled( win, GID_ZOOM ) ||
+                               window_gesture_is_enabled( win, GID_PAN ) ||
+                               window_gesture_is_enabled( win, GID_ROTATE ) ||
+                               window_gesture_is_enabled( win, GID_TWOFINGERTAP ) ||
+                               window_gesture_is_enabled( win, GID_PRESSANDTAP );
+
+        if (input->hw.msg == WM_POINTERDOWN) free_stale_pointers( desktop );
+
         pointer = find_pointer_from_id( desktop, LOWORD(input->hw.wparam) );
         if (pointer->timeout) remove_timeout_user( pointer->timeout );
         pointer->input = *input;
         pointer->win = win;
+        pointer->synthetic_updates = 0;  /* real driver input resets the stale counter */
 
-        queue_pointer_message( pointer, 0 );
+        if (window_is_touch_registered( win ))
+        {
+            /* a touch-registered window receives WM_TOUCH instead of WM_GESTURE */
+            queue_touch_message( desktop, pointer );
+            if (input->hw.msg == WM_POINTERUP)
+            {
+                list_remove( &pointer->entry );
+                free( pointer );
+            }
+        }
+        else
+        {
+            /* gesture-enabled windows receive WM_GESTURE in addition to the
+             * legacy mouse synthesis, so apps that don't handle gestures still
+             * get tap-to-click, scroll and right-click behavior */
+            if (gesture_enabled) update_gesture( desktop, pointer );
+            update_legacy_gesture( desktop, pointer );
+            queue_pointer_message( pointer, 0 );
+        }
         return;
     }
 
@@ -2757,7 +3420,7 @@ static int get_hardware_message( struct thread *thread, unsigned int hw_id, user
         set_reply_data( msg->data, msg->data_size );
 
         if (msg_bit == QS_HARDWARE) flags |= PM_REMOVE; /* always remove internal hardware messages right away */
-        else if (!(msg_bit & (QS_RAWINPUT | QS_POINTER))) flags &= ~PM_REMOVE; /* wait for accept_hardware_message request */
+        else if (!(msg_bit & (QS_RAWINPUT | QS_POINTER | QS_TOUCH))) flags &= ~PM_REMOVE; /* wait for accept_hardware_message request */
         if (flags & PM_REMOVE) release_hardware_message( current->queue, data->hw_id );
         return 1;
     }

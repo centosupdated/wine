@@ -38,6 +38,7 @@ SOURCES = \
 	opengl.c \
 	surface.c \
 	systray.c \
+	touch.c \
 	vulkan.c \
 	window.c \
 	winemac.rc

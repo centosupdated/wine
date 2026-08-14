@@ -1293,6 +1293,16 @@ BOOL SYSCALL_API NtUserCloseWindowStation( HWINSTA handle )
     SYSCALL_FUNC( NtUserCloseWindowStation );
 }
 
+BOOL SYSCALL_API NtUserCloseGestureInfoHandle( HGESTUREINFO handle )
+{
+    SYSCALL_FUNC( NtUserCloseGestureInfoHandle );
+}
+
+BOOL SYSCALL_API NtUserCloseTouchInputHandle( HTOUCHINPUT handle )
+{
+    SYSCALL_FUNC( NtUserCloseTouchInputHandle );
+}
+
 INT SYSCALL_API NtUserCopyAcceleratorTable( HACCEL src, ACCEL *dst, INT count )
 {
     SYSCALL_FUNC( NtUserCopyAcceleratorTable );
@@ -1654,6 +1664,21 @@ BOOL SYSCALL_API NtUserGetGUIThreadInfo( DWORD id, GUITHREADINFO *info )
     SYSCALL_FUNC( NtUserGetGUIThreadInfo );
 }
 
+BOOL SYSCALL_API NtUserGetGestureConfig( HWND hwnd, DWORD reserved, DWORD flags, UINT *count, GESTURECONFIG *config, UINT size )
+{
+    SYSCALL_FUNC( NtUserGetGestureConfig );
+}
+
+BOOL SYSCALL_API NtUserGetGestureExtArgs( HGESTUREINFO handle, UINT size, BYTE *args )
+{
+    SYSCALL_FUNC( NtUserGetGestureExtArgs );
+}
+
+BOOL SYSCALL_API NtUserGetGestureInfo( HGESTUREINFO handle, GESTUREINFO *info )
+{
+    SYSCALL_FUNC( NtUserGetGestureInfo );
+}
+
 BOOL SYSCALL_API NtUserGetIconInfo( HICON icon, ICONINFO *info, UNICODE_STRING *module,
                                     UNICODE_STRING *res_name, DWORD *bpp, LONG unk )
 {
@@ -1843,6 +1868,11 @@ BOOL SYSCALL_API NtUserGetTitleBarInfo( HWND hwnd, TITLEBARINFO *info )
     SYSCALL_FUNC( NtUserGetTitleBarInfo );
 }
 
+BOOL SYSCALL_API NtUserGetTouchInputInfo( HTOUCHINPUT handle, UINT count, TOUCHINPUT *ptr, int size )
+{
+    SYSCALL_FUNC( NtUserGetTouchInputInfo );
+}
+
 BOOL SYSCALL_API NtUserGetUpdateRect( HWND hwnd, RECT *rect, BOOL erase )
 {
     SYSCALL_FUNC( NtUserGetUpdateRect );
@@ -1938,6 +1968,11 @@ BOOL SYSCALL_API NtUserIsClipboardFormatAvailable( UINT format )
 BOOL SYSCALL_API NtUserIsMouseInPointerEnabled(void)
 {
     SYSCALL_FUNC( NtUserIsMouseInPointerEnabled );
+}
+
+BOOL SYSCALL_API NtUserIsTouchWindow( HWND hwnd, ULONG *flags )
+{
+    SYSCALL_FUNC( NtUserIsTouchWindow );
 }
 
 BOOL SYSCALL_API NtUserKillSystemTimer( HWND hwnd, UINT_PTR id )
@@ -2105,6 +2140,11 @@ BOOL SYSCALL_API NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, U
     SYSCALL_FUNC( NtUserRegisterRawInputDevices );
 }
 
+BOOL SYSCALL_API NtUserRegisterTouchWindow( HWND hwnd, ULONG flags )
+{
+    SYSCALL_FUNC( NtUserRegisterTouchWindow );
+}
+
 BOOL SYSCALL_API NtUserRegisterTouchPadCapable( BOOL capable )
 {
     SYSCALL_FUNC( NtUserRegisterTouchPadCapable );
@@ -2247,6 +2287,11 @@ HWND SYSCALL_API NtUserSetFocus( HWND hwnd )
 BOOL SYSCALL_API NtUserSetForegroundWindow( HWND hwnd )
 {
     SYSCALL_FUNC( NtUserSetForegroundWindow );
+}
+
+BOOL SYSCALL_API NtUserSetGestureConfig( HWND hwnd, DWORD reserved, UINT count, GESTURECONFIG *config, UINT size )
+{
+    SYSCALL_FUNC( NtUserSetGestureConfig );
 }
 
 void SYSCALL_API NtUserSetInternalWindowPos( HWND hwnd, UINT cmd, RECT *rect, POINT *pt )
@@ -2518,6 +2563,11 @@ BOOL SYSCALL_API NtUserUnregisterClass( UNICODE_STRING *name, HINSTANCE instance
 BOOL SYSCALL_API NtUserUnregisterHotKey( HWND hwnd, INT id )
 {
     SYSCALL_FUNC( NtUserUnregisterHotKey );
+}
+
+BOOL SYSCALL_API NtUserUnregisterTouchWindow( HWND hwnd )
+{
+    SYSCALL_FUNC( NtUserUnregisterTouchWindow );
 }
 
 BOOL SYSCALL_API NtUserUpdateInputContext( HIMC handle, UINT attr, UINT_PTR value )

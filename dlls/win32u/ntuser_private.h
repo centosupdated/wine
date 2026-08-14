@@ -100,6 +100,24 @@ struct mouse_tracking_info
     POINT last_mouse_message_pos;
 };
 
+/* touch input data cached for GetTouchInputInfo */
+struct touch_input
+{
+    unsigned int hw_id;      /* hardware message id (also the handle) */
+    unsigned int count;      /* number of touch points */
+    TOUCHINPUT data[1];      /* touch data */
+};
+
+/* internal flag marking a window as registered for touch (matches server) */
+#define WIN_TOUCH_FLAG_REGISTERED 0x80000000
+
+/* gesture data cached for GetGestureInfo */
+struct gesture_info
+{
+    unsigned int hw_id;      /* hardware message id (also the handle) */
+    GESTUREINFO info;        /* the gesture data */
+};
+
 /* internal per-thread data */
 struct user_thread_info
 {
@@ -125,6 +143,8 @@ struct user_thread_info
     INPUT                         mouse_motion;           /* accumulated hardware mouse motion */
     HWND                          mouse_hwnd;             /* hardware mouse motion target window */
     struct hardware_msg_data     *rawinput;               /* Current rawinput message data */
+    struct touch_input           *touch_input;            /* Current touch input message data */
+    struct gesture_info          *gesture_info;           /* Current gesture message data */
     UINT                          spy_indent;             /* Current spy indent */
     BOOL                          clipping_cursor;        /* thread is currently clipping */
     DWORD                         clipping_reset;         /* time when clipping was last reset */

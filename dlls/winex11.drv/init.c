@@ -629,6 +629,7 @@ static const struct user_driver_funcs x11drv_funcs =
     .pGetCursorPos = X11DRV_GetCursorPos,
     .pSetCursorPos = X11DRV_SetCursorPos,
     .pClipCursor = X11DRV_ClipCursor,
+    .pGetTouchCapabilities = X11DRV_GetTouchCapabilities,
     .pSystrayDockInit = X11DRV_SystrayDockInit,
     .pSystrayDockInsert = X11DRV_SystrayDockInsert,
     .pSystrayDockClear = X11DRV_SystrayDockClear,

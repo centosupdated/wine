@@ -61,6 +61,43 @@ struct key_repeat
     struct timeout_user *timeout;          /* timeout for repeat */
 };
 
+struct gesture_state
+{
+    /* WM_GESTURE recognition state */
+    unsigned int       active;             /* a gesture is in progress */
+    unsigned int       sequence_id;        /* gesture sequence id */
+    user_handle_t      win;                /* target window */
+    unsigned int       contact_count;      /* number of active contacts */
+    int                gx[2];              /* current contact positions */
+    int                gy[2];
+    int                glast_x[2];         /* previous contact positions */
+    int                glast_y[2];
+    int                gdistance;          /* distance between the two contacts */
+    int                glast_distance;     /* previous distance */
+    int                gpan_x;             /* cumulative pan distance */
+    int                gpan_y;
+    int                glast_pan_x;        /* previous pan position */
+    int                glast_pan_y;
+    unsigned int       gtime;              /* time the gesture started */
+    unsigned int       gfirst_down_time;   /* tick when the first contact landed */
+    unsigned int       gsecond_id;         /* touch id of the second contact */
+    unsigned int       gsecond_down_time;  /* tick when the second contact landed */
+    unsigned int       gtwo_tap;           /* two-finger tap candidate in progress */
+    int                gstick_x, gstick_y; /* position of the first (held) contact */
+    /* legacy (mouse synthesis) state */
+    unsigned int       legacy_active;      /* two-finger legacy gesture (scroll/zoom) in progress */
+    int                scroll_x;           /* accumulated two-finger scroll (x) */
+    int                scroll_y;           /* accumulated two-finger scroll (y) */
+    int                zoom_acc;           /* accumulated pinch zoom distance */
+    int                last_x[2];          /* previous contact positions */
+    int                last_y[2];
+    int                last_distance;      /* previous distance */
+    int                last_pan_x;         /* previous pan position */
+    int                last_pan_y;
+    unsigned int       second_down_time;   /* tick when the second contact landed (stick+tap) */
+    int                stick_x, stick_y;   /* position of the first (held) contact */
+};
+
 struct desktop
 {
     struct object        obj;              /* object header */
@@ -77,6 +114,7 @@ struct desktop
     struct hook_table   *global_hooks;     /* table of global hooks on this desktop */
     struct list          hotkeys;          /* list of registered hotkeys */
     struct list          pointers;         /* list of active pointers */
+    struct gesture_state gesture;           /* gesture recognition state */
     struct timeout_user *close_timeout;    /* timeout before closing the desktop */
     struct thread_input *foreground_input; /* thread input of foreground thread */
     process_id_t         foreground_pid;   /* id of the foreground process */
@@ -178,6 +216,8 @@ extern struct thread *make_window_foreground( struct desktop *desktop, user_hand
                                               int *is_desktop, int *set_foreground );
 extern int is_window_visible( user_handle_t window );
 extern int is_window_transparent( user_handle_t window );
+extern BOOL window_is_touch_registered( user_handle_t window );
+extern BOOL window_gesture_is_enabled( user_handle_t window, unsigned int gesture_id );
 extern int make_window_active( user_handle_t window );
 extern struct thread *get_window_thread( user_handle_t handle );
 extern user_handle_t shallow_window_from_point( struct desktop *desktop, int x, int y );

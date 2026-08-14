@@ -959,6 +959,16 @@ W32KAPI ATOM    WINAPI NtUserRegisterClassExWOW( const WNDCLASSEXW *wc, UNICODE_
 W32KAPI BOOL    WINAPI NtUserRegisterHotKey( HWND hwnd, INT id, UINT modifiers, UINT vk );
 W32KAPI BOOL    WINAPI NtUserRegisterRawInputDevices( const RAWINPUTDEVICE *devices, UINT device_count, UINT size );
 W32KAPI BOOL    WINAPI NtUserRegisterTouchPadCapable( BOOL capable );
+W32KAPI BOOL    WINAPI NtUserRegisterTouchWindow( HWND hwnd, ULONG flags );
+W32KAPI BOOL    WINAPI NtUserUnregisterTouchWindow( HWND hwnd );
+W32KAPI BOOL    WINAPI NtUserIsTouchWindow( HWND hwnd, ULONG *flags );
+W32KAPI BOOL    WINAPI NtUserGetTouchInputInfo( HTOUCHINPUT handle, UINT count, TOUCHINPUT *ptr, int size );
+W32KAPI BOOL    WINAPI NtUserCloseTouchInputHandle( HTOUCHINPUT handle );
+W32KAPI BOOL    WINAPI NtUserSetGestureConfig( HWND hwnd, DWORD reserved, UINT count, GESTURECONFIG *config, UINT size );
+W32KAPI BOOL    WINAPI NtUserGetGestureConfig( HWND hwnd, DWORD reserved, DWORD flags, UINT *count, GESTURECONFIG *config, UINT size );
+W32KAPI BOOL    WINAPI NtUserGetGestureInfo( HGESTUREINFO handle, GESTUREINFO *info );
+W32KAPI BOOL    WINAPI NtUserGetGestureExtArgs( HGESTUREINFO handle, UINT size, BYTE *args );
+W32KAPI BOOL    WINAPI NtUserCloseGestureInfoHandle( HGESTUREINFO handle );
 W32KAPI ATOM    WINAPI NtUserRegisterWindowMessage( UNICODE_STRING *name );
 W32KAPI BOOL    WINAPI NtUserReleaseCapture(void);
 W32KAPI INT     WINAPI NtUserReleaseDC( HWND hwnd, HDC hdc );

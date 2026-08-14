@@ -26,9 +26,17 @@
 
 #include "waylanddrv.h"
 
+#include "ntstatus.h"
+#include "winreg.h"
+
 #include "wine/debug.h"
 
 #include <stdlib.h>
+
+#ifdef SONAME_LIBDBUS_1
+#include <dlfcn.h>
+#include <dbus/dbus.h>
+#endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(waylanddrv);
 
@@ -42,6 +50,255 @@ struct wayland process_wayland =
     .output_list = {&process_wayland.output_list, &process_wayland.output_list},
     .output_mutex = PTHREAD_MUTEX_INITIALIZER
 };
+
+static inline void ascii_to_unicode( WCHAR *dst, const char *src, size_t len )
+{
+    while (len--) *dst++ = (unsigned char)*src++;
+}
+
+#define IS_OPTION_TRUE(ch) ((ch) == 'y' || (ch) == 'Y' || (ch) == 't' || (ch) == 'T' || (ch) == '1')
+
+static inline UINT asciiz_to_unicode( WCHAR *dst, const char *src )
+{
+    WCHAR *p = dst;
+    while ((*p++ = *src++));
+    return (p - dst) * sizeof(WCHAR);
+}
+
+static HKEY reg_open_key( HKEY root, const WCHAR *name, ULONG name_len )
+{
+    UNICODE_STRING nameW = { name_len, name_len, (WCHAR *)name };
+    OBJECT_ATTRIBUTES attr;
+    HANDLE ret;
+
+    attr.Length = sizeof(attr);
+    attr.RootDirectory = root;
+    attr.ObjectName = &nameW;
+    attr.Attributes = 0;
+    attr.SecurityDescriptor = NULL;
+    attr.SecurityQualityOfService = NULL;
+
+    return NtOpenKeyEx( &ret, MAXIMUM_ALLOWED, &attr, 0 ) ? 0 : ret;
+}
+
+static HKEY open_hkcu_key( const char *name )
+{
+    WCHAR bufferW[256];
+    static HKEY hkcu;
+
+    if (!hkcu)
+    {
+        char buffer[256];
+        DWORD_PTR sid_data[(sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE) / sizeof(DWORD_PTR)];
+        DWORD i, len = sizeof(sid_data);
+        SID *sid;
+
+        if (NtQueryInformationToken( GetCurrentThreadEffectiveToken(), TokenUser, sid_data, len, &len ))
+            return 0;
+
+        sid = ((TOKEN_USER *)sid_data)->User.Sid;
+        len = sprintf( buffer, "\\Registry\\User\\S-%u-%u", sid->Revision,
+                       MAKELONG( MAKEWORD( sid->IdentifierAuthority.Value[5],
+                                           sid->IdentifierAuthority.Value[4] ),
+                                 MAKEWORD( sid->IdentifierAuthority.Value[3],
+                                           sid->IdentifierAuthority.Value[2] )));
+        for (i = 0; i < sid->SubAuthorityCount; i++)
+            len += sprintf( buffer + len, "-%u", sid->SubAuthority[i] );
+
+        ascii_to_unicode( bufferW, buffer, len );
+        hkcu = reg_open_key( NULL, bufferW, len * sizeof(WCHAR) );
+    }
+
+    return reg_open_key( hkcu, bufferW, asciiz_to_unicode( bufferW, name ) - sizeof(WCHAR) );
+}
+
+static ULONG query_reg_value( HKEY hkey, const WCHAR *name, KEY_VALUE_PARTIAL_INFORMATION *info, ULONG size )
+{
+    unsigned int name_size = name ? lstrlenW( name ) * sizeof(WCHAR) : 0;
+    UNICODE_STRING nameW = { name_size, name_size, (WCHAR *)name };
+
+    if (NtQueryValueKey( hkey, &nameW, KeyValuePartialInformation,
+                         info, size, &size ))
+        return 0;
+
+    return size - FIELD_OFFSET(KEY_VALUE_PARTIAL_INFORMATION, Data);
+}
+
+static DWORD get_config_key( HKEY defkey, HKEY appkey, const char *name, WCHAR *buffer, DWORD size )
+{
+    WCHAR nameW[128];
+    char buf[2048];
+    KEY_VALUE_PARTIAL_INFORMATION *info = (void *)buf;
+
+    asciiz_to_unicode( nameW, name );
+
+    if (appkey && query_reg_value( appkey, nameW, info, sizeof(buf) ))
+    {
+        size = min( info->DataLength, size - sizeof(WCHAR) );
+        memcpy( buffer, info->Data, size );
+        buffer[size / sizeof(WCHAR)] = 0;
+        return 0;
+    }
+
+    if (defkey && query_reg_value( defkey, nameW, info, sizeof(buf) ))
+    {
+        size = min( info->DataLength, size - sizeof(WCHAR) );
+        memcpy( buffer, info->Data, size );
+        buffer[size / sizeof(WCHAR)] = 0;
+        return 0;
+    }
+
+    return ERROR_FILE_NOT_FOUND;
+}
+
+static void wayland_read_wm_settings(void)
+{
+    static const WCHAR x11driverW[] = {'\\','X','1','1',' ','D','r','i','v','e','r',0};
+    WCHAR buffer[MAX_PATH + 16], *p, *appname;
+    HKEY hkey, appkey = 0;
+    DWORD len;
+
+    /* @@ Wine registry key: HKCU\Software\Wine\X11 Driver */
+    hkey = open_hkcu_key( "Software\\Wine\\X11 Driver" );
+
+    /* open the app-specific key */
+    appname = RtlGetCurrentPeb()->ProcessParameters->ImagePathName.Buffer;
+    if ((p = wcsrchr( appname, '/' ))) appname = p + 1;
+    if ((p = wcsrchr( appname, '\\' ))) appname = p + 1;
+    len = lstrlenW( appname );
+
+    if (len && len < MAX_PATH)
+    {
+        HKEY tmpkey;
+        int i;
+        for (i = 0; appname[i]; i++) buffer[i] = RtlDowncaseUnicodeChar( appname[i] );
+        buffer[i] = 0;
+        appname = buffer;
+        memcpy( appname + i, x11driverW, sizeof(x11driverW) );
+        /* @@ Wine registry key: HKCU\Software\Wine\AppDefaults\app.exe\X11 Driver */
+        if ((tmpkey = open_hkcu_key( "Software\\Wine\\AppDefaults" )))
+        {
+            appkey = reg_open_key( tmpkey, appname, lstrlenW( appname ) * sizeof(WCHAR) );
+            NtClose( tmpkey );
+        }
+    }
+
+    process_wayland.managed_mode = TRUE;
+    if (!get_config_key( hkey, appkey, "Managed", buffer, sizeof(buffer) ))
+        process_wayland.managed_mode = IS_OPTION_TRUE( buffer[0] );
+
+    process_wayland.decorated_mode = TRUE;
+    if (!get_config_key( hkey, appkey, "Decorated", buffer, sizeof(buffer) ))
+        process_wayland.decorated_mode = IS_OPTION_TRUE( buffer[0] );
+
+    if (appkey) NtClose( appkey );
+    if (hkey) NtClose( hkey );
+
+    TRACE( "managed=%d decorated=%d\n", process_wayland.managed_mode, process_wayland.decorated_mode );
+}
+
+#ifdef SONAME_LIBDBUS_1
+
+#define WAYLAND_DBUS_FUNCS \
+    DO_FUNC(dbus_bus_get_private); \
+    DO_FUNC(dbus_connection_close); \
+    DO_FUNC(dbus_connection_flush); \
+    DO_FUNC(dbus_connection_send_with_reply_and_block); \
+    DO_FUNC(dbus_connection_unref); \
+    DO_FUNC(dbus_error_free); \
+    DO_FUNC(dbus_error_init); \
+    DO_FUNC(dbus_message_iter_append_basic); \
+    DO_FUNC(dbus_message_iter_get_arg_type); \
+    DO_FUNC(dbus_message_iter_get_basic); \
+    DO_FUNC(dbus_message_iter_init); \
+    DO_FUNC(dbus_message_iter_init_append); \
+    DO_FUNC(dbus_message_iter_next); \
+    DO_FUNC(dbus_message_iter_recurse); \
+    DO_FUNC(dbus_message_new_method_call); \
+    DO_FUNC(dbus_message_unref); \
+    DO_FUNC(dbus_set_error_const)
+
+#define DO_FUNC(f) static typeof(f) *p_##f
+WAYLAND_DBUS_FUNCS;
+#undef DO_FUNC
+
+static BOOL wayland_load_dbus_functions(void)
+{
+    void *handle;
+
+    if (!(handle = dlopen(SONAME_LIBDBUS_1, RTLD_NOW))) return FALSE;
+
+#define DO_FUNC(f) if (!(p_##f = dlsym(handle, #f))) return FALSE
+    WAYLAND_DBUS_FUNCS;
+#undef DO_FUNC
+    return TRUE;
+}
+
+static BOOL wayland_query_dark_theme(void)
+{
+    static const char *bus_name = "org.freedesktop.portal.Desktop";
+    static const char *path = "/org/freedesktop/portal/desktop";
+    static const char *iface = "org.freedesktop.portal.Settings";
+    static const char *namespace = "org.freedesktop.appearance";
+    static const char *key = "color-scheme";
+    DBusConnection *connection;
+    DBusMessage *request, *reply;
+    DBusMessageIter iter, variant;
+    DBusError error;
+    dbus_uint32_t value = 0;
+    BOOL dark = FALSE;
+
+    if (!wayland_load_dbus_functions()) return FALSE;
+
+    p_dbus_error_init(&error);
+    if (!(connection = p_dbus_bus_get_private(DBUS_BUS_SESSION, &error)))
+    {
+        TRACE("failed to connect to session bus: %s\n", error.message);
+        p_dbus_error_free(&error);
+        return FALSE;
+    }
+    p_dbus_error_free(&error);
+
+    if ((request = p_dbus_message_new_method_call(bus_name, path, iface, "Read")))
+    {
+        p_dbus_message_iter_init_append(request, &iter);
+        p_dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &namespace);
+        p_dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &key);
+
+        p_dbus_error_init(&error);
+        reply = p_dbus_connection_send_with_reply_and_block(connection, request, 1000, &error);
+        p_dbus_message_unref(request);
+        if (reply)
+        {
+            p_dbus_error_free(&error);
+            p_dbus_message_iter_init(reply, &iter);
+            /* Unwrap any layers of variant wrapping. */
+            while (p_dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_VARIANT)
+            {
+                p_dbus_message_iter_recurse(&iter, &variant);
+                iter = variant;
+            }
+            if (p_dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_UINT32)
+                p_dbus_message_iter_get_basic(&iter, &value);
+            p_dbus_message_unref(reply);
+        }
+        else
+        {
+            TRACE("failed to read color scheme: %s\n", error.message);
+            p_dbus_error_free(&error);
+        }
+    }
+
+    p_dbus_connection_flush(connection);
+    p_dbus_connection_close(connection);
+    p_dbus_connection_unref(connection);
+
+    dark = (value == 1); /* 0 = NoPreference, 1 = PreferDark, 2 = PreferLight */
+    TRACE("color scheme value=%u dark=%d\n", value, dark);
+    return dark;
+}
+
+#endif /* SONAME_LIBDBUS_1 */
 
 /**********************************************************************
  *          xdg_wm_base handling
@@ -69,6 +326,11 @@ static void wl_seat_handle_capabilities(void *data, struct wl_seat *seat,
         wayland_pointer_init(wl_seat_get_pointer(seat));
     else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && process_wayland.pointer.wl_pointer)
         wayland_pointer_deinit();
+
+    if ((caps & WL_SEAT_CAPABILITY_TOUCH) && !process_wayland.touch.wl_touch)
+        wayland_touch_init(wl_seat_get_touch(seat));
+    else if (!(caps & WL_SEAT_CAPABILITY_TOUCH) && process_wayland.touch.wl_touch)
+        wayland_touch_deinit();
 
     if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !process_wayland.keyboard.wl_keyboard)
         wayland_keyboard_init(wl_seat_get_keyboard(seat));
@@ -112,6 +374,11 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
         /* Add zxdg_output_v1 to existing outputs. */
         wl_list_for_each(output, &process_wayland.output_list, link)
             wayland_output_use_xdg_extension(output);
+    }
+    else if (strcmp(interface, "zxdg_decoration_manager_v1") == 0)
+    {
+        process_wayland.zxdg_decoration_manager_v1 =
+            wl_registry_bind(registry, id, &zxdg_decoration_manager_v1_interface, 1);
     }
     else if (strcmp(interface, "wl_compositor") == 0)
     {
@@ -255,6 +522,7 @@ static void registry_handle_global_remove(void *data, struct wl_registry *regist
     {
         TRACE("removing seat\n");
         if (process_wayland.pointer.wl_pointer) wayland_pointer_deinit();
+        if (process_wayland.touch.wl_touch) wayland_touch_deinit();
         if (process_wayland.text_input.zwp_text_input_v3) wayland_text_input_deinit();
         pthread_mutex_lock(&seat->mutex);
         wl_seat_release(seat->wl_seat);
@@ -372,6 +640,18 @@ BOOL wayland_process_init(void)
 
     if (!process_wayland.wp_fractional_scale_manager_v1)
         ERR("Wayland compositor doesn't support wp_fractional_scale_manager_v1 (fractional scaling will be broken)\n");
+
+#ifdef SONAME_LIBDBUS_1
+    process_wayland.dark_theme = wayland_query_dark_theme();
+#else
+    process_wayland.dark_theme = FALSE;
+#endif
+
+    process_wayland.sm_caption_height = NtUserGetSystemMetrics(SM_CYCAPTION);
+    process_wayland.sm_cx_size = NtUserGetSystemMetrics(SM_CXSIZE);
+    process_wayland.sm_menu_height = NtUserGetSystemMetrics(SM_CYMENU);
+
+    wayland_read_wm_settings();
 
     process_wayland.initialized = TRUE;
 

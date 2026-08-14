@@ -46,6 +46,9 @@ struct property
     lparam_t       data;     /* property data (user-defined storage) */
 };
 
+/* internal touch flag to indicate that the window is registered for touch */
+#define WIN_TOUCH_FLAG_REGISTERED 0x80000000
+
 enum property_type
 {
     PROP_TYPE_FREE,   /* free entry */
@@ -83,6 +86,9 @@ struct window
     unsigned int     color_key;       /* color key for a layered window */
     unsigned int     alpha;           /* alpha value for a layered window */
     unsigned int     layered_flags;   /* flags for a layered window */
+    unsigned int     touch_flags;     /* touch registration flags */
+    unsigned int     gesture_count;   /* number of gesture config entries */
+    GESTURECONFIG   *gesture_config;  /* gesture config array */
     WCHAR           *text;            /* window caption text */
     data_size_t      text_len;        /* length of window caption */
     unsigned int     paint_flags;     /* various painting flags */
@@ -156,6 +162,7 @@ static void window_destroy( struct object *obj )
     if (win->update_region) free_region( win->update_region );
     if (win->class) release_class( win->class );
     free( win->text );
+    free( win->gesture_config );
 
     if (win->shared) free_shared_object( win->shared );
 }
@@ -664,6 +671,9 @@ static struct window *create_window( struct window *parent, struct window *owner
     win->is_layered     = 0;
     win->is_orphan      = 0;
     win->set_foreground = 0;
+    win->touch_flags    = 0;
+    win->gesture_count  = 0;
+    win->gesture_config = NULL;
     win->text           = NULL;
     win->text_len       = 0;
     win->paint_flags    = 0;
@@ -2295,6 +2305,102 @@ DECL_HANDLER(set_window_fnid)
     }
     SHARED_WRITE_END;
     release_class( class );
+}
+
+
+/* check whether the window or one of its parents is registered for touch */
+BOOL window_is_touch_registered( user_handle_t handle )
+{
+    struct window *win;
+
+    if (!(win = get_window( handle ))) return FALSE;
+    for (;;)
+    {
+        if (win->touch_flags) return TRUE;
+        if (!win->parent) break;
+        win = win->parent;
+    }
+    return FALSE;
+}
+
+/* check whether the window or one of its parents has the given gesture enabled */
+BOOL window_gesture_is_enabled( user_handle_t handle, unsigned int gesture_id )
+{
+    struct window *win;
+    unsigned int i;
+
+    if (!(win = get_window( handle ))) return FALSE;
+    for (;;)
+    {
+        for (i = 0; i < win->gesture_count; i++)
+        {
+            if (win->gesture_config[i].dwID == gesture_id) return !!(win->gesture_config[i].dwWant & 1);
+        }
+        if (!win->parent) break;
+        win = win->parent;
+    }
+    return FALSE;
+}
+
+
+/* set or clear the touch flags of a window */
+DECL_HANDLER(set_window_touch_flags)
+{
+    struct window *win = get_window( req->handle );
+
+    if (!win) return;
+    if (req->set) win->touch_flags = WIN_TOUCH_FLAG_REGISTERED | req->flags;
+    else win->touch_flags = 0;
+}
+
+
+/* get the touch flags of a window */
+DECL_HANDLER(get_window_touch_flags)
+{
+    struct window *win = get_window( req->handle );
+
+    if (!win) return;
+    reply->flags = win->touch_flags;
+}
+
+
+/* set the gesture configuration of a window */
+DECL_HANDLER(set_gesture_config)
+{
+    struct window *win = get_window( req->handle );
+
+    if (!win) return;
+    if (!req->count)
+    {
+        free( win->gesture_config );
+        win->gesture_config = NULL;
+        win->gesture_count = 0;
+        return;
+    }
+    if (req->count > GESTURECONFIGMAXCOUNT)
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+    if (get_req_data_size() != req->count * sizeof(GESTURECONFIG))
+    {
+        set_error( STATUS_INVALID_PARAMETER );
+        return;
+    }
+    if (!(win->gesture_config = realloc( win->gesture_config, req->count * sizeof(GESTURECONFIG) ))) return;
+    memcpy( win->gesture_config, get_req_data(), req->count * sizeof(GESTURECONFIG) );
+    win->gesture_count = req->count;
+}
+
+
+/* get the gesture configuration of a window */
+DECL_HANDLER(get_gesture_config)
+{
+    struct window *win = get_window( req->handle );
+
+    if (!win) return;
+    reply->count = min( req->count, win->gesture_count );
+    if (reply->count) set_reply_data( win->gesture_config, reply->count * sizeof(GESTURECONFIG) );
 }
 
 

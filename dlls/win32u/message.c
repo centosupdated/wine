@@ -2753,12 +2753,23 @@ static BOOL process_mouse_message( MSG *msg, UINT hw_id, ULONG_PTR extra_info, H
             hittest != HTCLIENT ||
             (get_class_long( msg->hwnd, GCL_STYLE, FALSE ) & CS_DBLCLKS))
         {
+           LONG dclk_cx = get_system_metrics( SM_CXDOUBLECLK ) / 2;
+           LONG dclk_cy = get_system_metrics( SM_CYDOUBLECLK ) / 2;
+
+           /* touch-synthesized clicks are less precise than mouse clicks, so
+            * allow a wider area when matching them for double-click detection */
+           if ((extra_info & 0xffffff00) == 0xff515700)
+           {
+               dclk_cx = get_system_metrics( SM_CXDOUBLECLK ) * 8;
+               dclk_cy = get_system_metrics( SM_CYDOUBLECLK ) * 8;
+           }
+
            if ((msg->message == clk_msg.message) &&
                (msg->hwnd == clk_msg.hwnd) &&
                (msg->wParam == clk_msg.wParam) &&
                (msg->time - clk_msg.time < NtUserGetDoubleClickTime()) &&
-               (abs(msg->pt.x - clk_msg.pt.x) < get_system_metrics( SM_CXDOUBLECLK ) / 2) &&
-               (abs(msg->pt.y - clk_msg.pt.y) < get_system_metrics( SM_CYDOUBLECLK ) / 2))
+               (abs(msg->pt.x - clk_msg.pt.x) < dclk_cx) &&
+               (abs(msg->pt.y - clk_msg.pt.y) < dclk_cy))
            {
                message += (WM_LBUTTONDBLCLK - WM_LBUTTONDOWN);
                if (update)
@@ -2894,6 +2905,10 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
 
     if (msg->message == WM_INPUT || msg->message == WM_INPUT_DEVICE_CHANGE)
         ret = process_rawinput_message( msg, hw_id, msg_data );
+    else if (msg->message == WM_TOUCH)
+        ret = process_touch_message( msg, hw_id, msg_data );
+    else if (msg->message == WM_GESTURE)
+        ret = process_gesture_message( msg, hw_id, msg_data );
     else if (is_keyboard_message( msg->message ))
         ret = process_keyboard_message( msg, hw_id, hwnd_filter, first, last, remove );
     else if (is_mouse_message( msg->message ))
@@ -2909,6 +2924,82 @@ static BOOL process_hardware_message( MSG *msg, UINT hw_id, const struct hardwar
     set_thread_dpi_awareness_context( context );
     if (!ret) thread_info->client_info->msg_source = prev_source;
     return ret;
+}
+
+/***********************************************************************
+ *          process_touch_message
+ *
+ * Cache the touch input data for a WM_TOUCH message and translate the
+ * touch coordinates into client coordinates of the target window.
+ *
+ * returns TRUE if the contents of 'msg' should be passed to the application
+ */
+BOOL process_touch_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct touch_input *touch_input;
+    TOUCHINPUT *data;
+    UINT count, i;
+    BOOL ret = FALSE;
+
+    if (msg_data->size < sizeof(*msg_data)) return FALSE;
+    count = (msg_data->size - sizeof(*msg_data)) / sizeof(TOUCHINPUT);
+    if (!count) return FALSE;
+
+    if (!(touch_input = realloc( thread_info->touch_input, sizeof(*touch_input) + (count - 1) * sizeof(TOUCHINPUT) )))
+        return FALSE;
+    thread_info->touch_input = touch_input;
+
+    touch_input->hw_id = hw_id;
+    touch_input->count = count;
+    data = (TOUCHINPUT *)((char *)msg_data + sizeof(*msg_data));
+    memcpy( touch_input->data, data, count * sizeof(TOUCHINPUT) );
+
+    for (i = 0; i < count; i++)
+    {
+        POINT pt = { touch_input->data[i].x / 100, touch_input->data[i].y / 100 };
+
+        pt = point_phys_to_win_dpi( msg->hwnd, pt );
+        if (screen_to_client( msg->hwnd, &pt ))
+        {
+            touch_input->data[i].x = pt.x * 100;
+            touch_input->data[i].y = pt.y * 100;
+        }
+    }
+
+    msg->lParam = (LPARAM)hw_id;
+    msg->wParam = count;
+    msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
+    ret = TRUE;
+
+    return ret;
+}
+
+/***********************************************************************
+ *          process_gesture_message
+ *
+ * Cache the gesture data for a WM_GESTURE message.
+ *
+ * returns TRUE if the contents of 'msg' should be passed to the application
+ */
+BOOL process_gesture_message( MSG *msg, UINT hw_id, const struct hardware_msg_data *msg_data )
+{
+    struct user_thread_info *thread_info = get_user_thread_info();
+    struct gesture_info *gesture_info;
+
+    if (msg_data->size < sizeof(*msg_data) + sizeof(GESTUREINFO)) return FALSE;
+
+    if (!(gesture_info = realloc( thread_info->gesture_info, sizeof(*gesture_info) ))) return FALSE;
+    thread_info->gesture_info = gesture_info;
+
+    gesture_info->hw_id = hw_id;
+    memcpy( &gesture_info->info, (char *)msg_data + sizeof(*msg_data), sizeof(GESTUREINFO) );
+    gesture_info->info.hwndTarget = msg->hwnd;
+
+    msg->lParam = (LPARAM)hw_id;
+    msg->wParam = 0;
+    msg->pt = point_phys_to_win_dpi( msg->hwnd, msg->pt );
+    return TRUE;
 }
 
 /***********************************************************************

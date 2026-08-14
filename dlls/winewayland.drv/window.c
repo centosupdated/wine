@@ -52,6 +52,56 @@ static pthread_mutex_t win_data_mutex;
 static struct rb_tree win_data_rb = { wayland_win_data_cmp_rb };
 
 /***********************************************************************
+ *           WAYLAND_GetWindowStyleMasks
+ *
+ * Return the window style bits that are handled by the host compositor's
+ * server-side decorations, so that win32u excludes them from the visible
+ * rect and doesn't draw Wine's own title bar over the compositor's.
+ */
+BOOL WAYLAND_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask)
+{
+    struct wayland_win_data *data;
+    struct wayland_surface *surface;
+    BOOL server_side = FALSE;
+
+    *style_mask = *ex_style_mask = 0;
+
+    if (!process_wayland.zxdg_decoration_manager_v1) return TRUE;
+
+    if ((data = wayland_win_data_get(hwnd)))
+    {
+        /* If the window is not managed, no compositor decoration is applied. */
+        if (data->managed)
+        {
+            if ((surface = data->wayland_surface))
+                server_side = wayland_surface_is_toplevel(surface) &&
+                              surface->decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+            else
+                server_side = TRUE; /* we request server-side for managed toplevels */
+        }
+        wayland_win_data_release(data);
+    }
+    else
+    {
+        /* The window data isn't created yet, assume server-side decorations
+         * for managed windows, as we always request them. */
+        DWORD wnd_style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
+        if ((wnd_style & WS_CHILD) != WS_CHILD &&
+            ((wnd_style & WS_CAPTION) == WS_CAPTION || (wnd_style & WS_THICKFRAME)))
+            server_side = TRUE;
+    }
+
+    if (!server_side) return TRUE;
+
+    if ((style & WS_CAPTION) == WS_CAPTION) *style_mask |= WS_CAPTION;
+    if ((style & WS_THICKFRAME) == WS_THICKFRAME) *style_mask |= WS_THICKFRAME;
+    if ((style & WS_DLGFRAME) == WS_DLGFRAME) *style_mask |= WS_DLGFRAME;
+    if ((ex_style & WS_EX_DLGMODALFRAME) == WS_EX_DLGMODALFRAME) *ex_style_mask |= WS_EX_DLGMODALFRAME;
+
+    return TRUE;
+}
+
+/***********************************************************************
  *           wayland_win_data_create
  *
  * Create a data window structure for an existing window.
@@ -71,6 +121,12 @@ static struct wayland_win_data *wayland_win_data_create(HWND hwnd, const struct 
 
     data->hwnd = hwnd;
     data->rects = *rects;
+    data->csd_style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
+    data->csd_ex_style = NtUserGetWindowLongW(hwnd, GWL_EXSTYLE);
+    {
+        MENUBARINFO mbi = {.cbSize = sizeof(mbi)};
+        data->csd_has_menu = NtUserGetMenuBarInfo(hwnd, OBJID_MENU, 0, &mbi);
+    }
 
     pthread_mutex_lock(&win_data_mutex);
 
@@ -454,6 +510,10 @@ void WAYLAND_WindowPosChanged(HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     data->is_fullscreen = fullscreen;
     data->resizeable = swp_flags & WINE_SWP_RESIZABLE;
     data->managed = managed;
+    {
+        MENUBARINFO mbi = {.cbSize = sizeof(mbi)};
+        data->csd_has_menu = NtUserGetMenuBarInfo(hwnd, OBJID_MENU, 0, &mbi);
+    }
 
     if (!surface)
     {
@@ -501,7 +561,22 @@ static void wayland_configure_window(HWND hwnd)
 
     if (!surface->requested.serial)
     {
-        TRACE("requested configure event already handled, returning\n");
+        /* A decoration mode change may arrive without a pending configure
+         * event, in which case just trigger a frame change so that win32u
+         * recomputes the visible rect and window surface. */
+        if (surface->decoration_frame_pending)
+        {
+            surface->decoration_frame_pending = FALSE;
+            TRACE("hwnd=%p decoration frame change\n", hwnd);
+            NtUserSetRawWindowPos(hwnd, data->rects.window,
+                                  SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE |
+                                  SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                                  FALSE);
+        }
+        else
+        {
+            TRACE("requested configure event already handled, returning\n");
+        }
         wayland_win_data_release(data);
         return;
     }
@@ -539,6 +614,13 @@ static void wayland_configure_window(HWND hwnd)
         (WAYLAND_SURFACE_CONFIG_STATE_MAXIMIZED |
          WAYLAND_SURFACE_CONFIG_STATE_FULLSCREEN))
     {
+        flags |= SWP_FRAMECHANGED;
+    }
+
+    /* A decoration mode change also entails a frame change. */
+    if (surface->decoration_frame_pending)
+    {
+        surface->decoration_frame_pending = FALSE;
         flags |= SWP_FRAMECHANGED;
     }
 
@@ -711,6 +793,9 @@ void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style)
     if (hwnd == NtUserGetDesktopWindow()) return;
     if (!(data = wayland_win_data_get(hwnd))) return;
 
+    if (offset == GWL_STYLE) data->csd_style = style->styleNew;
+    else if (offset == GWL_EXSTYLE) data->csd_ex_style = style->styleNew;
+
     /* Changing WS_EX_LAYERED resets attributes */
     if (offset == GWL_EXSTYLE && (changed & WS_EX_LAYERED))
     {
@@ -734,6 +819,10 @@ void WAYLAND_SetWindowText(HWND hwnd, LPCWSTR text)
 
     if ((data = wayland_win_data_get(hwnd)))
     {
+        if (text)
+            lstrcpynW(data->csd_title, text, ARRAY_SIZE(data->csd_title));
+        else
+            data->csd_title[0] = 0;
         if ((surface = data->wayland_surface) && wayland_surface_is_toplevel(surface))
             wayland_surface_set_title(surface, text);
         wayland_win_data_release(data);
@@ -761,6 +850,16 @@ LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT 
     else
         button_serial = 0;
     pthread_mutex_unlock(&process_wayland.pointer.mutex);
+
+    /* Touch based moves are initiated from a touch down serial, not a
+     * pointer button serial. */
+    if (!button_serial)
+    {
+        pthread_mutex_lock(&process_wayland.touch.mutex);
+        if (process_wayland.touch.serial_hwnd == hwnd)
+            button_serial = process_wayland.touch.serial;
+        pthread_mutex_unlock(&process_wayland.touch.mutex);
+    }
 
     if (command == SC_MOVE || command == SC_SIZE)
     {

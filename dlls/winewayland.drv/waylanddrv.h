@@ -34,6 +34,7 @@
 #include "relative-pointer-unstable-v1-client-protocol.h"
 #include "text-input-unstable-v3-client-protocol.h"
 #include "viewporter-client-protocol.h"
+#include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include "wlr-data-control-unstable-v1-client-protocol.h"
@@ -123,6 +124,26 @@ struct wayland_pointer
     pthread_mutex_t mutex;
 };
 
+#define WAYLAND_TOUCH_MAX_SLOTS 16
+
+struct wayland_touch_slot
+{
+    int32_t id;
+    HWND hwnd;
+    wl_fixed_t x, y;
+    BOOL used;
+};
+
+struct wayland_touch
+{
+    struct wl_touch *wl_touch;
+    struct wayland_touch_slot slots[WAYLAND_TOUCH_MAX_SLOTS];
+    uint32_t serial;
+    int32_t serial_id;
+    HWND serial_hwnd;
+    pthread_mutex_t mutex;
+};
+
 struct wayland_text_input
 {
     struct zwp_text_input_v3 *zwp_text_input_v3;
@@ -175,6 +196,7 @@ struct wayland
     struct wl_shm *wl_shm;
     struct wp_viewporter *wp_viewporter;
     struct wl_subcompositor *wl_subcompositor;
+    struct zxdg_decoration_manager_v1 *zxdg_decoration_manager_v1;
     struct wp_fractional_scale_manager_v1 *wp_fractional_scale_manager_v1;
     struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
@@ -188,6 +210,7 @@ struct wayland
     struct wayland_seat seat;
     struct wayland_keyboard keyboard;
     struct wayland_pointer pointer;
+    struct wayland_touch touch;
     struct wayland_text_input text_input;
     struct wayland_data_device data_device;
 #ifdef WL_FIXES_ACK_GLOBAL_REMOVE
@@ -197,6 +220,12 @@ struct wayland
     /* Protects the output_list and the wayland_output.current states. */
     pthread_mutex_t output_mutex;
     LONG input_serial;
+    BOOL dark_theme;
+    INT sm_caption_height;
+    INT sm_cx_size;
+    INT sm_menu_height;
+    BOOL managed_mode;
+    BOOL decorated_mode;
 };
 
 struct wayland_output_mode
@@ -291,6 +320,8 @@ struct wayland_surface
             struct xdg_surface *xdg_surface;
             struct xdg_toplevel *xdg_toplevel;
             struct xdg_toplevel_icon_v1 *xdg_toplevel_icon;
+            struct zxdg_toplevel_decoration_v1 *xdg_toplevel_decoration;
+            uint32_t decoration_mode;
         };
         struct
         {
@@ -302,6 +333,7 @@ struct wayland_surface
 
     struct wayland_surface_config pending, requested, processing, current;
     BOOL resizing;
+    BOOL decoration_frame_pending;
     struct wayland_window_config window;
     int content_width, content_height;
     HCURSOR hcursor;
@@ -386,10 +418,27 @@ struct wayland_win_data
     BOOL resizeable;
     BOOL managed;
     BOOL layered_attribs_set;
+    /* Cached data used for painting client-side decorations. These are
+     * updated from safe driver callbacks so that the paint routine doesn't
+     * need to call back into win32u (which would deadlock the surface flush). */
+    WCHAR csd_title[256];
+    DWORD csd_style;
+    DWORD csd_ex_style;
+    BOOL csd_active;
+    BOOL csd_has_menu;
 };
 
 struct wayland_win_data *wayland_win_data_get(HWND hwnd);
 void wayland_win_data_release(struct wayland_win_data *data);
+
+/**********************************************************************
+ *          Wayland client-side decorations
+ */
+
+BOOL wayland_csd_should_draw(struct wayland_win_data *data);
+BOOL wayland_csd_should_draw_win(HWND hwnd);
+void wayland_csd_paint(struct wayland_shm_buffer *buffer, struct wayland_win_data *data, int client_top);
+void wayland_csd_set_active(HWND hwnd, BOOL active);
 
 struct wayland_client_surface *get_client_surface(HWND hwnd);
 void set_client_surface(HWND hwnd, struct wayland_client_surface *client);
@@ -414,6 +463,13 @@ void activate_keyboard_hkl(HWND hwnd, BOOL ime);
 void wayland_pointer_init(struct wl_pointer *wl_pointer);
 void wayland_pointer_deinit(void);
 void wayland_pointer_clear_constraint(void);
+
+/**********************************************************************
+ *          Wayland touch
+ */
+
+void wayland_touch_init(struct wl_touch *wl_touch);
+void wayland_touch_deinit(void);
 
 /**********************************************************************
  *          Wayland text input
@@ -454,6 +510,7 @@ RGNDATA *get_region_data(HRGN region);
 
 LRESULT WAYLAND_ClipboardWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 BOOL WAYLAND_ClipCursor(const RECT *clip, BOOL reset);
+UINT WAYLAND_GetTouchCapabilities(void);
 LRESULT WAYLAND_DesktopWindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 void WAYLAND_DestroyWindow(HWND hwnd);
 BOOL WAYLAND_SetIMECompositionRect(HWND hwnd, RECT rect);
@@ -463,6 +520,7 @@ void WAYLAND_SetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha, DWO
 void WAYLAND_SetWindowIcons(HWND hwnd, HICON icon, const ICONINFO *ii, HICON icon_small, const ICONINFO *ii_small);
 void WAYLAND_SetWindowStyle(HWND hwnd, INT offset, STYLESTRUCT *style);
 void WAYLAND_SetWindowText(HWND hwnd, LPCWSTR text);
+BOOL WAYLAND_GetWindowStyleMasks(HWND hwnd, UINT style, UINT ex_style, UINT *style_mask, UINT *ex_style_mask);
 LRESULT WAYLAND_SysCommand(HWND hwnd, WPARAM wparam, LPARAM lparam, const POINT *pos);
 void WAYLAND_UpdateLayeredWindow(HWND hwnd, BYTE alpha, UINT flags);
 UINT WAYLAND_UpdateDisplayDevices(const struct gdi_device_manager *device_manager, void *param);

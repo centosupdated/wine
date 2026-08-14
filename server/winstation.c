@@ -284,6 +284,7 @@ static bool desktop_init( struct object *obj, const void *init_data )
     desktop->cursor_win = 0;
     desktop->alt_pressed = 0;
     memset( &desktop->key_repeat, 0, sizeof(desktop->key_repeat) );
+    memset( &desktop->gesture, 0, sizeof(desktop->gesture) );
     list_init( &desktop->threads );
     list_init( &desktop->hotkeys );
     list_init( &desktop->pointers );

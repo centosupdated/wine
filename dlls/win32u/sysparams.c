@@ -7006,6 +7006,10 @@ int get_system_metrics( int index )
         return 0;
     case SM_MOUSEPRESENT:
         return 1;
+    case SM_DIGITIZER:
+        return user_driver->pGetTouchCapabilities ? LOWORD( user_driver->pGetTouchCapabilities() ) : 0;
+    case SM_MAXIMUMTOUCHES:
+        return user_driver->pGetTouchCapabilities ? HIWORD( user_driver->pGetTouchCapabilities() ) : 0;
     case SM_DEBUG:
         return 0;
     case SM_SWAPBUTTON:
