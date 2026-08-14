@@ -1781,3 +1781,4 @@
 @ cdecl wine_get_version()
 @ cdecl wine_get_build_id()
 @ cdecl wine_get_host_version(ptr ptr)
+@ cdecl -norelay __wine_get_user_shared_data()

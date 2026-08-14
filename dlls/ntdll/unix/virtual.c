@@ -202,7 +202,16 @@ static void *host_addr_space_limit;  /* top of the host virtual address space */
 static struct file_view *arm64ec_view;
 
 ULONG_PTR user_space_wow_limit = 0;
+#if defined(__APPLE__) && defined(__aarch64__)
+/* On Apple Silicon the kernel reserves the low 4GB (including the Windows
+ * KUSER_SHARED_DATA address 0x7ffe0000) for the executable page zero, and
+ * refuses to map anything there. So we allocate the shared user data at an
+ * address chosen by the OS (following its ASLR policy) and patch the few
+ * places that reference the fixed Windows address. */
+struct _KUSER_SHARED_DATA *user_shared_data __attribute__((visibility("default")));
+#else
 struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
+#endif
 
 /* TEB allocation blocks */
 static void *teb_block;
@@ -749,9 +758,18 @@ static void mmap_init( const struct preload_info *preload_info )
 
     if (preload_info) return;
     /* if we don't have a preloader, try to reserve the space now */
+#if defined(__APPLE__) && defined(__aarch64__)
+    /* On Apple Silicon the low 4GB is the kernel page zero, the dyld shared
+     * cache occupies ~6-12GB, and 64-448GB is kernel-reserved. Reserve the
+     * usable ranges that Windows images and top-down allocations need;
+     * unmappable ranges are skipped by reserve_area(). */
+    reserve_area( (void *)0x000000010000, (void *)0x1000000000 );
+    reserve_area( (void *)0x7000000000, (void *)0x600000000000 );
+#else
     reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
     reserve_area( (void *)0x00007f000000, (void *)0x00007fff0000 );
     reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
+#endif
 
 #endif
 }
@@ -1979,11 +1997,15 @@ static int mprotect_range( void *base, size_t size, BYTE set, BYTE clear )
 
 
 /***********************************************************************
- *           set_vprot
+ *           set_vprot_track
  *
- * Change the protection of a range of pages.
+ * Update the per-page protection tracking for a range of pages, without
+ * changing the actual mappings. Used to set all the image section
+ * protections before applying them, so that on hosts with a page size
+ * larger than the Windows one the union of the protections within a host
+ * page is computed from the final values (avoiding W^X conflicts).
  */
-static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vprot )
+static void set_vprot_track( struct file_view *view, void *base, size_t size, BYTE vprot )
 {
     if (!use_kernel_writewatch && view->protect & VPROT_WRITEWATCH)
     {
@@ -1996,6 +2018,17 @@ static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vpr
         else if (use_kernel_writewatch && view->protect & VPROT_WRITEWATCH) vprot &= ~VPROT_WRITEWATCH;
         set_page_vprot( base, size, vprot );
     }
+}
+
+
+/***********************************************************************
+ *           set_vprot
+ *
+ * Change the protection of a range of pages.
+ */
+static BOOL set_vprot( struct file_view *view, void *base, size_t size, BYTE vprot )
+{
+    set_vprot_track( view, base, size, vprot );
     return !mprotect_range( base, size, 0, 0 );
 }
 
@@ -3241,6 +3274,56 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
 
     /* set the image protections */
 
+#ifdef __APPLE__
+    /* First track all the section protections, then apply them. This ensures
+     * that on hosts with a page size larger than the Windows one, the union
+     * of protections within a host page is computed from the final values, so
+     * that an executable page is never also writable (which macOS ARM64
+     * rejects with W^X enforcement).
+     *
+     * Note that this only works when executable and writable sections do not
+     * share a host page, i.e. when the image section alignment is at least the
+     * host page size (16KB on Apple Silicon). ARM64 Windows binaries are
+     * required to use such an alignment. A PE whose executable and writable
+     * sections land in the same host page would need an executable and
+     * writable page at once, which macOS W^X enforcement refuses; the only
+     * alternative would be to toggle the page between RX and RW on every
+     * access, which is unusable since a writable data section is written
+     * continuously while the code on the same page runs. Such binaries simply
+     * cannot be loaded on this platform. */
+    set_vprot_track( view, ptr, ROUND_SIZE( 0, header_size, align_mask ), VPROT_COMMITTED | VPROT_READ );
+    for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
+    {
+        SIZE_T size;
+        BYTE vprot = VPROT_COMMITTED;
+
+        if (sec[i].Misc.VirtualSize)
+            size = ROUND_SIZE( sec[i].VirtualAddress, sec[i].Misc.VirtualSize, align_mask );
+        else
+            size = ROUND_SIZE( sec[i].VirtualAddress, sec[i].SizeOfRawData, align_mask );
+
+        if (sec[i].Characteristics & IMAGE_SCN_MEM_READ)    vprot |= VPROT_READ;
+        if (sec[i].Characteristics & IMAGE_SCN_MEM_WRITE)   vprot |= VPROT_WRITECOPY;
+        if (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) vprot |= VPROT_EXEC;
+
+        set_vprot_track( view, ptr + sec[i].VirtualAddress, size, vprot );
+    }
+
+    mprotect_range( ptr, ROUND_SIZE( 0, header_size, align_mask ), 0, 0 );
+    for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
+    {
+        SIZE_T size;
+
+        if (sec[i].Misc.VirtualSize)
+            size = ROUND_SIZE( sec[i].VirtualAddress, sec[i].Misc.VirtualSize, align_mask );
+        else
+            size = ROUND_SIZE( sec[i].VirtualAddress, sec[i].SizeOfRawData, align_mask );
+
+        if (mprotect_range( ptr + sec[i].VirtualAddress, size, 0, 0 ) && (sec[i].Characteristics & IMAGE_SCN_MEM_EXECUTE))
+            ERR( "failed to set %08x protection on %s section %.8s, noexec filesystem?\n",
+                 sec[i].Characteristics, debugstr_us(nt_name), sec[i].Name );
+    }
+#else
     set_vprot( view, ptr, ROUND_SIZE( 0, header_size, align_mask ), VPROT_COMMITTED | VPROT_READ );
 
     for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
@@ -3261,6 +3344,7 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
             ERR( "failed to set %08x protection on %s section %.8s, noexec filesystem?\n",
                  sec[i].Characteristics, debugstr_us(nt_name), sec[i].Name );
     }
+#endif
 
 #ifdef VALGRIND_LOAD_PDB_DEBUGINFO
     VALGRIND_LOAD_PDB_DEBUGINFO(fd, ptr, total_size, ptr - (char *)wine_server_get_ptr( image_info->base ));
@@ -4063,6 +4147,10 @@ TEB *virtual_alloc_first_teb(void)
     struct thread_data *thread_data;
 
     /* reserve space for shared user data */
+#if defined(__APPLE__) && defined(__aarch64__)
+    /* let the OS pick an address for the shared user data */
+    user_shared_data = NULL;
+#endif
     status = NtAllocateVirtualMemory( NtCurrentProcess(), (void **)&user_shared_data, 0, &data_size,
                                       MEM_RESERVE | MEM_COMMIT, PAGE_READONLY );
     if (status)
@@ -4071,8 +4159,15 @@ TEB *virtual_alloc_first_teb(void)
         exit(1);
     }
 
+#if defined(__APPLE__) && defined(__aarch64__)
+    /* On Apple Silicon the low 2GB is kernel-reserved (page zero), so do not
+     * restrict the TEB block to the 2GB range as done on other 64-bit hosts. */
+    NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, 0, &total,
+                             MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
+#else
     NtAllocateVirtualMemory( NtCurrentProcess(), &teb_block, is_win64 ? limit_2g - 1 : 0, &total,
                              MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE );
+#endif
     teb_block_pos = 30;
     ptr = (char *)teb_block + 30 * block_size;
     data_size = 2 * block_size;
@@ -4454,6 +4549,21 @@ done:
 
 static const WCHAR shared_data_nameW[] = {'\\','K','e','r','n','e','l','O','b','j','e','c','t','s',
                                           '\\','_','_','w','i','n','e','_','u','s','e','r','_','s','h','a','r','e','d','_','d','a','t','a',0};
+
+/***********************************************************************
+ *           unixcall_get_shared_user_data
+ *
+ * Return the address of the shared user data page. On Apple Silicon the
+ * fixed Windows address 0x7ffe0000 cannot be mapped (kernel page zero), so
+ * the data lives at an OS-chosen address and the PE side needs to fetch it.
+ */
+NTSTATUS unixcall_get_shared_user_data( void *args )
+{
+    struct get_shared_user_data_params *params = args;
+
+    params->data = &user_shared_data;
+    return STATUS_SUCCESS;
+}
 
 /***********************************************************************
  *           virtual_map_user_shared_data

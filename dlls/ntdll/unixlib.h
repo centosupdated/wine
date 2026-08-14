@@ -66,6 +66,21 @@ struct unwind_builtin_dll_params
     CONTEXT                    *context;
 };
 
+struct get_shared_user_data_params
+{
+    struct _KUSER_SHARED_DATA **data;
+};
+
+struct register_teb_ptr_params
+{
+    struct _TEB **teb_ptr;
+};
+
+struct get_current_teb_params
+{
+    struct _TEB **teb;
+};
+
 enum ntdll_unix_funcs
 {
     unix_load_so_dll,
@@ -76,6 +91,9 @@ enum ntdll_unix_funcs
     unix_wine_server_handle_to_fd,
     unix_wine_spawnvp,
     unix_system_time_precise,
+    unix_get_shared_user_data,
+    unix_register_teb_ptr,
+    unix_get_current_teb,
 };
 
 extern unixlib_handle_t __wine_unixlib_handle;

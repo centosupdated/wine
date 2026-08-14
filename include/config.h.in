@@ -54,6 +54,10 @@
 /* Define to 1 if you have the 'dlinfo' function. */
 #undef HAVE_DLINFO
 
+/* Define to 1 on Apple Silicon, where the fixed KUSER_SHARED_DATA address
+   cannot be mapped and must be fetched through ntdll. */
+#undef HAVE_DYNAMIC_USER_SHARED_DATA
+
 /* Define to 1 if you have the <elf.h> header file. */
 #undef HAVE_ELF_H
 

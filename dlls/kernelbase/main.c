@@ -33,6 +33,13 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(kernelbase);
 
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+extern void * __cdecl __wine_get_user_shared_data(void);
+struct _KUSER_SHARED_DATA *user_shared_data;
+#else
+const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
+#endif
+
 
 BOOL is_wow64 = FALSE;
 
@@ -46,6 +53,9 @@ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
         DisableThreadLibraryCalls( hinst );
         IsWow64Process( GetCurrentProcess(), &is_wow64 );
         init_global_data();
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+        user_shared_data = __wine_get_user_shared_data();
+#endif
         init_locale( hinst );
         init_startup_info( NtCurrentTeb()->Peb->ProcessParameters );
         init_console();

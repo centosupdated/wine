@@ -93,6 +93,15 @@ AC_ARG_WITH(wine64,    AS_HELP_STRING([--with-wine64=DIR],[use the 64-bit Wine i
 AC_CANONICAL_HOST
 AC_SUBST(srcdir)
 
+dnl On Apple Silicon the fixed Windows KUSER_SHARED_DATA address 0x7ffe0000 is
+dnl inside the kernel page zero and cannot be mapped, so PE code must fetch the
+dnl address through ntdll's __wine_get_user_shared_data() export instead of a
+dnl hardcoded pointer.
+case $host_cpu-$host_os in
+  aarch64-*darwin*) wine_use_dynamic_user_shared_data=yes ;;
+  *)                wine_use_dynamic_user_shared_data=no ;;
+esac
+
 AS_IF([test "x$enable_sast" = xyes],[CC=${CC:-clang}
 with_mingw=${with_mingw:-clang}
 AC_CHECK_PROGS(SARIF_CONVERTER,sarif-converter,false)])
@@ -683,6 +692,15 @@ Please install mingw-w64, clang/llvm-dlltool/lld, or llvm-mingw.])
     WINE_TRY_PE_CFLAGS([-Wabsolute-value])
     WINE_TRY_PE_CFLAGS([-fasync-exceptions -DMIN_CLANG_VERSION=19], AS_VAR_APPEND([${wine_arch}_EXTRACFLAGS],[" -fasync-exceptions"]))
 
+    dnl On Apple Silicon the fixed Windows KUSER_SHARED_DATA address 0x7ffe0000
+    dnl cannot be mapped, so the PE code must use ntdll's
+    dnl __wine_get_user_shared_data() export instead of a hardcoded pointer.
+    if test "$wine_arch" = "aarch64" -a "$wine_use_dynamic_user_shared_data" = "yes"
+    then
+        AS_VAR_APPEND([${wine_arch}_EXTRACFLAGS],[" -DHAVE_DYNAMIC_USER_SHARED_DATA"])
+        AS_VAR_APPEND([${wine_arch}_EXTRACFLAGS],[" -DWINE_APPLE_SILICON"])
+    fi
+
 done
 
 CC=$saved_CC
@@ -991,6 +1009,22 @@ case $host_os in
            [wine_use_preloader=no
             WINELOADER_LDFLAGS="$WINELOADER_LDFLAGS -Wl,-no_pie,-image_base,0x200000000,-no_huge,-no_fixup_chains,-segalign,0x1000,-segaddr,WINE_RESERVE,0x1000,-segaddr,WINE_TOP_DOWN,0x7ff000000000"],
            [wine_use_preloader=yes])
+        ;;
+      aarch64)
+        dnl On Apple Silicon the kernel enforces a default 4GB __PAGEZERO for
+        dnl executables and rejects smaller ones with SIGKILL at exec time, so
+        dnl we cannot build the loader as a dlopen-style image with a reduced
+        dnl page zero. Build it as a standard PIE executable instead, and let
+        dnl ntdll reserve the address space needed by Windows apps at runtime
+        dnl (following the OS ASLR policy, no fixed load addresses).
+        dnl Also build with a macOS 12 deployment target so the kernel keeps
+        dnl x18 (the Windows ARM64 TEB register) preserved across syscalls and
+        dnl signals; macOS 13+ would otherwise clobber it for binaries built
+        dnl against a newer SDK.
+        WINELOADER_LDFLAGS="-mmacosx-version-min=12 -Wl,-segalign,0x1000,-sectcreate,__TEXT,__info_plist,loader/wine_info.plist"
+        CFLAGS="$CFLAGS -mmacosx-version-min=12"
+        LDFLAGS="$LDFLAGS -mmacosx-version-min=12"
+        wine_use_preloader=no
         ;;
       *)    wine_use_preloader=no ;;
     esac
@@ -1997,6 +2031,7 @@ then
           [case $HOST_ARCH in
             i386) wine_cv_64bit_compare_swap="-march=i586" ;;
             arm)  wine_cv_64bit_compare_swap="-march=armv7-a" ;;
+            aarch64) wine_cv_64bit_compare_swap="none needed" ;;
             *)    wine_cv_64bit_compare_swap="unknown" ;;
            esac
            if test "x$wine_cv_64bit_compare_swap" != xunknown
@@ -2390,6 +2425,18 @@ case $host_cpu in
   *powerpc64*)      WINE_CHECK_DEFINE([__powerpc64__]) ;;
   *aarch64*)        WINE_CHECK_DEFINE([__aarch64__]) ;;
   *arm*)            WINE_CHECK_DEFINE([__arm__]) ;;
+esac
+
+dnl On Apple Silicon the fixed Windows KUSER_SHARED_DATA address 0x7ffe0000 is
+dnl inside the kernel page zero and cannot be mapped, so PE code must fetch the
+dnl address through ntdll's __wine_get_user_shared_data() export instead of a
+dnl hardcoded pointer.
+case $host_cpu-$host_os in
+  aarch64-*darwin*)
+    AC_DEFINE(HAVE_DYNAMIC_USER_SHARED_DATA, 1,
+              [Define to 1 on Apple Silicon, where the fixed KUSER_SHARED_DATA
+               address cannot be mapped and must be fetched through ntdll.])
+    ;;
 esac
 
 dnl *** Check for modules to disable by default

@@ -400,6 +400,10 @@ extern NTSTATUS unixcall_wine_server_call( void *args );
 extern NTSTATUS unixcall_wine_server_fd_to_handle( void *args );
 extern NTSTATUS unixcall_wine_server_handle_to_fd( void *args );
 extern NTSTATUS unixcall_wine_spawnvp( void *args );
+extern NTSTATUS unixcall_get_shared_user_data( void *args );
+extern NTSTATUS unixcall_register_teb_ptr( void *args );
+extern NTSTATUS unixcall_get_current_teb( void *args );
+extern struct _TEB * volatile *current_teb_ptr;
 #ifdef _WIN64
 extern NTSTATUS wow64_wine_dbg_write( void *args );
 extern NTSTATUS wow64_wine_server_call( void *args );

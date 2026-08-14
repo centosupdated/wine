@@ -24,6 +24,8 @@
 #pragma makedep unix
 #endif
 
+#include "config.h"
+
 #include <assert.h>
 #include "ntstatus.h"
 #include "winternl.h"
@@ -45,7 +47,14 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 #define QS_HARDWARE     0x40000000
 #define QS_INTERNAL     (QS_DRIVER | QS_HARDWARE)
 
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+/* On Apple Silicon the fixed Windows address 0x7ffe0000 is inside the kernel
+ * page zero and cannot be mapped; use the address chosen by the unix side
+ * (exported by ntdll.so). */
+extern const struct _KUSER_SHARED_DATA *user_shared_data;
+#else
 static const struct _KUSER_SHARED_DATA *user_shared_data = (struct _KUSER_SHARED_DATA *)0x7ffe0000;
+#endif
 
 static const struct ratio no_dpi;
 

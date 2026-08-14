@@ -839,6 +839,10 @@ __ASM_GLOBAL_FUNC( RtlUserThreadStart,
  */
 void WINAPI LdrInitializeThunk( CONTEXT *context, ULONG_PTR unk2, ULONG_PTR unk3, ULONG_PTR unk4 )
 {
+#ifdef WINE_APPLE_SILICON
+    __asm__ volatile( "mov x18, %0" :: "r"(context->X18) );
+    __asm__ volatile( "msr tpidr_el0, %0" :: "r"(context->X18) );
+#endif
     loader_init( context, (void **)&context->X0 );
     TRACE_(relay)( "\1Starting thread proc %p (arg=%p)\n", (void *)context->X0, (void *)context->X1 );
     NtContinue( context, TRUE );

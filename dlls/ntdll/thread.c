@@ -35,7 +35,25 @@ WINE_DECLARE_DEBUG_CHANNEL(relay);
 WINE_DECLARE_DEBUG_CHANNEL(pid);
 WINE_DECLARE_DEBUG_CHANNEL(timestamp);
 
+#ifdef HAVE_DYNAMIC_USER_SHARED_DATA
+/* On Apple Silicon the fixed Windows address 0x7ffe0000 is inside the kernel
+ * page zero and cannot be mapped; loader_init() will set this to the address
+ * chosen by the unix side. */
+struct _KUSER_SHARED_DATA *user_shared_data;
+#else
 struct _KUSER_SHARED_DATA *user_shared_data = (void *)0x7ffe0000;
+#endif
+
+/***********************************************************************
+ *           __wine_get_user_shared_data  (NTDLL.@)
+ *
+ * Return the address of the shared user data page, for use by other system
+ * dlls that need to read it (the fixed Windows address is not always usable).
+ */
+void * __cdecl __wine_get_user_shared_data(void)
+{
+    return user_shared_data;
+}
 
 struct debug_info
 {
