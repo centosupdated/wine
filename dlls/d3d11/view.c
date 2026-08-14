@@ -2167,19 +2167,22 @@ static HRESULT wined3d_shader_resource_view_desc_from_d3d11(struct wined3d_view_
             break;
 
         case D3D11_SRV_DIMENSION_TEXTURECUBE:
-            wined3d_desc->flags = WINED3D_VIEW_TEXTURE_CUBE;
-            wined3d_desc->u.texture.level_idx = desc->TextureCube.MostDetailedMip;
-            wined3d_desc->u.texture.level_count = desc->TextureCube.MipLevels;
-            wined3d_desc->u.texture.layer_idx = 0;
-            wined3d_desc->u.texture.layer_count = 6;
-            break;
-
         case D3D11_SRV_DIMENSION_TEXTURECUBEARRAY:
             wined3d_desc->flags = WINED3D_VIEW_TEXTURE_CUBE | WINED3D_VIEW_TEXTURE_ARRAY;
             wined3d_desc->u.texture.level_idx = desc->TextureCubeArray.MostDetailedMip;
             wined3d_desc->u.texture.level_count = desc->TextureCubeArray.MipLevels;
-            wined3d_desc->u.texture.layer_idx = desc->TextureCubeArray.First2DArrayFace;
-            wined3d_desc->u.texture.layer_count = 6 * desc->TextureCubeArray.NumCubes;
+            if (desc->ViewDimension == D3D11_SRV_DIMENSION_TEXTURECUBE)
+            {
+                wined3d_desc->u.texture.layer_idx = 0;
+                wined3d_desc->u.texture.layer_count = 1;
+            }
+            else
+            {
+                wined3d_desc->u.texture.layer_idx = desc->TextureCubeArray.First2DArrayFace;
+                wined3d_desc->u.texture.layer_count = desc->TextureCubeArray.NumCubes;
+            }
+            if (wined3d_desc->u.texture.layer_count != UINT_MAX)
+                wined3d_desc->u.texture.layer_count *= 6;
             break;
 
         case D3D11_SRV_DIMENSION_BUFFEREX:
