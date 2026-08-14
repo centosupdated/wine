@@ -645,6 +645,30 @@ static void set_current_xkb_group(xkb_layout_index_t xkb_group)
     activate_keyboard_hkl(keyboard->focused_hwnd, ime);
 }
 
+UINT WAYLAND_GetKeyboardLayoutList(INT size, HKL *list)
+{
+    LCID locale = LOWORD(NtUserGetKeyboardLayout(0));
+    struct layout *layout;
+    int count = 0;
+
+    TRACE("size=%d, list=%p\n", size, list);
+
+    pthread_mutex_lock(&xkb_layouts_mutex);
+    LIST_FOR_EACH_ENTRY(layout, &xkb_layouts, struct layout, entry)
+    {
+        if (list)
+        {
+            if (count >= size) break;
+            list[count] = get_layout_hkl(layout, locale);
+            TRACE("\t%d: %p\n", count, list[count]);
+        }
+        count++;
+    }
+    pthread_mutex_unlock(&xkb_layouts_mutex);
+    TRACE("returning %d\n", count);
+    return count;
+}
+
 static BOOL find_xkb_layout_variant(const char *name, const char **layout, const char **variant)
 {
     struct rxkb_layout *iter;

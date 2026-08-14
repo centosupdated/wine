@@ -2238,6 +2238,16 @@ void init_keyboard_layouts( Display *display )
     pthread_mutex_unlock( &kbd_mutex );
 }
 
+static HKL get_hkl( LANGID langid, WORD layout_id )
+{
+   LCID locale = LOWORD(NtUserGetKeyboardLayout(0));
+
+    TRACE( "langid %04x, layout_id %04x\n", langid, layout_id );
+
+    if (layout_id) return ULongToHandle( MAKELONG(locale, 0xf000 | layout_id) );
+
+    return ULongToHandle( MAKELONG(locale, langid) );
+}
 
 /***********************************************************************
  *		ActivateKeyboardLayout (X11DRV.@)
@@ -2256,6 +2266,28 @@ BOOL X11DRV_ActivateKeyboardLayout(HKL hkl, UINT flags)
     return TRUE;
 }
 
+UINT X11DRV_GetKeyboardLayoutList(INT size, HKL *list)
+{
+    struct layout *layout;
+    unsigned int count = 0;
+
+    TRACE( "size %d, list %p\n", size, list );
+
+    pthread_mutex_lock( &kbd_mutex );
+    LIST_FOR_EACH_ENTRY(layout, &xkb_layouts, struct layout, entry)
+    {
+        if (list)
+        {
+            if (count >= size) break;
+            list[count] = get_hkl( layout->lang, layout->layout_id );
+            TRACE( "\t%d: %p\n", count, list[count] );
+        }
+        count++;
+    }
+    pthread_mutex_unlock( &kbd_mutex );
+    TRACE( "returning %d\n", count );
+    return count;
+}
 
 /***********************************************************************
  *           X11DRV_MappingNotify
