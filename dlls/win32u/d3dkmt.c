@@ -617,6 +617,60 @@ NTSTATUS WINAPI NtGdiDdDDIQueryAdapterInfo( D3DKMT_QUERYADAPTERINFO *desc )
         *value = KMT_DRIVERVERSION_WDDM_3_1;
         return STATUS_SUCCESS;
     }
+    case KMTQAITYPE_ADAPTERTYPE:
+    {
+        D3DKMT_ADAPTERTYPE *value = desc->pPrivateDriverData;
+        struct vulkan_physical_device *physical_device;
+        VkPhysicalDeviceProperties device_properties;
+        VkQueueFamilyProperties *queue_properties;
+        struct d3dkmt_adapter *adapter;
+
+        if (desc->PrivateDriverDataSize < sizeof(*value))
+            return STATUS_INVALID_PARAMETER;
+
+        if (!(adapter = get_d3dkmt_object( desc->hAdapter, D3DKMT_ADAPTER ))) return STATUS_INVALID_PARAMETER;
+
+        value->Value = 0;
+
+        if ((physical_device = adapter->physical_device))
+        {
+            struct vulkan_instance *instance = physical_device->instance;
+            VkPhysicalDeviceType device_type;
+            UINT queue_family_count;
+            BOOL render_supported = 0;
+            BOOL compute_supported = 0;
+            UINT i;
+
+            instance->p_vkGetPhysicalDeviceProperties( physical_device->host.physical_device, &device_properties );
+            device_type = device_properties.deviceType;
+
+            instance->p_vkGetPhysicalDeviceQueueFamilyProperties( physical_device->host.physical_device, &queue_family_count, NULL );
+            queue_properties = malloc( queue_family_count * sizeof(*queue_properties) );
+            if (!queue_properties)
+                return STATUS_NO_MEMORY;
+
+            instance->p_vkGetPhysicalDeviceQueueFamilyProperties( physical_device->host.physical_device, &queue_family_count, queue_properties );
+            for (i = 0; i < queue_family_count; i++)
+            {
+                if (queue_properties[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+                    render_supported = 1;
+                if (queue_properties[i].queueFlags & VK_QUEUE_COMPUTE_BIT)
+                    compute_supported = 1;
+            }
+
+            value->RenderSupported = render_supported;
+            value->SoftwareDevice = (device_type == VK_PHYSICAL_DEVICE_TYPE_CPU);
+            value->HybridDiscrete = (device_type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU); /* FIXME */
+            value->HybridIntegrated = (device_type == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU); /* FIXME */
+            value->ComputeOnly = (!render_supported && compute_supported);
+
+            free( queue_properties );
+            return STATUS_SUCCESS;
+        }
+
+        ERR( "Failed to find Vulkan physical device\n" );
+        return STATUS_DEVICE_REMOVED;
+    }
     default:
     {
         FIXME( "type %d not handled.\n", desc->Type );
