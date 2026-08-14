@@ -64,88 +64,6 @@ static CRITICAL_SECTION_DEBUG wpp_mutex_debug =
 };
 static CRITICAL_SECTION wpp_mutex = { &wpp_mutex_debug, -1, 0, 0, 0, 0 };
 
-struct d3dcompiler_include_from_file
-{
-    ID3DInclude ID3DInclude_iface;
-    const char *initial_filename;
-};
-
-static inline struct d3dcompiler_include_from_file *impl_from_ID3DInclude(ID3DInclude *iface)
-{
-    return CONTAINING_RECORD(iface, struct d3dcompiler_include_from_file, ID3DInclude_iface);
-}
-
-static HRESULT WINAPI d3dcompiler_include_from_file_open(ID3DInclude *iface, D3D_INCLUDE_TYPE include_type,
-        const char *filename, const void *parent_data, const void **data, UINT *bytes)
-{
-    struct d3dcompiler_include_from_file *include = impl_from_ID3DInclude(iface);
-    char *fullpath, *buffer = NULL, current_dir[MAX_PATH + 1];
-    const char *initial_dir;
-    SIZE_T size;
-    HANDLE file;
-    ULONG read;
-    DWORD len;
-
-    if ((initial_dir = strrchr(include->initial_filename, '\\')))
-    {
-        len = initial_dir - include->initial_filename + 1;
-        initial_dir = include->initial_filename;
-    }
-    else
-    {
-        len = GetCurrentDirectoryA(MAX_PATH, current_dir);
-        current_dir[len] = '\\';
-        len++;
-        initial_dir = current_dir;
-    }
-    fullpath = malloc(len + strlen(filename) + 1);
-    if (!fullpath)
-        return E_OUTOFMEMORY;
-    memcpy(fullpath, initial_dir, len);
-    strcpy(fullpath + len, filename);
-
-    file = CreateFileA(fullpath, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
-    if (file == INVALID_HANDLE_VALUE)
-        goto error;
-
-    TRACE("Include file found at %s.\n", debugstr_a(fullpath));
-
-    size = GetFileSize(file, NULL);
-    if (size == INVALID_FILE_SIZE)
-        goto error;
-    buffer = malloc(size);
-    if (!buffer)
-        goto error;
-    if (!ReadFile(file, buffer, size, &read, NULL) || read != size)
-        goto error;
-
-    *bytes = size;
-    *data = buffer;
-
-    free(fullpath);
-    CloseHandle(file);
-    return S_OK;
-
-error:
-    free(fullpath);
-    free(buffer);
-    CloseHandle(file);
-    WARN("Returning E_FAIL.\n");
-    return E_FAIL;
-}
-
-static HRESULT WINAPI d3dcompiler_include_from_file_close(ID3DInclude *iface, const void *data)
-{
-    free((void *)data);
-    return S_OK;
-}
-
-const struct ID3DIncludeVtbl d3dcompiler_include_from_file_vtbl =
-{
-    d3dcompiler_include_from_file_open,
-    d3dcompiler_include_from_file_close
-};
-
 static const char *get_line(const char **ptr)
 {
     const char *p, *q;
@@ -171,15 +89,6 @@ static HRESULT preprocess_shader(const void *data, SIZE_T data_size, const char 
         const D3D_SHADER_MACRO *defines, ID3DInclude *include, ID3DBlob **shader_blob,
         ID3DBlob **messages_blob)
 {
-    struct d3dcompiler_include_from_file include_from_file;
-
-    if (include == D3D_COMPILE_STANDARD_FILE_INCLUDE)
-    {
-        include_from_file.ID3DInclude_iface.lpVtbl = &d3dcompiler_include_from_file_vtbl;
-        include_from_file.initial_filename = filename ? filename : "";
-        include = &include_from_file.ID3DInclude_iface;
-    }
-
     return vkd3d_D3DPreprocess(data, data_size, filename, defines, include, shader_blob, messages_blob);
 }
 
@@ -309,7 +218,6 @@ HRESULT WINAPI D3DCompile2(const void *data, SIZE_T data_size, const char *filen
         const void *secondary_data, SIZE_T secondary_data_size, ID3DBlob **shader_blob,
         ID3DBlob **messages_blob)
 {
-    struct d3dcompiler_include_from_file include_from_file;
     ID3DBlob *dummy_blob;
     HRESULT hr;
 
@@ -319,13 +227,6 @@ HRESULT WINAPI D3DCompile2(const void *data, SIZE_T data_size, const char *filen
             data, data_size, debugstr_a(filename), macros, include, debugstr_a(entry_point),
             debugstr_a(profile), flags, effect_flags, secondary_flags, secondary_data,
             secondary_data_size, shader_blob, messages_blob);
-
-    if (include == D3D_COMPILE_STANDARD_FILE_INCLUDE)
-    {
-        include_from_file.ID3DInclude_iface.lpVtbl = &d3dcompiler_include_from_file_vtbl;
-        include_from_file.initial_filename = filename ? filename : "";
-        include = &include_from_file.ID3DInclude_iface;
-    }
 
     if (shader_blob)
         *shader_blob = NULL;
