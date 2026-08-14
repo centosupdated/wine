@@ -18475,10 +18475,9 @@ msgid "Mem Usage"
 msgstr "Пам'ять"
 
 #: programs/tasklist/tasklist.rc:35
-#, fuzzy
-#| msgid "OK"
+msgctxt "unit: kibibytes"
 msgid "K"
-msgstr "OK"
+msgstr "К"
 
 #: programs/tasklist/tasklist.rc:36
 #, fuzzy

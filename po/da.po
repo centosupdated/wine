@@ -19496,8 +19496,7 @@ msgid "Mem Usage"
 msgstr "Hukommelse forbrug"
 
 #: programs/tasklist/tasklist.rc:35
-#, fuzzy
-#| msgid "OK"
+msgctxt "unit: kibibytes"
 msgid "K"
 msgstr "OK"
 
