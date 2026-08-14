@@ -386,7 +386,7 @@ static void fill_menu(struct menu_item* item)
     }
 }
 
-static void run_dialog(void)
+void run_dialog(void)
 {
     void (WINAPI *pRunFileDlg)(HWND owner, HICON icon, const char *dir,
                                const char *title, const char *desc, DWORD flags);
