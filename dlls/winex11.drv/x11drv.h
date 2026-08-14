@@ -416,6 +416,7 @@ struct x11drv_thread_data
     XEvent  *current_event;        /* event currently being processed */
     HWND     last_focus;           /* last window that had focus */
     HWND     keymapnotify_hwnd;    /* window that should receive modifier release events */
+    struct layout *layout;         /* layout struct for the active keyboard layout */
     XIM      xim;                  /* input method */
     HWND     last_xic_hwnd;        /* last xic window */
     XFontSet font_set;             /* international text drawing font set */
@@ -769,6 +770,7 @@ extern void reapply_cursor_clipping(void);
 extern void ungrab_clipping_window(void);
 extern void move_resize_window( HWND hwnd, int dir, POINT pos );
 extern void x11drv_init_keyboard( Display *display );
+extern void x11drv_keyboard_init_thread( struct x11drv_thread_data *data );
 extern BOOL X11DRV_ProcessEvents( DWORD mask );
 
 typedef int (*x11drv_error_callback)( Display *display, XErrorEvent *event, void *arg );

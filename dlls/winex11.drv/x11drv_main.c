@@ -752,14 +752,13 @@ struct x11drv_thread_data *x11drv_init_thread_data(void)
 
     fcntl( ConnectionNumber(data->display), F_SETFD, 1 ); /* set close on exec flag */
 
-    XkbUseExtension( data->display, NULL, NULL );
-    XkbSetDetectableAutoRepeat( data->display, True, NULL );
     if (TRACE_ON(synchronous)) XSynchronize( data->display, True );
 
     set_queue_display_fd( data->display );
     pthread_setspecific( x11drv_thread_data_key, data );
 
     XSelectInput( data->display, DefaultRootWindow( data->display ), PropertyChangeMask );
+    x11drv_keyboard_init_thread( data );
     if (use_xim) xim_thread_attach( data );
     x11drv_xinput2_init( data );
     net_supported_init( data );
