@@ -5476,7 +5476,7 @@ static void test_image_format(void)
 
         status = GdipCreateHBITMAPFromBitmap(bitmap, &hbitmap, 0);
         if (fmt[i] == PixelFormat16bppGrayScale || fmt[i] == PixelFormat32bppCMYK)
-            todo_wine expect(InvalidParameter, status);
+            expect(InvalidParameter, status);
         else
         {
             expect(Ok, status);
@@ -5510,7 +5510,7 @@ static void test_image_format(void)
 
         status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead, PixelFormat32bppPARGB, &data);
         if (fmt[i] == PixelFormat16bppGrayScale || fmt[i] == PixelFormat32bppCMYK)
-            todo_wine expect(InvalidParameter, status);
+            expect(InvalidParameter, status);
         else
         {
             expect(Ok, status);
@@ -5983,6 +5983,44 @@ static void test_PARGB_conversion(void)
     }
     status = GdipBitmapUnlockBits(bitmap, &data);
     expect(Ok, status);
+
+    GdipDisposeImage((GpImage *)bitmap);
+}
+
+static void test_CMYK_conversion(void)
+{
+    static const BYTE cmyk_bits[16] =
+    {
+        /* pixel 0: C=0,M=0,Y=0,K=0 -> white */
+        0x00,0x00,0x00,0x00,
+        /* pixel 1: C=0,M=0,Y=0,K=255 -> black */
+        0x00,0x00,0x00,0xff,
+        /* pixel 2: C=128,M=64,Y=32,K=16 -> R=119,G=179,B=209 */
+        0x80,0x40,0x20,0x10,
+        /* pixel 3: C=255,M=255,Y=255,K=0 -> black */
+        0xff,0xff,0xff,0x00
+    };
+    GpBitmap *bitmap;
+    BitmapData data;
+    GpStatus status;
+
+    status = GdipCreateBitmapFromScan0(4, 1, 16, PixelFormat32bppCMYK,
+        (BYTE*)cmyk_bits, &bitmap);
+    ok(status == Ok, "GdipCreateBitmapFromScan0(CMYK) failed, status=%d\n", status);
+    if (status != Ok) return;
+
+    memset(&data, 0, sizeof(data));
+    status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead,
+        PixelFormat32bppARGB, &data);
+    ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat32bppARGB\n");
+
+    status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead,
+        PixelFormat8bppIndexed, &data);
+    ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat8bppIndexed\n");
+
+    status = GdipBitmapLockBits(bitmap, NULL, ImageLockModeRead,
+        PixelFormat16bppGrayScale, &data);
+    ok(status == InvalidParameter, "gdiplus rejectes PixelFormat32bppCMYK -> PixelFormat16bppGrayScale\n");
 
     GdipDisposeImage((GpImage *)bitmap);
 }
@@ -6786,7 +6824,6 @@ static void test_png_save_palette(void)
         status = GdipSaveImageToStream((GpImage *)bitmap, stream, &clsid, NULL);
         GdipDisposeImage((GpImage*)bitmap);
 
-        todo_wine_if(formats[i] == PixelFormat16bppGrayScale)
         ok(formats[i] == PixelFormat16bppGrayScale ?
                 (status == GenericError || status == Win32Error) : status == Ok,
             "Unexpected return value %d saving image for PixelFormat %#x\n", status, formats[i]);
@@ -7440,6 +7477,7 @@ START_TEST(image)
     test_CloneBitmapAreaSameFormat();
     test_ARGB_conversion();
     test_PARGB_conversion();
+    test_CMYK_conversion();
     test_DrawImage_scale();
     test_image_format();
     test_DrawImage();
