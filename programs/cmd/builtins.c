@@ -3290,6 +3290,40 @@ RETURN_CODE WCMD_shift(const WCHAR *args)
   return NO_ERROR;
 }
 
+static WCHAR *escape_path_backslash_quotes(WCHAR *str, size_t str_len)
+{
+    size_t i, escape_count, pos;
+    WCHAR *buf;
+
+    for (i = 0, escape_count = 0; i < str_len; i++)
+    {
+        WCHAR c = str[i];
+
+        if (!c) break;
+
+        if (str[i] == '\\' && str[i + 1] == '"')
+            escape_count++;
+    }
+
+    buf = malloc((str_len + escape_count + 1) * sizeof(WCHAR));
+
+    for (i = 0, pos = 0; i < str_len; i++, pos++)
+    {
+        if (!str[i]) break;
+
+        if (str[i] == '\\' && str[i + 1] == '"')
+        {
+            buf[pos++] = '\\';
+            buf[pos] = '\\';
+        }
+        else
+            buf[pos] = str[i];
+    }
+
+    buf[pos] = 0;
+    return buf;
+}
+
 /****************************************************************************
  * WCMD_start
  */
@@ -3297,15 +3331,16 @@ RETURN_CODE WCMD_start(WCHAR *args)
 {
     RETURN_CODE return_code = NO_ERROR;
     int argno;
-    int have_title;
+    size_t cmdline_size;
     WCHAR file[MAX_PATH];
-    WCHAR *cmdline, *cmdline_params;
+    WCHAR *cmdline, *cmdline_params, *thisArg, *argN, *escaped_path;
     STARTUPINFOW st;
     PROCESS_INFORMATION pi;
 
     GetSystemDirectoryW( file, MAX_PATH );
     lstrcatW(file, L"\\start.exe");
-    cmdline = xalloc( (wcslen(file) + wcslen(args) + 8) * sizeof(WCHAR) );
+    cmdline_size = (wcslen(file) + 2) * sizeof(WCHAR);
+    cmdline = xalloc( cmdline_size );
     lstrcpyW( cmdline, file );
     lstrcatW(cmdline, L" ");
     cmdline_params = cmdline + lstrlenW(cmdline);
@@ -3348,10 +3383,7 @@ RETURN_CODE WCMD_start(WCHAR *args)
      * - need to access start.exe's child to get its running state
      *   (not start.exe itself)
      */
-    have_title = FALSE;
     for (argno=0; ; argno++) {
-        WCHAR *thisArg, *argN;
-
         argN = NULL;
         thisArg = WCMD_parameter_with_delims(args, argno, &argN, FALSE, FALSE, L" \t/");
 
@@ -3362,21 +3394,20 @@ RETURN_CODE WCMD_start(WCHAR *args)
         /* Found the title */
         if (argN[0] == '"') {
             TRACE("detected console title: %s\n", wine_dbgstr_w(thisArg));
-            have_title = TRUE;
 
             /* Copy all of the cmdline processed */
             memcpy(cmdline_params, args, sizeof(WCHAR) * (argN - args));
             cmdline_params[argN - args] = '\0';
 
             /* Add quoted title */
+            cmdline_size += (lstrlenW(thisArg) + 7) * sizeof(WCHAR);
+            cmdline = xrealloc( cmdline, cmdline_size );
             lstrcatW(cmdline_params, L"\"\\\"");
             lstrcatW(cmdline_params, thisArg);
             lstrcatW(cmdline_params, L"\\\"\"");
+            lstrcatW(cmdline_params, L" ");
 
-            /* Concatenate remaining command-line */
-            thisArg = WCMD_parameter_with_delims(args, argno, &argN, TRUE, FALSE, L" \t/");
-            lstrcatW(cmdline_params, argN + lstrlenW(thisArg));
-
+            argno++;
             break;
         }
 
@@ -3391,9 +3422,19 @@ RETURN_CODE WCMD_start(WCHAR *args)
             break;
     }
 
-    /* build command-line if not built yet */
-    if (!have_title) {
-        lstrcatW( cmdline, args );
+    /* build command-line */
+    if ((thisArg = WCMD_parameter_with_delims( args, argno, &argN, TRUE, FALSE, L" \t/" )) && argN)
+    {
+        /* Escape \" sequences in the path so the backslash is not removed by CreateProcess.
+         * E.g. C:\"test file.exe" should be converted to C:\\"test file.exe"
+         */
+        escaped_path = escape_path_backslash_quotes( thisArg, lstrlenW(thisArg) );
+        argN += lstrlenW(thisArg);
+        cmdline_size += (lstrlenW(escaped_path) + lstrlenW(argN)) * sizeof(WCHAR);
+        cmdline = xrealloc( cmdline, cmdline_size );
+        lstrcatW( cmdline, escaped_path );
+        lstrcatW( cmdline, argN );
+        free( escaped_path );
     }
 
     memset( &st, 0, sizeof(STARTUPINFOW) );
