@@ -6142,7 +6142,7 @@ static void test_joystick_instance_guid( DWORD version )
 #undef MAKE_DESC
 #undef MAKE_ATTR
     };
-    const GUID instance_uuid_init = {0x00000000, 0x0000, 0x1000, {0x80, 0x00, 0x00, 0x00, 'D', 'E', 'S', 'T'}};
+    const GUID instance_uuid_init = {0x00000000, 0x0000, 0x1000, {0x80, 0x00, 'D', 'E', 'S', 'T', 0x00, 0x00}};
     struct dinput di = {.version = version}, di2 = {.version = version};
     GUID expect_instances[4], instances[64], *instances_end;
     IDirectInputDevice8W *device;
