@@ -473,7 +473,7 @@ LRESULT menu_wndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
-void do_startmenu(HWND hwnd)
+void do_startmenu(HWND hwnd, int x_offset, int y_offset)
 {
     LPITEMIDLIST pidl;
     MENUINFO mi;
@@ -548,7 +548,7 @@ void do_startmenu(HWND hwnd)
 
     if (!TrackPopupMenuEx(root_menu.menuhandle,
         TPM_LEFTALIGN|TPM_BOTTOMALIGN|TPM_VERTICAL,
-        rc.left, rc.top, hwnd, &tpm))
+        rc.left + x_offset, rc.top + y_offset, hwnd, &tpm))
     {
         ERR( "couldn't display menu\n" );
     }
