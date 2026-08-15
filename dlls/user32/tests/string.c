@@ -1,4 +1,4 @@
- /* Unit test suite for the wsprintf functions
+ /* Unit test suite for the user32 string functions
  *
  * Copyright 2002 Bill Medland
  *
@@ -327,7 +327,7 @@ static void CharPrevATest(void)
     }
 }
 
-START_TEST(wsprintf)
+START_TEST(string)
 {
     wsprintfATest();
     wsprintfWTest();

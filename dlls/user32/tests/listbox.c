@@ -1068,7 +1068,7 @@ static void test_listbox_LB_DIR(void)
 
 
     /* This should list all the w*.c files in the test directory
-     * As of this writing, this includes win.c, winstation.c, wsprintf.c
+     * As of this writing, this includes win.c, winstation.c
      */
     strcpy(pathBuffer, "w*.c");
     SendMessageA(hList, LB_RESETCONTENT, 0, 0);

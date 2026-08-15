@@ -24,11 +24,11 @@ SOURCES = \
 	resource.rc \
 	scroll.c \
 	static.c \
+	string.c \
 	sysparams.c \
 	testdll.c \
 	testdll.spec \
 	text.c \
 	uitools.c \
 	win.c \
-	winstation.c \
-	wsprintf.c
+	winstation.c
