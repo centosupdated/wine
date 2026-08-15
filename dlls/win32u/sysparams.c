@@ -2217,7 +2217,7 @@ static void add_modes( const DEVMODEW *current, UINT host_modes_count, const DEV
         modes_count = 1;
     }
 
-    physical = modes_count == 1 ? *modes : *current;
+    if (current) physical = *current;
     if (ctx->is_primary) ctx->primary = *current;
 
     detached.dmPelsWidth = 0;

@@ -177,15 +177,19 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     struct wayland_surface *surface;
     enum wayland_surface_role role;
     BOOL visible;
+    DWORD style = NtUserGetWindowLongW(data->hwnd, GWL_STYLE);
     DWORD exstyle = NtUserGetWindowLongW(data->hwnd, GWL_EXSTYLE);
     struct wl_region *input_region;
 
-    TRACE("hwnd=%p\n", data->hwnd);
-
-    visible = ((NtUserGetWindowLongW(data->hwnd, GWL_STYLE) & WS_VISIBLE) == WS_VISIBLE) &&
-               (!(exstyle & WS_EX_LAYERED) || data->layered_attribs_set);
+    visible = ((style & WS_VISIBLE) == WS_VISIBLE &&
+               (!(exstyle & WS_EX_LAYERED) || data->layered_attribs_set)) ||
+              (data->wayland_surface && data->wayland_surface->role == WAYLAND_SURFACE_ROLE_LAYER);
 
     if (!visible) role = WAYLAND_SURFACE_ROLE_NONE;
+    else if (process_wayland.zwlr_layer_shell_v1 && style & WS_POPUP &&
+             (NtUserGetClassLongPtrW(data->hwnd, GCW_ATOM) != POPUPMENU_CLASS_ATOM ||
+              !(style & (WS_CAPTION | WS_THICKFRAME))))
+        role = WAYLAND_SURFACE_ROLE_LAYER;
     else if (owner_surface) role = WAYLAND_SURFACE_ROLE_SUBSURFACE;
     else role = WAYLAND_SURFACE_ROLE_TOPLEVEL;
 
@@ -210,6 +214,8 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     wl_surface_set_input_region(surface->wl_surface, input_region);
     if (input_region) wl_region_destroy(input_region);
 
+    wayland_win_data_get_config(data, &surface->window);
+
     /* If the window is a visible toplevel make it a wayland
      * xdg_toplevel. Otherwise keep it role-less to avoid polluting the
      * compositor with empty xdg_toplevels. */
@@ -224,9 +230,10 @@ static BOOL wayland_win_data_create_wayland_surface(struct wayland_win_data *dat
     case WAYLAND_SURFACE_ROLE_SUBSURFACE:
         wayland_surface_make_subsurface(surface, owner_surface);
         break;
+    case WAYLAND_SURFACE_ROLE_LAYER:
+        wayland_surface_make_layer(surface);
+        break;
     }
-
-    wayland_win_data_get_config(data, &surface->window);
 
     /* Size/position changes affect the effective pointer constraint, so update
      * it as needed. */
@@ -309,6 +316,8 @@ static void wayland_win_data_update_wayland_state(struct wayland_win_data *data)
         surface->processing.serial = 1;
         surface->processing.processed = TRUE;
         break;
+    case WAYLAND_SURFACE_ROLE_LAYER:
+        break;
     }
 
     wl_display_flush(process_wayland.wl_display);
@@ -373,6 +382,9 @@ static BOOL is_window_managed(HWND hwnd, UINT swp_flags, BOOL fullscreen)
 {
     DWORD style, ex_style;
 
+    ex_style = NtUserGetWindowLongW(hwnd, GWL_EXSTYLE);
+    if ((ex_style & WS_EX_NOACTIVATE)) return FALSE;
+    if (NtUserGetClassLongPtrW(hwnd, GCW_ATOM) == POPUPMENU_CLASS_ATOM) return TRUE;
     /* child windows are not managed */
     style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
     if ((style & (WS_CHILD|WS_POPUP)) == WS_CHILD) return FALSE;
@@ -391,7 +403,6 @@ static BOOL is_window_managed(HWND hwnd, UINT swp_flags, BOOL fullscreen)
         if (fullscreen) return TRUE;
     }
     /* application windows are managed */
-    ex_style = NtUserGetWindowLongW(hwnd, GWL_EXSTYLE);
     if (ex_style & WS_EX_APPWINDOW) return TRUE;
     /* windows that own popups are managed */
     if (has_owned_popups(hwnd)) return TRUE;
@@ -626,6 +637,24 @@ LRESULT WAYLAND_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_WAYLAND_SET_FOREGROUND:
         NtUserSetForegroundWindowInternal(hwnd);
         return 0;
+    case WM_WAYLAND_CANCEL_UNFOCUSED: {
+        HWND focused;
+        struct wayland_win_data *focus_data;
+        BOOL focus_is_layer = FALSE;
+
+        pthread_mutex_lock(&process_wayland.keyboard.mutex);
+        focused = process_wayland.keyboard.focused_hwnd;
+        pthread_mutex_unlock(&process_wayland.keyboard.mutex);
+        if (focused && (focus_data = wayland_win_data_get(focused)))
+        {
+            focus_is_layer = focus_data->wayland_surface &&
+                             focus_data->wayland_surface->role == WAYLAND_SURFACE_ROLE_LAYER;
+            wayland_win_data_release(focus_data);
+        }
+        if (!focus_is_layer) send_message(hwnd, WM_CANCELMODE, 0, 0);
+        return 0;
+    }
+
     default:
         FIXME("got window msg %x hwnd %p wp %lx lp %lx\n", msg, hwnd, (long)wp, lp);
         return 0;

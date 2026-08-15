@@ -253,7 +253,10 @@ void wayland_surface_destroy(struct wayland_surface *surface)
 
     pthread_mutex_lock(&process_wayland.keyboard.mutex);
     if (process_wayland.keyboard.focused_hwnd == surface->hwnd)
+    {
+        wayland_keyboard_release_all_keys(surface->hwnd);
         process_wayland.keyboard.focused_hwnd = NULL;
+    }
     pthread_mutex_unlock(&process_wayland.keyboard.mutex);
 
     pthread_mutex_lock(&process_wayland.text_input.mutex);
@@ -410,6 +413,84 @@ err:
     ERR("Failed to assign subsurface role to wayland surface\n");
 }
 
+static void layer_surface_handle_configure(void *data, struct zwlr_layer_surface_v1 *layer_surface,
+                                           uint32_t serial, uint32_t width, uint32_t height)
+{
+    zwlr_layer_surface_v1_ack_configure(layer_surface, serial);
+}
+
+static void layer_surface_handle_closed(void *data, struct zwlr_layer_surface_v1 *layer_surface)
+{
+    HWND hwnd = data;
+    struct wayland_win_data *win_data;
+    struct wayland_surface *surface;
+    if ((win_data = wayland_win_data_get(hwnd)))
+    {
+        if ((surface = win_data->wayland_surface) &&
+            surface->zwlr_layer_surface_v1 == layer_surface)
+        {
+            surface->zwlr_layer_surface_v1 = NULL;
+        }
+        wayland_win_data_release(win_data);
+    }
+    zwlr_layer_surface_v1_destroy(layer_surface);
+}
+
+static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
+    layer_surface_handle_configure, layer_surface_handle_closed
+};
+
+/**********************************************************************
+ *          wayland_surface_reconfigure_layer
+ *
+ * Reconfigures the layer as needed to match the latest requested
+ * state.
+ */
+static void wayland_surface_reconfigure_layer(struct wayland_surface *surface, RECT rect)
+{
+    if (EqualRect(&rect, &surface->current.rect)) return;
+    zwlr_layer_surface_v1_set_anchor(surface->zwlr_layer_surface_v1,
+                                     ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP |
+                                         ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT);
+    zwlr_layer_surface_v1_set_margin(surface->zwlr_layer_surface_v1, rect.top, 0, 0, rect.left);
+    zwlr_layer_surface_v1_set_size(surface->zwlr_layer_surface_v1, rect.right - rect.left,
+                                   rect.bottom - rect.top);
+    surface->current.rect = rect;
+}
+
+/**********************************************************************
+ *          wayland_surface_make_layer
+ *
+ * Gives the layer role to a plain wayland surface.
+ */
+void wayland_surface_make_layer(struct wayland_surface *surface)
+{
+    TRACE("surface=%p\n", surface);
+
+    assert(!surface->role || surface->role == WAYLAND_SURFACE_ROLE_LAYER);
+    if (surface->zwlr_layer_surface_v1) return;
+
+    wayland_surface_clear_role(surface);
+    surface->role = WAYLAND_SURFACE_ROLE_LAYER;
+    wayland_surface_init_fractional_scale(surface, 1.0);
+    surface->zwlr_layer_surface_v1 = zwlr_layer_shell_v1_get_layer_surface(
+        process_wayland.zwlr_layer_shell_v1, surface->wl_surface, NULL,
+        ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, "context-menu");
+    if (!surface->zwlr_layer_surface_v1) goto err;
+    zwlr_layer_surface_v1_add_listener(surface->zwlr_layer_surface_v1, &layer_surface_listener,
+                                       surface->hwnd);
+    zwlr_layer_surface_v1_set_keyboard_interactivity(
+        surface->zwlr_layer_surface_v1, ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_ON_DEMAND);
+    wayland_surface_reconfigure_layer(surface, map_rect_to_output(surface, surface->window.rect));
+    wl_surface_commit(surface->wl_surface);
+    wl_display_flush(process_wayland.wl_display);
+    return;
+
+err:
+    wayland_surface_clear_role(surface);
+    ERR("Failed to assign layer role to wayland surface\n");
+}
+
 /**********************************************************************
  *          wayland_surface_clear_role
  *
@@ -454,6 +535,14 @@ void wayland_surface_clear_role(struct wayland_surface *surface)
         {
             xdg_surface_destroy(surface->xdg_surface);
             surface->xdg_surface = NULL;
+        }
+        break;
+
+    case WAYLAND_SURFACE_ROLE_LAYER:
+        if (surface->zwlr_layer_surface_v1)
+        {
+            zwlr_layer_surface_v1_destroy(surface->zwlr_layer_surface_v1);
+            surface->zwlr_layer_surface_v1 = NULL;
         }
         break;
 
@@ -816,6 +905,11 @@ BOOL wayland_surface_reconfigure(struct wayland_surface *surface)
         if (!surface->wl_subsurface) break; /* surface role has been cleared */
         wayland_surface_reconfigure_subsurface(surface);
         break;
+    case WAYLAND_SURFACE_ROLE_LAYER:
+        if (!surface->zwlr_layer_surface_v1) break;
+        wayland_surface_reconfigure_layer(surface,
+                                          map_rect_to_output(surface, surface->window.rect));
+        break;
     }
 
     wayland_surface_reconfigure_size(surface, rect.right - rect.left, rect.bottom - rect.top);
@@ -1148,6 +1242,33 @@ POINT map_point_from_surface(struct wayland_surface *surface, POINT point)
     point.x = round(point.x * surface->window.scale);
     point.y = round(point.y * surface->window.scale);
     return point;
+}
+
+/**********************************************************************
+ *          map_rect_to_output
+ *
+ * Converts global desktop (logical) coordinates to output-relative surface-local coordinates.
+ */
+RECT map_rect_to_output(struct wayland_surface *surface, RECT rect)
+{
+    struct wayland_output *output;
+    pthread_mutex_lock(&process_wayland.output_mutex);
+    wl_list_for_each(output, &process_wayland.output_list, link)
+    {
+        if (rect.left >= output->current.logical_x &&
+            rect.left < output->current.logical_x + output->current.logical_w &&
+            rect.top >= output->current.logical_y &&
+            rect.top < output->current.logical_y + output->current.logical_h)
+        {
+            rect.left -= output->current.logical_x;
+            rect.top -= output->current.logical_y;
+            rect.right -= output->current.logical_x;
+            rect.bottom -= output->current.logical_y;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&process_wayland.output_mutex);
+    return map_rect_to_surface(surface, rect);
 }
 
 static void wayland_client_surface_destroy(struct client_surface *client)

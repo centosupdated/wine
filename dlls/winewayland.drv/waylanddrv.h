@@ -37,6 +37,7 @@
 #include "xdg-output-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 #include "wlr-data-control-unstable-v1-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "pointer-warp-v1-client-protocol.h"
 #include "alpha-modifier-v1-client-protocol.h"
@@ -53,6 +54,7 @@
 
 /* We only use 4 byte formats. */
 #define WINEWAYLAND_BYTES_PER_PIXEL 4
+#define POPUPMENU_CLASS_ATOM MAKEINTATOM(32768)
 
 /**********************************************************************
  *          Globals
@@ -70,6 +72,7 @@ enum wayland_window_message
     WM_WAYLAND_INIT_DISPLAY_DEVICES = WM_WINE_FIRST_DRIVER_MSG,
     WM_WAYLAND_CONFIGURE,
     WM_WAYLAND_SET_FOREGROUND,
+    WM_WAYLAND_CANCEL_UNFOCUSED,
 };
 
 enum wayland_surface_config_state
@@ -85,6 +88,7 @@ enum wayland_surface_role
     WAYLAND_SURFACE_ROLE_NONE,
     WAYLAND_SURFACE_ROLE_TOPLEVEL,
     WAYLAND_SURFACE_ROLE_SUBSURFACE,
+    WAYLAND_SURFACE_ROLE_LAYER,
 };
 
 struct wayland_keyboard
@@ -180,6 +184,7 @@ struct wayland
     struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
     struct zwp_text_input_manager_v3 *zwp_text_input_manager_v3;
     struct zwlr_data_control_manager_v1 *zwlr_data_control_manager_v1;
+    struct zwlr_layer_shell_v1 *zwlr_layer_shell_v1;
     struct wl_data_device_manager *wl_data_device_manager;
     struct xdg_toplevel_icon_manager_v1 *xdg_toplevel_icon_manager_v1;
     struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
@@ -215,6 +220,7 @@ struct wayland_output_state
     char *name;
     int logical_x, logical_y;
     int logical_w, logical_h;
+    int transform;
 };
 
 struct wayland_output
@@ -294,6 +300,10 @@ struct wayland_surface
         };
         struct
         {
+            struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1;
+        };
+        struct
+        {
             struct wl_subsurface *wl_subsurface;
             HWND owner_hwnd;
         };
@@ -330,6 +340,7 @@ void wayland_surface_destroy(struct wayland_surface *surface);
 void wayland_surface_make_toplevel(struct wayland_surface *surface);
 void wayland_surface_make_subsurface(struct wayland_surface *surface,
                                      struct wayland_surface *parent);
+void wayland_surface_make_layer(struct wayland_surface *surface);
 void wayland_surface_clear_role(struct wayland_surface *surface);
 void wayland_surface_attach_shm(struct wayland_surface *surface,
                                 struct wayland_shm_buffer *shm_buffer,
@@ -341,6 +352,7 @@ RECT map_rect_to_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_to_surface(struct wayland_surface *surface, POINT point);
 RECT map_rect_from_surface(struct wayland_surface *surface, RECT rect);
 POINT map_point_from_surface(struct wayland_surface *surface, POINT point);
+RECT map_rect_to_output(struct wayland_surface *surface, RECT rect);
 void wayland_client_surface_attach(struct wayland_client_surface *client, HWND toplevel, const RECT *rect);
 void wayland_surface_ensure_contents(struct wayland_surface *surface);
 void wayland_surface_set_title(struct wayland_surface *surface, LPCWSTR title);
@@ -363,6 +375,13 @@ struct wayland_shm_buffer *wayland_shm_buffer_from_color_bitmaps(HDC hdc, HBITMA
                                                                  HBITMAP mask, BOOL allow_padding);
 void wayland_shm_buffer_ref(struct wayland_shm_buffer *shm_buffer);
 void wayland_shm_buffer_unref(struct wayland_shm_buffer *shm_buffer);
+
+/**********************************************************************
+ *          Wayland Systray
+ */
+int wayland_systray_get_fd(void);
+void wayland_systray_clear_wakeup(void);
+int wayland_systray_dispatch(short *events);
 
 /**********************************************************************
  *          Wayland Window
@@ -403,6 +422,7 @@ void wayland_window_init(void);
 
 void wayland_keyboard_init(struct wl_keyboard *wl_keyboard);
 void wayland_keyboard_deinit(void);
+void wayland_keyboard_release_all_keys(HWND hwnd);
 const KBDTABLES *WAYLAND_KbdLayerDescriptor(HKL hkl);
 void WAYLAND_ReleaseKbdTables(const KBDTABLES *);
 void activate_keyboard_hkl(HWND hwnd, BOOL ime);
@@ -474,5 +494,7 @@ struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format);
 BOOL WAYLAND_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
 UINT WAYLAND_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
 UINT WAYLAND_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
+LRESULT WAYLAND_NotifyIcon(HWND hwnd, UINT msg, NOTIFYICONDATAW *data);
+void WAYLAND_CleanupIcons(HWND hwnd);
 
 #endif /* __WINE_WAYLANDDRV_H */

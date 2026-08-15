@@ -827,6 +827,7 @@ static void keyboard_handle_leave(void *data, struct wl_keyboard *wl_keyboard,
 {
     struct wayland_keyboard *keyboard = &process_wayland.keyboard;
     HWND hwnd;
+    BOOL is_focused;
 
     InterlockedExchange(&process_wayland.input_serial, serial);
 
@@ -838,13 +839,24 @@ static void keyboard_handle_leave(void *data, struct wl_keyboard *wl_keyboard,
     TRACE("serial=%u hwnd=%p\n", serial, hwnd);
 
     pthread_mutex_lock(&keyboard->mutex);
-    if (keyboard->focused_hwnd == hwnd)
-        keyboard->focused_hwnd = NULL;
+    if ((is_focused = keyboard->focused_hwnd == hwnd)) keyboard->focused_hwnd = NULL;
     pthread_mutex_unlock(&keyboard->mutex);
 
     /* The spec for the leave event tells us to treat all keys as released,
      * and for any key repetition to stop. */
     release_all_keys(hwnd);
+
+    if (is_focused && NtUserIsWindow(hwnd))
+    {
+        struct wayland_win_data *win_data = wayland_win_data_get(hwnd);
+        if (win_data)
+        {
+            if (win_data->wayland_surface &&
+                (win_data->wayland_surface->role == WAYLAND_SURFACE_ROLE_LAYER))
+                NtUserPostMessage(hwnd, WM_WAYLAND_CANCEL_UNFOCUSED, 0, 0);
+            wayland_win_data_release(win_data);
+        }
+    }
 
     /* FIXME: update foreground window as well */
 }
@@ -996,6 +1008,14 @@ void wayland_keyboard_deinit(void)
         rxkb_context_unref(rxkb_context);
         rxkb_context = NULL;
     }
+}
+
+/***********************************************************************
+ *           wayland_keyboard_release_all_keys
+ */
+void wayland_keyboard_release_all_keys(HWND hwnd)
+{
+    release_all_keys(hwnd);
 }
 
 /***********************************************************************

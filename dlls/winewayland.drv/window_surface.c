@@ -516,9 +516,12 @@ BOOL WAYLAND_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_re
 {
     struct window_surface *previous;
     struct wayland_win_data *data;
+    DWORD style = NtUserGetWindowLongW(hwnd, GWL_STYLE);
 
     TRACE("hwnd %p, layered %u, surface_rect %s, surface %p\n", hwnd, layered, wine_dbgstr_rect(surface_rect), surface);
 
+    layered = layered || ((style & WS_POPUP) && !(style & (WS_CAPTION | WS_THICKFRAME)) &&
+                          NtUserGetClassLongPtrW(hwnd, GCW_ATOM) != POPUPMENU_CLASS_ATOM);
     if ((previous = *surface) && previous->funcs == &wayland_window_surface_funcs) return TRUE;
     if (!(data = wayland_win_data_get(hwnd))) return TRUE; /* use default surface */
     if (previous) window_surface_release(previous);
