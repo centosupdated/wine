@@ -34,6 +34,7 @@ SOURCES = \
 	image.c \
 	keyboard.c \
 	macdrv_main.c \
+	metal.c \
 	mouse.c \
 	opengl.c \
 	surface.c \

@@ -1,0 +1,11 @@
+MODULE    = winemetal.dll
+UNIXLIB   = winemetal.so
+IMPORTLIB = winemetal
+IMPORTS   = user32
+UNIX_LIBS = -lwin32u $(PTHREAD_LIBS)
+
+VER_FILEDESCRIPTION_STR = "Wine Metal API"
+
+SOURCES = \
+	metal.c \
+	unixlib.c

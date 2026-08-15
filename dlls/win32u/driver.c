@@ -944,6 +944,11 @@ static UINT nulldrv_OpenGLInit( UINT version, const struct opengl_funcs *opengl_
     return STATUS_NOT_IMPLEMENTED;
 }
 
+static UINT nulldrv_MetalInit( UINT version, const struct metal_funcs *metal_funcs, const struct metal_driver_funcs **driver_funcs )
+{
+    return STATUS_NOT_IMPLEMENTED;
+}
+
 static void nulldrv_ThreadDetach( void )
 {
 }
@@ -1269,6 +1274,11 @@ static UINT loaderdrv_OpenGLInit( UINT version, const struct opengl_funcs *openg
     return load_driver()->pOpenGLInit( version, opengl_funcs, driver_funcs );
 }
 
+static UINT loaderdrv_MetalInit( UINT version, const struct metal_funcs *metal_funcs, const struct metal_driver_funcs **driver_funcs )
+{
+    return load_driver()->pMetalInit( version, metal_funcs, driver_funcs );
+}
+
 static const struct user_driver_funcs lazy_load_driver =
 {
     { NULL },
@@ -1344,6 +1354,8 @@ static const struct user_driver_funcs lazy_load_driver =
     loaderdrv_VulkanInit,
     /* opengl support */
     loaderdrv_OpenGLInit,
+    /* metal support */
+    loaderdrv_MetalInit,
     /* thread management */
     nulldrv_ThreadDetach,
 };
@@ -1440,6 +1452,7 @@ void __wine_set_user_driver( const struct user_driver_funcs *funcs, UINT version
     SET_USER_FUNC(WintabProc);
     SET_USER_FUNC(VulkanInit);
     SET_USER_FUNC(OpenGLInit);
+    SET_USER_FUNC(MetalInit);
     SET_USER_FUNC(ThreadDetach);
 #undef SET_USER_FUNC
 
