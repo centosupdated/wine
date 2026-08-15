@@ -1,6 +1,6 @@
 MODULE = winewayland.drv
 UNIXLIB = winewayland.so
-UNIX_CFLAGS = $(EGL_CFLAGS) $(WAYLAND_CLIENT_CFLAGS) $(WAYLAND_EGL_CFLAGS) $(XKBCOMMON_CFLAGS) $(XKBREGISTRY_CFLAGS)
+UNIX_CFLAGS = $(DBUS_CFLAGS) $(EGL_CFLAGS) $(WAYLAND_CLIENT_CFLAGS) $(WAYLAND_EGL_CFLAGS) $(XKBCOMMON_CFLAGS) $(XKBREGISTRY_CFLAGS)
 UNIX_LIBS = -lwin32u $(WAYLAND_CLIENT_LIBS) $(WAYLAND_EGL_LIBS) $(XKBCOMMON_LIBS) $(XKBREGISTRY_LIBS) $(PTHREAD_LIBS) -lm
 IMPORTS = user32 win32u
 
@@ -25,6 +25,7 @@ SOURCES = \
 	wayland_output.c \
 	wayland_pointer.c \
 	wayland_surface.c \
+	wayland_systray.c \
 	wayland_text_input.c \
 	waylanddrv_main.c \
 	window.c \

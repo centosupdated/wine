@@ -365,6 +365,13 @@ void wayland_shm_buffer_ref(struct wayland_shm_buffer *shm_buffer);
 void wayland_shm_buffer_unref(struct wayland_shm_buffer *shm_buffer);
 
 /**********************************************************************
+ *          Wayland Systray
+ */
+int wayland_systray_get_fd(void);
+void wayland_systray_clear_wakeup(void);
+int wayland_systray_dispatch(short *events);
+
+/**********************************************************************
  *          Wayland Window
  */
 
@@ -474,5 +481,7 @@ struct client_surface *WAYLAND_CreateClientSurface(HWND hwnd, int pixel_format);
 BOOL WAYLAND_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rect, struct window_surface **surface);
 UINT WAYLAND_VulkanInit(UINT version, void *vulkan_handle, const struct vulkan_driver_funcs **driver_funcs);
 UINT WAYLAND_OpenGLInit(UINT version, const struct opengl_funcs *opengl_funcs, const struct opengl_driver_funcs **driver_funcs);
+LRESULT WAYLAND_NotifyIcon(HWND hwnd, UINT msg, NOTIFYICONDATAW *data);
+void WAYLAND_CleanupIcons(HWND hwnd);
 
 #endif /* __WINE_WAYLANDDRV_H */
