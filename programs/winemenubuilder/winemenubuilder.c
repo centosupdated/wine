@@ -339,6 +339,38 @@ static char *wchars_to_xml_text(const WCHAR *string)
     return ret;
 }
 
+/* Should match is_fake_dll() from dlls/setupapi/fakedll.c */
+static const char builtin_signature[] = "Wine builtin DLL";
+static const char fakedll_signature[] = "Wine placeholder DLL";
+static BOOL is_builtin(const WCHAR *fileName)
+{
+    HANDLE h;
+    IMAGE_DOS_HEADER *dos;
+    DWORD size;
+    BYTE buffer[sizeof(*dos) + 32];
+    BOOL res;
+
+    h = CreateFileW(fileName, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+        OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+    {
+        WINE_WARN("opening %s failed with error %ld\n", wine_dbgstr_w(fileName), GetLastError());
+        return FALSE;
+    }
+
+    res = ReadFile( h, buffer, sizeof(buffer), &size, NULL );
+    CloseHandle( h );
+
+    if (!res || size != sizeof(buffer))
+        return FALSE;
+
+    dos = (IMAGE_DOS_HEADER *)buffer;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return FALSE;
+    if (dos->e_lfanew < size) return FALSE;
+    return (!memcmp( dos + 1, builtin_signature, sizeof(builtin_signature) ) ||
+            !memcmp( dos + 1, fakedll_signature, sizeof(fakedll_signature) ));
+}
+
 /* Icon extraction routines
  *
  * FIXME: should use PrivateExtractIcons and friends
@@ -2268,6 +2300,15 @@ static BOOL InvokeShellLinker( IShellLinkW *sl, LPCWSTR link, BOOL bWait )
         IShellLinkW_GetIDList( sl, &pidl );
         if( pidl && SHGetPathFromIDListW( pidl, szPath ) )
             WINE_TRACE("pidl path  : %s\n", wine_dbgstr_w(szPath));
+    }
+
+    /* skip exe files with the WINE builtin signature, so that the Start Menu
+     * entries in wine.inf for winecfg, notepad etc won't be integrated.
+     */
+    if( wcsstr( szPath, L".exe" ) && in_startmenu(csidl) && is_builtin( szPath ) )
+    {
+        WINE_TRACE("WINE builtin. Ignoring.\n");
+        return TRUE;
     }
 
     /* extract the icon */
