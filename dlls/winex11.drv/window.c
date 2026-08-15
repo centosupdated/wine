@@ -3344,68 +3344,6 @@ void X11DRV_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UIN
     if (was_fullscreen) NtUserClipCursor( NULL );
 }
 
-/* check if the window icon should be hidden (i.e. moved off-screen) */
-static BOOL hide_icon( struct x11drv_win_data *data )
-{
-    static const WCHAR trayW[] = {'S','h','e','l','l','_','T','r','a','y','W','n','d',0};
-    UNICODE_STRING str = RTL_CONSTANT_STRING( trayW );
-
-    if (data->managed) return TRUE;
-    /* hide icons in desktop mode when the taskbar is active */
-    if (!is_virtual_desktop()) return FALSE;
-    return NtUserIsWindowVisible( NtUserFindWindowEx( 0, 0, &str, NULL, 0 ));
-}
-
-/***********************************************************************
- *           ShowWindow   (X11DRV.@)
- */
-UINT X11DRV_ShowWindow( HWND hwnd, INT cmd, RECT *rect, UINT swp )
-{
-    int x, y;
-    unsigned int width, height, border, depth;
-    Window root, top;
-    POINT pos;
-    DWORD style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
-    struct x11drv_thread_data *thread_data = x11drv_thread_data();
-    struct x11drv_win_data *data = get_win_data( hwnd );
-
-    if (!data || !data->whole_window) goto done;
-    if (style & WS_MINIMIZE)
-    {
-        if (((rect->left != -32000 || rect->top != -32000)) && hide_icon( data ))
-        {
-            OffsetRect( rect, -32000 - rect->left, -32000 - rect->top );
-            swp &= ~(SWP_NOMOVE | SWP_NOCLIENTMOVE);
-        }
-        goto done;
-    }
-    if (!data->managed || data->desired_state.wm_state != NormalState) goto done;
-
-    /* only fetch the new rectangle if the ShowWindow was a result of a window manager event */
-
-    if (!thread_data->current_event || thread_data->current_event->xany.window != data->whole_window)
-        goto done;
-
-    if (thread_data->current_event->type != ConfigureNotify &&
-        thread_data->current_event->type != PropertyNotify)
-        goto done;
-
-    TRACE( "win %p/%lx cmd %d at %s flags %08x\n",
-           hwnd, data->whole_window, cmd, wine_dbgstr_rect(rect), swp );
-
-    XGetGeometry( thread_data->display, data->whole_window,
-                  &root, &x, &y, &width, &height, &border, &depth );
-    XTranslateCoordinates( thread_data->display, data->whole_window, root, 0, 0, &x, &y, &top );
-    pos = root_to_virtual_screen( x, y );
-    SetRect( rect, pos.x, pos.y, pos.x + width, pos.y + height );
-    *rect = window_rect_from_visible( &data->rects, *rect );
-    swp &= ~(SWP_NOMOVE | SWP_NOCLIENTMOVE | SWP_NOSIZE | SWP_NOCLIENTSIZE);
-
-done:
-    release_win_data( data );
-    return swp;
-}
-
 
 /**********************************************************************
  *		SetWindowIcons (X11DRV.@)

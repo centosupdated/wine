@@ -653,7 +653,6 @@ static const struct user_driver_funcs x11drv_funcs =
     .pSetWindowRgn = X11DRV_SetWindowRgn,
     .pSetWindowStyle = X11DRV_SetWindowStyle,
     .pSetWindowText = X11DRV_SetWindowText,
-    .pShowWindow = X11DRV_ShowWindow,
     .pSysCommand = X11DRV_SysCommand,
     .pClipboardWindowProc = X11DRV_ClipboardWindowProc,
     .pUpdateClipboard = X11DRV_UpdateClipboard,
