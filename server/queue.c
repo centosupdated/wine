@@ -429,7 +429,7 @@ static int is_cursor_clipped( struct desktop *desktop )
     desktop_shm_t *desktop_shm = desktop->shared;
     struct rectangle top_rect, clip_rect = desktop_shm->cursor.clip;
     get_virtual_screen_rect( desktop, &top_rect, 1 );
-    return !is_rect_equal( &clip_rect, &top_rect );
+    return !is_rect_equal( clip_rect, top_rect );
 }
 
 static void queue_cursor_message( struct desktop *desktop, user_handle_t win, unsigned int message,
