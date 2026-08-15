@@ -36,6 +36,37 @@
 #endif
 #include "dwrite_2.h"
 
+/* Passed to the outline shader when no stroke style is given: large enough that
+ * the limit never triggers, which reproduces the original unbounded miter. */
+#define D2D_MITER_LIMIT_NONE 1.0e6f
+
+/* Translate a D2D1_LINE_JOIN into an effective miter limit, expressed as the
+ * ratio of miter length to stroke width, which is the unit the outline shader
+ * naturally computes.
+ *
+ * A limit of 1.0 brings the spike back to the distance of a plain perpendicular
+ * offset, which flattens the corner. That is what BEVEL asks for, and an
+ * acceptable approximation for ROUND, whose actual rounding would need a
+ * different join geometry. */
+static inline float d2d_stroke_style_miter_limit(const D2D1_STROKE_STYLE_PROPERTIES1 *desc)
+{
+    switch (desc->lineJoin)
+    {
+        case D2D1_LINE_JOIN_MITER:
+        case D2D1_LINE_JOIN_MITER_OR_BEVEL:
+            /* A limit of zero or less would make the stroke vanish. Treat it as
+             * "no limit", like the original code that ignored the style. */
+            return desc->miterLimit > 0.0f ? desc->miterLimit : D2D_MITER_LIMIT_NONE;
+
+        case D2D1_LINE_JOIN_BEVEL:
+        case D2D1_LINE_JOIN_ROUND:
+            return 1.0f;
+
+        default:
+            return D2D_MITER_LIMIT_NONE;
+    }
+}
+
 enum d2d_brush_type
 {
     D2D_BRUSH_TYPE_SOLID,
@@ -67,6 +98,28 @@ struct d2d_clip_stack
     D2D1_RECT_F *stack;
     size_t size;
     size_t count;
+};
+
+struct d2d_layer_entry
+{
+    ID2D1Image *previous_target;
+    ID2D1Bitmap1 *bitmap;
+    ID2D1Geometry *geometric_mask;
+    ID2D1Brush *opacity_brush;
+    D2D1_MATRIX_3X2_F mask_transform;
+    D2D1_MATRIX_3X2_F world_transform;
+    D2D1_ANTIALIAS_MODE mask_antialias_mode;
+    float opacity;
+    size_t clip_count;
+    BOOL failed;
+};
+
+struct d2d_layer_stack
+{
+    struct d2d_layer_entry *entries;
+    size_t size;
+    size_t count;
+    size_t cache_count;
 };
 
 struct d2d_error_state
@@ -139,6 +192,11 @@ struct d2d_vs_cb
     } transform_geometry;
     struct d2d_vec4 transform_rtx;
     struct d2d_vec4 transform_rty;
+    /* .x holds the effective miter limit. Appended at the end of the buffer so
+     * that it gets a register of its own, instead of disturbing the layout of
+     * the existing fields; stroke_width lives in the padding of
+     * transform_geometry. */
+    struct d2d_vec4 stroke_params;
 };
 
 struct d2d_device_context_ops
@@ -219,6 +277,7 @@ struct d2d_device_context
     D2D1_RENDER_TARGET_PROPERTIES desc;
     D2D1_SIZE_U pixel_size;
     struct d2d_clip_stack clip_stack;
+    struct d2d_layer_stack layer_stack;
 
     struct d2d_indexed_objects vertex_buffers;
 };

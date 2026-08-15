@@ -3689,6 +3689,7 @@ static void test_path_geometry(BOOL d3d11)
     ID2D1GeometrySink *sink, *tmp_sink;
     struct geometry_sink simplify_sink;
     D2D1_POINT_2F point = {0.0f, 0.0f};
+    D2D1_ARC_SEGMENT arc;
     struct d2d1_test_context ctx;
     ID2D1SolidColorBrush *brush;
     ID2D1PathGeometry *geometry;
@@ -3988,6 +3989,11 @@ static void test_path_geometry(BOOL d3d11)
         {SEGMENT_BEZIER, {{{1.70000000e+02f, 1.26666666e+02f},
                            {1.73333333e+02f, 1.30000000e+02f},
                            {1.80000000e+02f, 1.20000000e+02f}}}},
+        /* Figure 33. */
+        {SEGMENT_LINE,   {{{-3.0f, 12.0f}}}},
+        {SEGMENT_BEZIER, {{{-3.0f, 3.71572875f},
+                           {3.71572875f, -3.0f},
+                           {12.0f, -3.0f}}}},
     };
     static const struct expected_geometry_figure expected_figures[] =
     {
@@ -4036,6 +4042,8 @@ static void test_path_geometry(BOOL d3d11)
         {D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_OPEN,   {  80.0f,  20.0f},  2, &expected_segments[176]},
         {D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, { 120.0f, 180.0f},  2, &expected_segments[178]},
         {D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED, { 180.0f, 120.0f},  2, &expected_segments[180]},
+        /* 33 */
+        {D2D1_FIGURE_BEGIN_HOLLOW, D2D1_FIGURE_END_OPEN,   { -20.0f,  12.0f},  2, &expected_segments[182]},
     };
 
     if (!init_test_context(&ctx, d3d11))
@@ -4842,6 +4850,68 @@ static void test_path_geometry(BOOL d3d11)
     ID2D1PathGeometry_Release(geometry);
 
     ID2D1SolidColorBrush_Release(brush);
+
+    /* A rotation does not change a circular arc. Test it after a line segment,
+     * so that both the current point and the rotated centre offset are used. */
+    hr = ID2D1Factory_CreatePathGeometry(factory, &geometry);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1PathGeometry_Open(geometry, &sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    set_point(&point, -20.0f, 12.0f);
+    ID2D1GeometrySink_BeginFigure(sink, point, D2D1_FIGURE_BEGIN_HOLLOW);
+    line_to(sink, -3.0f, 12.0f);
+    set_point(&arc.point, 12.0f, -3.0f);
+    arc.size.width = arc.size.height = 15.0f;
+    arc.rotationAngle = 90.0f;
+    arc.sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE;
+    arc.arcSize = D2D1_ARC_SIZE_SMALL;
+    ID2D1GeometrySink_AddArc(sink, &arc);
+    ID2D1GeometrySink_EndFigure(sink, D2D1_FIGURE_END_OPEN);
+    hr = ID2D1GeometrySink_Close(sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1GeometrySink_Release(sink);
+
+    geometry_sink_init(&simplify_sink);
+    hr = ID2D1PathGeometry_Simplify(geometry, D2D1_GEOMETRY_SIMPLIFICATION_OPTION_CUBICS_AND_LINES,
+            NULL, 0.0f, (ID2D1SimplifiedGeometrySink *)&simplify_sink.ID2D1GeometrySink_iface);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    geometry_sink_check(&simplify_sink, D2D1_FILL_MODE_ALTERNATE, 1, &expected_figures[33], 4);
+    geometry_sink_cleanup(&simplify_sink);
+
+    ID2D1PathGeometry_Release(geometry);
+
+    /* Arc endpoints produced by layout engines may differ from the following
+     * line, or from the figure start, by a couple of ULPs. Such a rounded
+     * rectangle must not grow microscopic self-intersections that would then
+     * fail triangulation. */
+    hr = ID2D1Factory_CreatePathGeometry(factory, &geometry);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1PathGeometry_Open(geometry, &sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_point(&point, 0.0f, 12.0f);
+    ID2D1GeometrySink_BeginFigure(sink, point, D2D1_FIGURE_BEGIN_FILLED);
+    line_to(sink, 0.0f, 12.0f);
+    arc.size.width = arc.size.height = 12.0f;
+    arc.rotationAngle = 90.0f;
+    arc.sweepDirection = D2D1_SWEEP_DIRECTION_CLOCKWISE;
+    arc.arcSize = D2D1_ARC_SIZE_SMALL;
+    set_point(&arc.point, 12.0f, 0.0f);
+    ID2D1GeometrySink_AddArc(sink, &arc);
+    line_to(sink, 53.0f, 0.0f);
+    set_point(&arc.point, 65.0f, 12.0000019073486328125f);
+    ID2D1GeometrySink_AddArc(sink, &arc);
+    line_to(sink, 65.0f, 12.0f);
+    set_point(&arc.point, 53.0f, 24.0f);
+    ID2D1GeometrySink_AddArc(sink, &arc);
+    line_to(sink, 12.0f, 24.0f);
+    set_point(&arc.point, 0.0f, 11.99999904632568359375f);
+    ID2D1GeometrySink_AddArc(sink, &arc);
+    ID2D1GeometrySink_EndFigure(sink, D2D1_FIGURE_END_CLOSED);
+    hr = ID2D1GeometrySink_Close(sink);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    ID2D1GeometrySink_Release(sink);
+    ID2D1PathGeometry_Release(geometry);
 
     /* ComputeArea */
     hr = ID2D1Factory_CreatePathGeometry(factory, &geometry);
@@ -9700,11 +9770,22 @@ static void test_wic_gdi_interop(BOOL d3d11)
 static void test_layer(BOOL d3d11)
 {
     ID2D1Factory *factory, *layer_factory;
+    ID2D1EllipseGeometry *mask;
+    ID2D1SolidColorBrush *brush;
     struct d2d1_test_context ctx;
+    struct resource_readback rb;
     ID2D1RenderTarget *rt;
     ID2D1Layer *layer;
+    D2D1_LAYER_PARAMETERS1 parameters1;
+    D2D1_LAYER_PARAMETERS parameters;
+    D2D1_MATRIX_3X2_F matrix;
+    D2D1_ELLIPSE ellipse;
+    D2D1_RECT_F rect;
+    D2D1_COLOR_F color;
+    DWORD colour;
     D2D1_SIZE_F size;
     HRESULT hr;
+    unsigned int i;
 
     if (!init_test_context(&ctx, d3d11))
         return;
@@ -9732,6 +9813,64 @@ static void test_layer(BOOL d3d11)
     ok(size.width == 800.0f, "Got unexpected width %.8e.\n", size.width);
     ok(size.height == 600.0f, "Got unexpected height %.8e.\n", size.height);
     ID2D1Layer_Release(layer);
+
+    ID2D1RenderTarget_SetDpi(rt, 96.0f, 96.0f);
+    set_matrix_identity(&matrix);
+    ID2D1RenderTarget_SetTransform(rt, &matrix);
+    set_color(&color, 0.0f, 0.0f, 1.0f, 1.0f);
+    hr = ID2D1RenderTarget_CreateSolidColorBrush(rt, &color, NULL, &brush);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    ellipse.point.x = 320.0f;
+    ellipse.point.y = 240.0f;
+    ellipse.radiusX = 64.0f;
+    ellipse.radiusY = 48.0f;
+    hr = ID2D1Factory_CreateEllipseGeometry(factory, &ellipse, &mask);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+    hr = ID2D1RenderTarget_CreateLayer(rt, NULL, &layer);
+    ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+    set_rect(&parameters.contentBounds, -FLT_MAX, -FLT_MAX, FLT_MAX, FLT_MAX);
+    parameters.geometricMask = (ID2D1Geometry *)mask;
+    parameters.maskAntialiasMode = D2D1_ANTIALIAS_MODE_ALIASED;
+    parameters.maskTransform = matrix;
+    parameters.opacity = 1.0f;
+    parameters.opacityBrush = NULL;
+    parameters.layerOptions = D2D1_LAYER_OPTIONS_INITIALIZE_FOR_CLEARTYPE;
+
+    memcpy(&parameters1, &parameters, sizeof(parameters));
+    parameters1.layerOptions = D2D1_LAYER_OPTIONS1_INITIALIZE_FROM_BACKGROUND;
+
+    for (i = 0; i < 2; ++i)
+    {
+        winetest_push_context("interface %u", i);
+        ID2D1RenderTarget_BeginDraw(rt);
+        set_color(&color, 1.0f, 0.0f, 0.0f, 1.0f);
+        ID2D1RenderTarget_Clear(rt, &color);
+        if (i)
+            ID2D1DeviceContext_PushLayer(ctx.context, &parameters1, NULL);
+        else
+            ID2D1RenderTarget_PushLayer(rt, &parameters, layer);
+        set_rect(&rect, 0.0f, 0.0f, 640.0f, 480.0f);
+        ID2D1RenderTarget_FillRectangle(rt, &rect, (ID2D1Brush *)brush);
+        ID2D1RenderTarget_PopLayer(rt);
+        hr = ID2D1RenderTarget_EndDraw(rt, NULL, NULL);
+        ok(hr == S_OK, "Got unexpected hr %#lx.\n", hr);
+
+        get_surface_readback(&ctx, &rb);
+        colour = get_readback_colour(&rb, 10, 10);
+        ok(compare_colour(colour, 0xffff0000, 1),
+                "Got unexpected corner colour 0x%08lx.\n", colour);
+        colour = get_readback_colour(&rb, 320, 240);
+        ok(compare_colour(colour, 0xff0000ff, 1),
+                "Got unexpected centre colour 0x%08lx.\n", colour);
+        release_resource_readback(&rb);
+        winetest_pop_context();
+    }
+
+    ID2D1Layer_Release(layer);
+    ID2D1EllipseGeometry_Release(mask);
+    ID2D1SolidColorBrush_Release(brush);
 
     release_test_context(&ctx);
 }
