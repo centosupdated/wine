@@ -3901,7 +3901,7 @@ static BOOL fixup_swp_flags( WINDOWPOS *winpos, const RECT *old_window_rect, int
     else if (winpos->cy > 32767) winpos->cy = 32767;
 
     parent = NtUserGetAncestor( winpos->hwnd, GA_PARENT );
-    if (!is_window_visible( parent )) winpos->flags |= SWP_NOREDRAW;
+    if (parent && !is_window_visible( parent )) winpos->flags |= SWP_NOREDRAW;
 
     if (win->dwStyle & WS_VISIBLE) winpos->flags &= ~SWP_SHOWWINDOW;
     else

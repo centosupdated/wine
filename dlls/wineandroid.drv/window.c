@@ -175,6 +175,7 @@ static struct list event_queue = LIST_INIT( event_queue );
 static struct java_event *current_event;
 int event_source = -1;
 static DWORD desktop_tid;
+static BOOL desktop_resolution_fixed;
 
 extern int event_sink;
 
@@ -1043,6 +1044,22 @@ void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UI
     UINT new_style = NtUserGetWindowLongW( hwnd, GWL_STYLE );
     HWND owner = 0;
 
+    /* explorer forces its own screen resolution once at startup, from the registry defaults
+     * or from /desktop=name,WxH command-line parsing, clobbering the real resolution we
+     * already reported to win32u in ANDROID_CreateDesktop(). Post a message to re-apply our
+     * known real resolution once this call returns: calling NtUserChangeDisplaySettings()
+     * (which ends up calling NtUserSetWindowPos() on this same window) synchronously from
+     * here re-enters apply_window_pos() for the SetWindowPos call currently in progress.
+     * That reentrant call either corrupts window state or silently no-ops (apply_display_settings()
+     * fails to acquire its own lock, since the outer call already holds it) depending on timing.
+     * Guarded to fire only once, the first time explorer clobbers it. */
+    if (!desktop_resolution_fixed && hwnd == NtUserGetDesktopWindow() &&
+        (new_rects->window.right != screen_width || new_rects->window.bottom != screen_height))
+    {
+        desktop_resolution_fixed = TRUE;
+        NtUserPostMessage( hwnd, WM_ANDROID_FORCE_RESOLUTION, 0, 0 );
+    }
+
     if (!(data = get_win_data( hwnd ))) return;
     data->rects = *new_rects;
 
@@ -1184,6 +1201,20 @@ LRESULT ANDROID_WindowMessage( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
             NtUserExposeWindowSurface( hwnd, 0, NULL );
         }
         return 0;
+    case WM_ANDROID_FORCE_RESOLUTION:
+    {
+        /* NtUserCallNoParam_DisplayModeChanged (via init_monitors()) only refreshes the
+         * list of available modes; it does not override whatever mode explorer already
+         * committed as "current" via ChangeDisplaySettingsEx. Redo that call ourselves,
+         * with our real resolution, so it actually sticks this time. */
+        DEVMODEW devmode = {.dmSize = sizeof(devmode)};
+
+        devmode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+        devmode.dmPelsWidth = screen_width;
+        devmode.dmPelsHeight = screen_height;
+        NtUserChangeDisplaySettings( NULL, &devmode, NULL, 0, NULL );
+        return 0;
+    }
     default:
         FIXME( "got window msg %x hwnd %p wp %lx lp %lx\n", msg, hwnd, (long)wp, lp );
         return 0;
