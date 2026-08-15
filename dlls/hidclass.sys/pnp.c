@@ -419,6 +419,8 @@ static NTSTATUS fdo_pnp(DEVICE_OBJECT *device, IRP *irp)
 
 static WCHAR *query_hardware_ids(DEVICE_OBJECT *device)
 {
+    static const WCHAR vid_pid_col_mi_format[] = L"HID\\VID_%04X&PID_%04X%s&Col%02d";
+    static const WCHAR vid_pid_mi_format[] = L"HID\\VID_%04X&PID_%04X%s";
     static const WCHAR vid_pid_format[] = L"HID\\VID_%04X&PID_%04X";
     static const WCHAR vid_usage_format[] = L"HID\\VID_%04X&UP:%04X_U:%04X";
     static const WCHAR usage_format[] = L"HID_DEVICE_UP:%04X_U:%04X";
@@ -427,17 +429,34 @@ static WCHAR *query_hardware_ids(DEVICE_OBJECT *device)
     struct phys_device *pdo = pdo_from_DEVICE_OBJECT( device );
     HIDP_COLLECTION_DESC *desc = pdo->collection_desc;
     HID_COLLECTION_INFORMATION *info = &pdo->information;
+    const WCHAR *mi = wcsstr( pdo->base.device_id, L"&MI_" );
+    WCHAR mi_str[7] = {0};
     WCHAR *dst;
     DWORD size;
+
+    if (mi && mi[4] && mi[5])
+        memcpy( mi_str, mi, 6 * sizeof(WCHAR) );
 
     size = sizeof(vid_pid_format);
     size += sizeof(vid_usage_format);
     size += sizeof(usage_format);
     size += sizeof(hid_format);
+    if (mi_str[0])
+    {
+        size += sizeof(vid_pid_mi_format) + sizeof(mi_str);
+        if (fdo_from_DEVICE_OBJECT( device )->device_desc.CollectionDescLength > 1)
+            size += sizeof(vid_pid_col_mi_format) + sizeof(mi_str);
+    }
 
     if ((dst = ExAllocatePool(PagedPool, size + sizeof(WCHAR))))
     {
         DWORD len = size / sizeof(WCHAR), pos = 0;
+        if (mi_str[0])
+        {
+            if (fdo_from_DEVICE_OBJECT( device )->device_desc.CollectionDescLength > 1)
+                pos += swprintf( dst + pos, len - pos, vid_pid_col_mi_format, info->VendorID, info->ProductID, mi_str, desc->CollectionNumber ) + 1;
+            pos += swprintf( dst + pos, len - pos, vid_pid_mi_format, info->VendorID, info->ProductID, mi_str ) + 1;
+        }
         pos += swprintf( dst + pos, len - pos, vid_pid_format, info->VendorID, info->ProductID ) + 1;
         pos += swprintf( dst + pos, len - pos, vid_usage_format, info->VendorID, desc->UsagePage, desc->Usage ) + 1;
         pos += swprintf( dst + pos, len - pos, usage_format, desc->UsagePage, desc->Usage ) + 1;
@@ -547,8 +566,21 @@ static NTSTATUS pdo_pnp( DEVICE_OBJECT *device, IRP *irp )
         case IRP_MN_QUERY_CAPABILITIES:
         {
             DEVICE_CAPABILITIES *caps = irpsp->Parameters.DeviceCapabilities.Capabilities;
+            const WCHAR *mi = wcsstr( pdo->base.device_id, L"&MI_" );
 
             caps->RawDeviceOK = 1;
+            if (mi && mi[4] && mi[5])
+            {
+                WCHAR c1 = mi[4];
+                WCHAR c2 = mi[5];
+                ULONG val1 = (c1 >= '0' && c1 <= '9') ? (c1 - '0') :
+                             (c1 >= 'A' && c1 <= 'F') ? (c1 - 'A' + 10) :
+                             (c1 >= 'a' && c1 <= 'f') ? (c1 - 'a' + 10) : 0;
+                ULONG val2 = (c2 >= '0' && c2 <= '9') ? (c2 - '0') :
+                             (c2 >= 'A' && c2 <= 'F') ? (c2 - 'A' + 10) :
+                             (c2 >= 'a' && c2 <= 'f') ? (c2 - 'a' + 10) : 0;
+                caps->Address = (val1 << 4) | val2;
+            }
             status = STATUS_SUCCESS;
             break;
         }
