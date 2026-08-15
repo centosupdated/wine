@@ -63,6 +63,7 @@ static PVOID    (WINAPI *pResolveDelayLoadedAPI)(PVOID, PCIMAGE_DELAYLOAD_DESCRI
                                                  PDELAYLOAD_FAILURE_DLL_CALLBACK,
                                                  PDELAYLOAD_FAILURE_SYSTEM_ROUTINE,
                                                  PIMAGE_THUNK_DATA ThunkAddress,ULONG);
+static NTSTATUS (WINAPI *pResolveDelayLoadsFromDll)(PVOID, LPCSTR, ULONG);
 static PVOID (WINAPI *pRtlImageDirectoryEntryToData)(HMODULE,BOOL,WORD,ULONG *);
 static PIMAGE_NT_HEADERS (WINAPI *pRtlImageNtHeader)(HMODULE);
 static DWORD (WINAPI *pFlsAlloc)(PFLS_CALLBACK_FUNCTION);
@@ -4412,65 +4413,25 @@ static PVOID WINAPI failuresyshook(const char *dll, const char *function)
     return (void*)0x12345678;
 }
 
-static void test_ResolveDelayLoadedAPI(void)
+struct test_delay_import_data
 {
-    static const char test_dll[] = "secur32.dll";
-    static const char test_func[] = "SealMessage";
+    BOOL func;
+    UINT_PTR ordinal;
+    BOOL succeeds;
+};
+
+static BOOL create_delay_import_dll(char dll_name[MAX_PATH], const struct test_delay_import_data *td, size_t num_td,
+                                    const char *test_dll, const char *test_func)
+{
     char temp_path[MAX_PATH];
-    char dll_name[MAX_PATH];
-    IMAGE_DELAYLOAD_DESCRIPTOR idd, *delaydir;
-    IMAGE_THUNK_DATA itd32;
     HANDLE hfile;
-    HMODULE hlib;
-    DWORD dummy, file_size, i;
-    WORD hint = 0;
-    BOOL ret;
     IMAGE_NT_HEADERS nt_header;
-
-    static const struct test_data
-    {
-        BOOL func;
-        UINT_PTR ordinal;
-        BOOL succeeds;
-    } td[] =
-    {
-        {
-            TRUE, 0, TRUE
-        },
-        {
-            FALSE, IMAGE_ORDINAL_FLAG | 2, TRUE
-        },
-        {
-            FALSE, IMAGE_ORDINAL_FLAG | 5, TRUE
-        },
-        {
-            FALSE, IMAGE_ORDINAL_FLAG | 0, FALSE
-        },
-        {
-            FALSE, IMAGE_ORDINAL_FLAG | 999, FALSE
-        },
-    };
-
-    if (!pResolveDelayLoadedAPI)
-    {
-        win_skip("ResolveDelayLoadedAPI is not available\n");
-        return;
-    }
-
-    if (0) /* crashes on native */
-    {
-        SetLastError(0xdeadbeef);
-        ok(!pResolveDelayLoadedAPI(NULL, NULL, NULL, NULL, NULL, 0),
-           "ResolveDelayLoadedAPI succeeded\n");
-        ok(GetLastError() == 0xdeadbeef, "GetLastError changed to %lx\n", GetLastError());
-
-        cb_count = 0;
-        SetLastError(0xdeadbeef);
-        ok(!pResolveDelayLoadedAPI(NULL, NULL, failuredllhook, NULL, NULL, 0),
-           "ResolveDelayLoadedAPI succeeded\n");
-        ok(GetLastError() == 0xdeadbeef, "GetLastError changed to %lx\n", GetLastError());
-        ok(cb_count == 1, "Wrong callback count: %d\n", cb_count);
-    }
+    IMAGE_DELAYLOAD_DESCRIPTOR idd;
+    IMAGE_THUNK_DATA itd32;
+    WORD hint = 0;
+    DWORD dummy;
+    BOOL ret;
+    size_t i;
 
     GetTempPathA(MAX_PATH, temp_path);
     GetTempFileNameA(temp_path, "ldr", 0, dll_name);
@@ -4479,7 +4440,7 @@ static void test_ResolveDelayLoadedAPI(void)
     if (hfile == INVALID_HANDLE_VALUE)
     {
         ok(0, "could not create %s\n", dll_name);
-        return;
+        return FALSE;
     }
 
     SetLastError(0xdeadbeef);
@@ -4518,9 +4479,8 @@ static void test_ResolveDelayLoadedAPI(void)
 
     section.PointerToRawData = 0x2000;
     section.VirtualAddress = 0x2000;
-    i = ARRAY_SIZE(td);
-    section.SizeOfRawData = sizeof(test_dll) + sizeof(hint) + sizeof(test_func) + sizeof(HMODULE) +
-                               2 * (i + 1) * sizeof(IMAGE_THUNK_DATA);
+    section.SizeOfRawData = strlen(test_dll) + 1 + sizeof(hint) + strlen(test_func) + 1 + sizeof(HMODULE) +
+                               2 * (num_td + 1) * sizeof(IMAGE_THUNK_DATA);
     ok(section.SizeOfRawData <= 0x1000, "Too much tests, add a new section!\n");
     section.Misc.VirtualSize = 0x1000;
     section.Characteristics = IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE;
@@ -4534,9 +4494,9 @@ static void test_ResolveDelayLoadedAPI(void)
     /* delay data */
     idd.Attributes.AllAttributes = 1;
     idd.DllNameRVA = 0x2000;
-    idd.ModuleHandleRVA = idd.DllNameRVA + sizeof(test_dll) + sizeof(hint) + sizeof(test_func);
+    idd.ModuleHandleRVA = idd.DllNameRVA + strlen(test_dll) + 1 + sizeof(hint) + strlen(test_func) + 1;
     idd.ImportAddressTableRVA = idd.ModuleHandleRVA + sizeof(HMODULE);
-    idd.ImportNameTableRVA = idd.ImportAddressTableRVA + (i + 1) * sizeof(IMAGE_THUNK_DATA);
+    idd.ImportNameTableRVA = idd.ImportAddressTableRVA + (num_td + 1) * sizeof(IMAGE_THUNK_DATA);
     idd.BoundImportAddressTableRVA = 0;
     idd.UnloadInformationTableRVA = 0;
     idd.TimeDateStamp = 0;
@@ -4554,7 +4514,7 @@ static void test_ResolveDelayLoadedAPI(void)
 
     /* extended delay data */
     SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, test_dll, sizeof(test_dll), &dummy, NULL);
+    ret = WriteFile(hfile, test_dll, strlen(test_dll) + 1, &dummy, NULL);
     ok(ret, "WriteFile error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
@@ -4562,12 +4522,12 @@ static void test_ResolveDelayLoadedAPI(void)
     ok(ret, "WriteFile error %ld\n", GetLastError());
 
     SetLastError(0xdeadbeef);
-    ret = WriteFile(hfile, test_func, sizeof(test_func), &dummy, NULL);
+    ret = WriteFile(hfile, test_func, strlen(test_func) + 1, &dummy, NULL);
     ok(ret, "WriteFile error %ld\n", GetLastError());
 
     SetFilePointer( hfile, idd.ImportAddressTableRVA, NULL, FILE_BEGIN );
 
-    for (i = 0; i < ARRAY_SIZE(td); i++)
+    for (i = 0; i < num_td; i++)
     {
         /* 0x1a00 is an empty space between delay data and extended delay data, real thunks are not necessary */
         itd32.u1.Function = nt_header.OptionalHeader.ImageBase + 0x1a00 + i * 0x20;
@@ -4581,10 +4541,10 @@ static void test_ResolveDelayLoadedAPI(void)
     ret = WriteFile(hfile, &itd32, sizeof(itd32), &dummy, NULL);
     ok(ret, "WriteFile error %ld\n", GetLastError());
 
-    for (i = 0; i < ARRAY_SIZE(td); i++)
+    for (i = 0; i < num_td; i++)
     {
         if (td[i].func)
-            itd32.u1.AddressOfData = idd.DllNameRVA + sizeof(test_dll);
+            itd32.u1.AddressOfData = idd.DllNameRVA + strlen(test_dll) + 1;
         else
             itd32.u1.Ordinal = td[i].ordinal;
         SetLastError(0xdeadbeef);
@@ -4602,6 +4562,99 @@ static void test_ResolveDelayLoadedAPI(void)
     SetEndOfFile( hfile );
     CloseHandle(hfile);
 
+    return TRUE;
+}
+
+static void relocate_delay_import_thunks(HMODULE hlib)
+{
+    IMAGE_DELAYLOAD_DESCRIPTOR *delaydir;
+    IMAGE_THUNK_DATA *itda;
+    DWORD file_size;
+
+    delaydir = pRtlImageDirectoryEntryToData(hlib, TRUE, IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, &file_size);
+    ok(delaydir != NULL, "Expecting delay import directory\n");
+    for (;;)
+    {
+        if (!delaydir->DllNameRVA ||
+            !delaydir->ImportAddressTableRVA ||
+            !delaydir->ImportNameTableRVA)
+            break;
+
+        for (itda = RVAToAddr(delaydir->ImportAddressTableRVA, hlib); itda->u1.AddressOfData; itda++)
+        {
+            /* relocate thunk address by hand since we don't generate reloc records */
+            itda->u1.AddressOfData += (char *)hlib - (char *)nt_header_template.OptionalHeader.ImageBase;
+        }
+        delaydir++;
+    }
+}
+
+static void test_ResolveDelayLoadedAPI(void)
+{
+    static const char *test_dll = "secur32.dll";
+    static const char *test_func = "SealMessage";
+    char dll_name[MAX_PATH];
+    IMAGE_DELAYLOAD_DESCRIPTOR *delaydir;
+    HMODULE hlib, himport;
+    DWORD file_size, i;
+    BOOL ret;
+    NTSTATUS ntstatus;
+
+    static const struct test_delay_import_data td[] =
+    {
+        {
+            TRUE, 0, TRUE
+        },
+        {
+            FALSE, IMAGE_ORDINAL_FLAG | 2, TRUE
+        },
+        {
+            FALSE, IMAGE_ORDINAL_FLAG | 5, TRUE
+        },
+        {
+            FALSE, IMAGE_ORDINAL_FLAG | 0, FALSE
+        },
+        {
+            FALSE, IMAGE_ORDINAL_FLAG | 999, FALSE
+        },
+    };
+    static const struct test_delay_import_data td_nobogus[] =
+    {
+        {
+            TRUE, 0, TRUE
+        },
+        {
+            FALSE, IMAGE_ORDINAL_FLAG | 2, TRUE
+        },
+        {
+            FALSE, IMAGE_ORDINAL_FLAG | 5, TRUE
+        },
+    };
+
+    if (!pResolveDelayLoadedAPI)
+    {
+        win_skip("ResolveDelayLoadedAPI is not available\n");
+        return;
+    }
+
+    if (0) /* crashes on native */
+    {
+        SetLastError(0xdeadbeef);
+        ok(!pResolveDelayLoadedAPI(NULL, NULL, NULL, NULL, NULL, 0),
+           "ResolveDelayLoadedAPI succeeded\n");
+        ok(GetLastError() == 0xdeadbeef, "GetLastError changed to %lx\n", GetLastError());
+
+        cb_count = 0;
+        SetLastError(0xdeadbeef);
+        ok(!pResolveDelayLoadedAPI(NULL, NULL, failuredllhook, NULL, NULL, 0),
+           "ResolveDelayLoadedAPI succeeded\n");
+        ok(GetLastError() == 0xdeadbeef, "GetLastError changed to %lx\n", GetLastError());
+        ok(cb_count == 1, "Wrong callback count: %d\n", cb_count);
+    }
+
+    ret = create_delay_import_dll(dll_name, td, ARRAY_SIZE(td), test_dll, test_func);
+    ok(ret, "Couldn't create test library\n");
+
     SetLastError(0xdeadbeef);
     hlib = LoadLibraryA(dll_name);
     ok(hlib != NULL, "LoadLibrary error %lu\n", GetLastError());
@@ -4611,6 +4664,7 @@ static void test_ResolveDelayLoadedAPI(void)
         DeleteFileA(dll_name);
         return;
     }
+    ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s not to be loaded\n", test_dll);
 
     delaydir = pRtlImageDirectoryEntryToData(hlib, TRUE, IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, &file_size);
     if (!delaydir)
@@ -4639,7 +4693,7 @@ static void test_ResolveDelayLoadedAPI(void)
             void *ret, *load;
 
             /* relocate thunk address by hand since we don't generate reloc records */
-            itda[i].u1.AddressOfData += (char *)hlib - (char *)nt_header.OptionalHeader.ImageBase;
+            itda[i].u1.AddressOfData += (char *)hlib - (char *)nt_header_template.OptionalHeader.ImageBase;
 
             if (IMAGE_SNAP_BY_ORDINAL(itdn[i].u1.Ordinal))
                 load = (void *)GetProcAddress(htarget, (LPSTR)IMAGE_ORDINAL(itdn[i].u1.Ordinal));
@@ -4697,10 +4751,119 @@ static void test_ResolveDelayLoadedAPI(void)
                     ok(0, "Test %lu: ResolveDelayLoadedAPI succeeded with %p\n", i, ret);
             }
         }
+        FreeLibrary(htarget);
         delaydir++;
     }
 
+    ok(GetModuleHandleA(dll_name) != NULL, "Expected DLL %s still to be loaded\n", dll_name);
     FreeLibrary(hlib);
+    ok(GetModuleHandleA(dll_name) == NULL, "Expected DLL %s to be unloaded\n", dll_name);
+    ok(GetModuleHandleA(test_dll) == NULL, "Expected DLL %s to be unloaded\n", test_dll);
+
+    if (!pResolveDelayLoadsFromDll)
+    {
+        skip("ResolveDelayLoadsFromDll isn't implemented, skipping\n");
+        DeleteFileA(dll_name);
+        return;
+    }
+
+    SetLastError(0xdeadbeef);
+    hlib = LoadLibraryA(dll_name);
+    ok(hlib != NULL, "LoadLibrary error %lu\n", GetLastError());
+    if (!hlib)
+    {
+        skip("couldn't load %s.\n", dll_name);
+        DeleteFileA(dll_name);
+        return;
+    }
+    relocate_delay_import_thunks(hlib);
+
+    ok(GetModuleHandleA(test_dll) == NULL, "Didn't expect %s to be loaded\n", test_dll);
+    SetLastError(0xdeadbeef);
+    himport = LoadLibraryA(test_dll);
+    ok(himport != NULL, "Couldn't load %s\n", test_dll);
+    ntstatus = pResolveDelayLoadsFromDll(hlib, test_dll, 0x324);
+    /* fails because of the not existing ordinals */
+    ok(ntstatus == STATUS_INVALID_PARAMETER, "Unexpected NT status %lx\n", ntstatus);
+
+    ntstatus = pResolveDelayLoadsFromDll(hlib, test_dll, 0);
+    /* fails because of the not existing ordinals */
+    ok(ntstatus == STATUS_DELAY_LOAD_FAILED, "Unexpected NT status %lx\n", ntstatus);
+
+    ntstatus = pResolveDelayLoadsFromDll(hlib, "idontexistdoi.dll", 0);
+    ok(ntstatus == STATUS_DLL_NOT_FOUND, "Unexpected NT status %lx\n", ntstatus);
+
+    FreeLibrary(hlib);
+    FreeLibrary(himport);
+    ok(GetModuleHandleA(test_dll) == NULL, "Didn't expect %s to be loaded\n", test_dll);
+
+    trace("deleting %s\n", dll_name);
+    DeleteFileA(dll_name);
+
+    ret = create_delay_import_dll(dll_name, td_nobogus, ARRAY_SIZE(td_nobogus), test_dll, test_func);
+    ok(ret, "Couldn't create test library\n");
+
+    SetLastError(0xdeadbeef);
+    hlib = LoadLibraryA(dll_name);
+    ok(hlib != NULL, "LoadLibrary error %lu\n", GetLastError());
+    if (!hlib)
+    {
+        win_skip("couldn't load %s.\n", dll_name);
+        DeleteFileA(dll_name);
+        return;
+    }
+    relocate_delay_import_thunks(hlib);
+
+    himport = LoadLibraryA(test_dll);
+    ok(himport != NULL, "Couldn't load %s\n", test_dll);
+    ntstatus = pResolveDelayLoadsFromDll(hlib, test_dll, 0);
+    /* fails because of the not existing ordinals */
+    ok(ntstatus == STATUS_SUCCESS, "Unexpected NT status %lx\n", ntstatus);
+
+    delaydir = pRtlImageDirectoryEntryToData(hlib, TRUE, IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, &file_size);
+    ok(delaydir != NULL, "Expecting delay import directory\n");
+    for (;;)
+    {
+        IMAGE_THUNK_DATA *itdn, *itda;
+
+        if (!delaydir->DllNameRVA ||
+            !delaydir->ImportAddressTableRVA ||
+            !delaydir->ImportNameTableRVA)
+        {
+            ok(0, "Didn't find entry for %s\n", test_dll);
+            break;
+        }
+
+        itdn = RVAToAddr(delaydir->ImportNameTableRVA, hlib);
+        itda = RVAToAddr(delaydir->ImportAddressTableRVA, hlib);
+        if (!strcmp((const char*)RVAToAddr(delaydir->DllNameRVA, hlib), test_dll))
+        {
+            for (i = 0; i < ARRAY_SIZE(td_nobogus); i++)
+            {
+                char *load;
+
+                if (IMAGE_SNAP_BY_ORDINAL(itdn[i].u1.Ordinal))
+                    load = (void *)GetProcAddress(himport, (LPSTR)IMAGE_ORDINAL(itdn[i].u1.Ordinal));
+                else
+                {
+                    const IMAGE_IMPORT_BY_NAME* iibn = RVAToAddr(itdn[i].u1.AddressOfData, hlib);
+                    load = (void *)GetProcAddress(himport, (char*)iibn->Name);
+                }
+                if (td_nobogus[i].succeeds)
+                {
+                    ok(load == (void*)itda[i].u1.AddressOfData, "Test %lu: expected %p, got %p\n",
+                       i, load, (void*)itda[i].u1.AddressOfData);
+                }
+            }
+            break;
+        }
+        delaydir++;
+    }
+    FreeLibrary(hlib);
+    FreeLibrary(himport);
+    ok(GetModuleHandleA(test_dll) == NULL, "Didn't expect %s to be loaded\n", test_dll);
+    ok(GetModuleHandleA(dll_name) == NULL, "Didn't expect %s to be loaded\n", dll_name);
+
     trace("deleting %s\n", dll_name);
     DeleteFileA(dll_name);
 }
@@ -4967,6 +5130,7 @@ START_TEST(loader)
     pWow64DisableWow64FsRedirection = (void *)GetProcAddress(kernel32, "Wow64DisableWow64FsRedirection");
     pWow64RevertWow64FsRedirection = (void *)GetProcAddress(kernel32, "Wow64RevertWow64FsRedirection");
     pResolveDelayLoadedAPI = (void *)GetProcAddress(kernel32, "ResolveDelayLoadedAPI");
+    pResolveDelayLoadsFromDll = (void *)GetProcAddress(kernel32, "ResolveDelayLoadsFromDll");
     pLoadPackagedLibrary = (void *)GetProcAddress(kernel32, "LoadPackagedLibrary");
 
     if (pIsWow64Process) pIsWow64Process( GetCurrentProcess(), &is_wow64 );

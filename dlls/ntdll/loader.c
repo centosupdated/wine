@@ -4121,7 +4121,17 @@ static NTSTATUS MODULE_DecRefCount( LDR_DDAG_NODE *node, void *context )
 
     if ( wm->ldr.LoadCount == 0 )
     {
+        ULONG size;
+        IMAGE_DELAYLOAD_DESCRIPTOR *descr;
+
         wm->ldr.Flags |= LDR_UNLOAD_IN_PROGRESS;
+        descr = RtlImageDirectoryEntryToData( wm->ldr.DllBase, TRUE, IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT, &size );
+        if (descr)
+            for ( ; descr->DllNameRVA; descr++)
+            {
+                HMODULE hmod = *(HMODULE *)get_rva(wm->ldr.DllBase, descr->ModuleHandleRVA);
+                if (hmod) LdrUnloadDll( hmod );
+            }
         walk_node_dependencies( node, context, MODULE_DecRefCount );
         wm->ldr.Flags &= ~LDR_UNLOAD_IN_PROGRESS;
         module_push_unload_trace( wm );
