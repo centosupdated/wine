@@ -234,7 +234,7 @@ static inline int point_in_rect( const struct rectangle *rect, int x, int y )
 
 static inline int scale_dpi( int val, struct ratio dpi_from, struct ratio dpi_to )
 {
-    unsigned int num = dpi_to.num * dpi_from.den, den = dpi_from.num * dpi_to.den;
+    int num = dpi_to.num * dpi_from.den, den = dpi_from.num * dpi_to.den;
     if (val >= 0) return (val * num + (den / 2)) / den;
     return (val * num - (den / 2)) / den;
 }
