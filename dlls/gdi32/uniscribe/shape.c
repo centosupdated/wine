@@ -902,17 +902,16 @@ static HRESULT insert_glyph(WORD *pwGlyphs, INT *pcGlyphs, INT cChars, INT write
         pwGlyphs[i+1] = pwGlyphs[i];
     pwGlyphs[index] = glyph;
     *pcGlyphs = *pcGlyphs+1;
-    if (write_dir < 0)
-        UpdateClusters(index-3, 1, write_dir, cChars, pwLogClust);
-    else
-        UpdateClusters(index, 1, write_dir, cChars, pwLogClust);
+    for (i=0; i < cChars; i++)
+        if (pwLogClust[i] >= index)
+            pwLogClust[i]++;
     return S_OK;
 }
 
 static HRESULT mark_invalid_combinations(HDC hdc, const WCHAR* pwcChars, INT cChars, WORD *pwGlyphs, INT *pcGlyphs, INT write_dir, WORD *pwLogClust, INT maxGlyphs, combining_lexical_function lex)
 {
     CHAR *context_type;
-    int i,g;
+    int i,target_glyph_idx,insert_pos;
     WCHAR invalid = 0x25cc;
     WORD invalid_glyph;
     HRESULT hr = S_OK;
@@ -923,15 +922,26 @@ static HRESULT mark_invalid_combinations(HDC hdc, const WCHAR* pwcChars, INT cCh
     for (i = 0; i < cChars; i++)
        context_type[i] = lex(pwcChars[i]);
 
-    NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0);
-    for (i = 1, g=1; i < cChars - 1; i++, g++)
+    if (NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0) == GDI_ERROR || invalid_glyph == 0x0000)
     {
-        if (context_type[i] != 0 && context_type[i+write_dir]==context_type[i])
+        if (!hdc)
         {
-            hr = insert_glyph(pwGlyphs, pcGlyphs, cChars, write_dir, invalid_glyph, g, pwLogClust, maxGlyphs);
+            free(context_type);
+            return E_PENDING;
+        }
+        invalid = 0x0020;
+        NtGdiGetGlyphIndicesW(hdc, &invalid, 1, &invalid_glyph, 0);
+    }
+    for (i=0; i < cChars; i++)
+    {
+        if (context_type[i] != 0)
+        {
+            target_glyph_idx = pwLogClust[i];
+            insert_pos = (write_dir > 0) ? target_glyph_idx : target_glyph_idx+1;
+            hr = insert_glyph(pwGlyphs, pcGlyphs, cChars, write_dir, invalid_glyph, insert_pos, pwLogClust, maxGlyphs);
             if (FAILED(hr))
                 break;
-            g++;
+            pwLogClust[i] = target_glyph_idx;
         }
     }
 
