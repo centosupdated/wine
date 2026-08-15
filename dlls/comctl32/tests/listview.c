@@ -7791,6 +7791,263 @@ static void test_WM_PAINT(void)
     DestroyWindow(hwnd);
 }
 
+static void test_groupview(void)
+{
+    HWND hwnd;
+    INT i, top_index = 0;
+    RECT item_rect, item_rect_2, subitem_rect, client;
+    LVITEMA item;
+    LRESULT res;
+    LVGROUP group;
+    LVCOLUMNA column;
+    static WCHAR header1[] = L"G1",
+                 header2[] = L"G2",
+                 header3[] = L"G3";
+
+    hwnd = create_listview_control(LVS_REPORT);
+    ok(hwnd != NULL, "Failed to create listview window.\n");
+
+    column.mask = LVCF_WIDTH;
+    column.cx = 100;
+    res = SendMessageA(hwnd, LVM_INSERTCOLUMNA, 0, (LPARAM)&column);
+    expect(0, res);
+    res = SendMessageA(hwnd, LVM_INSERTCOLUMNA, 1, (LPARAM)&column);
+    expect(1, res);
+
+    group.cbSize = sizeof(group);
+    group.mask = LVGF_GROUPID | LVGF_HEADER;
+    group.iGroupId = 0;
+    group.pszHeader = header1;
+
+    res = SendMessageW(hwnd, LVM_INSERTGROUP, 0, (LPARAM)&group);
+    expect(0, res);
+
+    group.iGroupId = 1;
+    group.pszHeader = header2;
+
+    res = SendMessageW(hwnd, LVM_INSERTGROUP, 1, (LPARAM)&group);
+    expect(1, res);
+
+    group.iGroupId = 2;
+    group.pszHeader = header3;
+
+    res = SendMessageW(hwnd, LVM_INSERTGROUP, 2, (LPARAM)&group);
+    expect(2, res);
+
+    res = SendMessageA(hwnd, LVM_GETGROUPCOUNT, 0, 0);
+    expect(3, res);
+
+    res = SendMessageA(hwnd, LVM_ENABLEGROUPVIEW, TRUE, 0);
+    expect(1, res);
+
+    res = SendMessageA(hwnd, LVM_ISGROUPVIEWENABLED, 0, 0);
+    expect(1, res);
+
+    res = SendMessageA(hwnd, LVM_ENABLEGROUPVIEW, TRUE, 0);
+    expect(0, res);
+
+    for (i = 0; i < 50; i++)
+    {
+        item.mask = LVIF_GROUPID;
+        item.iItem = i;
+        item.iSubItem = 0;
+        item.pszText = 0;
+
+        if (i == 3) item.iGroupId = -1;
+        else if (i < 20) item.iGroupId = 0;
+        else if (i < 25) item.iGroupId = 1;
+        else item.iGroupId = 2;
+
+        res = SendMessageA(hwnd, LVM_INSERTITEMA, 0, (LPARAM) &item);
+        expect(i, res);
+    }
+
+    for (i = 1; i < 4; i++)
+    {
+        item_rect.left = LVIR_BOUNDS;
+        res = SendMessageA(hwnd, LVM_GETITEMRECT, i*10, (LPARAM) &item_rect);
+        expect(1, res);
+        
+        subitem_rect.top = 1;
+        subitem_rect.left = LVIR_BOUNDS;
+        res = SendMessageA(hwnd, LVM_GETSUBITEMRECT, i*10, (LPARAM) &subitem_rect);
+        expect(1, res);
+
+        ok(item_rect.top == subitem_rect.top && item_rect.bottom == subitem_rect.bottom, "Unexpected subitem rect %s, item rect %s (item %d)\n",
+            wine_dbgstr_rect(&subitem_rect), wine_dbgstr_rect(&item_rect), i*10);
+    }
+
+    /* Item 3 has no group and should not be visible in group view. */
+    item_rect.left = LVIR_BOUNDS;
+    res = SendMessageA(hwnd, LVM_GETITEMRECT, 3, (LPARAM) &item_rect);
+    expect(0, res);
+
+    res = SendMessageA(hwnd, LVM_ISITEMVISIBLE, 3, 0);
+    expect(0, res);
+
+    /* LVM_GETTOPINDEX returns 0 in report view when group view is enabled. */
+    GetClientRect(hwnd, &client);
+
+    top_index = SendMessageA(hwnd, LVM_GETTOPINDEX, 0, 0);
+    expect(0, top_index);
+
+    res = SendMessageA(hwnd, LVM_SCROLL, 0, (LPARAM) (client.bottom - client.top) / 2);
+    expect(1, res);
+
+    top_index = SendMessageA(hwnd, LVM_GETTOPINDEX, 0, 0);
+    expect(0, top_index);
+
+    res = SendMessageA(hwnd, LVM_SCROLL, 0, 10000);
+    expect(1, res);
+
+    top_index = SendMessageA(hwnd, LVM_GETTOPINDEX, 0, 0);
+    expect(0, top_index);
+
+    res = SendMessageA(hwnd, LVM_REMOVEGROUP, 1, 0);
+    expect(1, res);
+
+    item.mask = LVIF_GROUPID;
+    item.iItem = 20;
+    res = SendMessageA(hwnd, LVM_GETITEMA, 0, (LPARAM) &item);
+    ok(res, "Failed to get item.\n");
+    ok(item.iGroupId == I_GROUPIDNONE, "got group id %d, expected I_GROUPIDNONE\n", item.iGroupId);
+
+    item_rect.left = LVIR_BOUNDS;
+    res = SendMessageA(hwnd, LVM_GETITEMRECT, 20, (LPARAM) &item_rect);
+    expect(0, res);
+
+    group.iGroupId = 1;
+    group.pszHeader = header2;
+    res = SendMessageW(hwnd, LVM_INSERTGROUP, 0, (LPARAM)&group);
+    expect(0, res);
+
+    item_rect.left = LVIR_BOUNDS;
+    res = SendMessageA(hwnd, LVM_GETITEMRECT, 20, (LPARAM)&item_rect);
+    expect(0, res);
+
+    res = SendMessageA(hwnd, LVM_REMOVEALLGROUPS, 0, 0);
+    expect(1, res);
+
+    res = SendMessageA(hwnd, LVM_GETGROUPCOUNT, 0, 0);
+    expect(0, res);
+
+    item.mask = LVIF_GROUPID;
+    item.iItem = 20;
+    res = SendMessageA(hwnd, LVM_GETITEMA, 0, (LPARAM) &item);
+    ok(res, "Failed to get item.\n");
+    ok(item.iGroupId == I_GROUPIDNONE, "got group id %d, expected I_GROUPIDNONE\n", item.iGroupId);
+
+    item_rect.left = LVIR_BOUNDS;
+    res = SendMessageA(hwnd, LVM_GETITEMRECT, 20, (LPARAM) &item_rect);
+    expect(0, res);
+
+    res = SendMessageA(hwnd, LVM_ENABLEGROUPVIEW, FALSE, 0);
+    expect(1, res);
+
+    res = SendMessageA(hwnd, LVM_ISGROUPVIEWENABLED, 0, 0);
+    expect(0, res);
+
+    DestroyWindow(hwnd);
+
+    hwnd = create_listview_control(LVS_REPORT | LVS_OWNERDATA);
+    ok(hwnd != NULL, "Failed to create listview window.\n");
+    res = SendMessageA(hwnd, LVM_ENABLEGROUPVIEW, TRUE, 0);
+    expect(-1, res);
+
+    DestroyWindow(hwnd);
+
+    hwnd = create_listview_control(LVS_REPORT);
+    ok(hwnd != NULL, "Failed to create listview window.\n");
+
+    column.mask = LVCF_WIDTH;
+    column.cx = 100;
+    res = SendMessageA(hwnd, LVM_INSERTCOLUMNA, 0, (LPARAM) &column);
+    expect(0, res);
+
+    group.cbSize = sizeof(group);
+    group.mask = LVGF_GROUPID | LVGF_HEADER;
+    group.iGroupId = 0;
+    group.pszHeader = header1;
+
+    res = SendMessageW(hwnd, LVM_INSERTGROUP, 1, (LPARAM) &group);
+    expect(0, res);
+
+    group.iGroupId = 1;
+    group.pszHeader = header2;
+
+    res = SendMessageW(hwnd, LVM_INSERTGROUP, 0, (LPARAM) &group);
+    expect(0, res);
+
+    res = SendMessageA(hwnd, LVM_ENABLEGROUPVIEW, TRUE, 0);
+    expect(1, res);
+
+    for (i = 0; i < 2; i++)
+    {
+        item.mask = LVIF_GROUPID;
+        item.iItem = i;
+        item.iSubItem = 0;
+        item.iGroupId = i;
+
+        res = SendMessageA(hwnd, LVM_INSERTITEMA, 0, (LPARAM) &item);
+        expect(i, res);
+    }
+
+    item_rect.left = LVIR_BOUNDS;
+    res = SendMessageA(hwnd, LVM_GETITEMRECT, 0, (LPARAM) &item_rect);
+    expect(1, res);
+
+    item_rect_2.left = LVIR_BOUNDS;
+    res = SendMessageA(hwnd, LVM_GETITEMRECT, 1, (LPARAM) &item_rect_2);
+    expect(1, res);
+
+    ok(item_rect.top > item_rect_2.top, "Unexpected item order, item 0 rect %s, item 1 rect %s.\n",
+        wine_dbgstr_rect(&item_rect), wine_dbgstr_rect(&item_rect_2));
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 1, LVNI_BELOW);
+    expect(-1, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 1, LVNI_ABOVE);
+    expect(-1, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 0, LVNI_BELOW);
+    expect(-1, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 0, LVNI_ABOVE);
+    expect(-1, res);
+
+    for (i = 2; i < 6; i++)
+    {
+        item.mask = LVIF_GROUPID;
+        item.iItem = i;
+        item.iSubItem = 0;
+        if (i == 3) item.iGroupId = -1;
+        else item.iGroupId = 1;
+
+        res = SendMessageA(hwnd, LVM_INSERTITEMA, 0, (LPARAM) &item);
+        expect(i, res);
+    }
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 2, LVNI_BELOW);
+    expect(4, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 2, LVNI_ABOVE);
+    expect(1, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 4, LVNI_ABOVE);
+    expect(2, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, 4, LVNI_BELOW);
+    expect(5, res);
+
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, -1, LVNI_BELOW);
+    expect(-1, res);
+    
+    res = SendMessageA(hwnd, LVM_GETNEXTITEM, -1, LVNI_ABOVE);
+    expect(-1, res);
+
+    DestroyWindow(hwnd);
+}
+
 START_TEST(listview)
 {
     ULONG_PTR ctx_cookie;
@@ -7917,6 +8174,7 @@ START_TEST(listview)
     test_LVM_GETORIGIN(TRUE);
     test_customdraw_background(TRUE);
     test_WM_PAINT();
+    test_groupview();
 
     uninit_winevent_hook();
 
