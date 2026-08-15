@@ -1970,6 +1970,15 @@ TOOLBAR_GetButtonIndex (const TOOLBAR_INFO *infoPtr, INT idCommand, BOOL Command
     return -1;
 }
 
+static BOOL
+TOOLBAR_CheckIndexButton (TBUTTON_INFO *btnPtr, const TOOLBAR_INFO *infoPtr, INT nIndex)
+{
+    if ((nIndex < 0) || (nIndex >= infoPtr->nNumButtons))
+        return FALSE;
+
+    btnPtr = &infoPtr->buttons[nIndex];
+    return TRUE;
+}
 
 static INT
 TOOLBAR_GetCheckedGroupButtonIndex (const TOOLBAR_INFO *infoPtr, INT nIndex)
@@ -1977,11 +1986,10 @@ TOOLBAR_GetCheckedGroupButtonIndex (const TOOLBAR_INFO *infoPtr, INT nIndex)
     TBUTTON_INFO *btnPtr;
     INT nRunIndex;
 
-    if ((nIndex < 0) || (nIndex > infoPtr->nNumButtons))
-	return -1;
-
     /* check index button */
-    btnPtr = &infoPtr->buttons[nIndex];
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return -1;
+
     if ((btnPtr->fsStyle & BTNS_CHECKGROUP) == BTNS_CHECKGROUP) {
 	if (btnPtr->fsState & TBSTATE_CHECKED)
 	    return nIndex;
@@ -3190,10 +3198,9 @@ TOOLBAR_ChangeBitmap (TOOLBAR_INFO *infoPtr, INT Id, INT Index)
     TRACE("button %d, iBitmap now %d\n", Id, Index);
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    if (nIndex == -1)
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     btnPtr->iBitmap = Index;
 
     /* we HAVE to erase the background, the new bitmap could be */
@@ -3216,10 +3223,8 @@ TOOLBAR_CheckButton (TOOLBAR_INFO *infoPtr, INT Id, LPARAM lParam)
 
     TRACE("hwnd %p, btn index %d, lParam %Ix\n", infoPtr->hwndSelf, nIndex, lParam);
 
-    if (nIndex == -1)
-	return FALSE;
-
-    btnPtr = &infoPtr->buttons[nIndex];
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
     bChecked = (btnPtr->fsState & TBSTATE_CHECKED) != 0;
 
@@ -3284,9 +3289,9 @@ static LRESULT
 TOOLBAR_DeleteButton (TOOLBAR_INFO *infoPtr, INT nIndex)
 {
     NMTOOLBARW nmtb;
-    TBUTTON_INFO *btnPtr = &infoPtr->buttons[nIndex];
+    TBUTTON_INFO *btnPtr;
 
-    if ((nIndex < 0) || (nIndex >= infoPtr->nNumButtons))
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
         return FALSE;
 
     memset(&nmtb, 0, sizeof(nmtb));
@@ -3348,10 +3353,8 @@ TOOLBAR_EnableButton (TOOLBAR_INFO *infoPtr, INT Id, LPARAM lParam)
 
     TRACE("hwnd %p, btn id %d, lParam %Ix\n", infoPtr->hwndSelf, Id, lParam);
 
-    if (nIndex == -1)
-	return FALSE;
-
-    btnPtr = &infoPtr->buttons[nIndex];
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
     bState = btnPtr->fsState & TBSTATE_ENABLED;
 
@@ -3405,10 +3408,9 @@ TOOLBAR_GetButton (const TOOLBAR_INFO *infoPtr, INT nIndex, TBBUTTON *lpTbb)
     if (lpTbb == NULL)
 	return FALSE;
 
-    if ((nIndex < 0) || (nIndex >= infoPtr->nNumButtons))
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     lpTbb->iBitmap   = btnPtr->iBitmap;
     lpTbb->idCommand = btnPtr->idCommand;
     lpTbb->fsState   = btnPtr->fsState;
@@ -3443,10 +3445,9 @@ TOOLBAR_GetButtonInfoT(const TOOLBAR_INFO *infoPtr, INT Id, LPTBBUTTONINFOW lpTb
     }
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, lpTbInfo->dwMask & TBIF_BYINDEX);
-    if (nIndex == -1)
-	return -1;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return -1;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     if (lpTbInfo->dwMask & TBIF_COMMAND)
 	lpTbInfo->idCommand = btnPtr->idCommand;
     if (lpTbInfo->dwMask & TBIF_IMAGE)
@@ -3589,9 +3590,8 @@ TOOLBAR_GetItemRect (const TOOLBAR_INFO *infoPtr, INT nIndex, LPRECT lpRect)
 {
     TBUTTON_INFO *btnPtr;
 
-    btnPtr = &infoPtr->buttons[nIndex];
-    if ((nIndex < 0) || (nIndex >= infoPtr->nNumButtons))
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
     if (lpRect == NULL)
 	return FALSE;
@@ -3640,9 +3640,9 @@ TOOLBAR_GetRect (const TOOLBAR_INFO *infoPtr, INT Id, LPRECT lpRect)
     INT        nIndex;
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    btnPtr = &infoPtr->buttons[nIndex];
-    if ((nIndex < 0) || (nIndex >= infoPtr->nNumButtons))
-	return FALSE;
+
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
     if (lpRect == NULL)
 	return FALSE;
@@ -3726,10 +3726,9 @@ TOOLBAR_HideButton (TOOLBAR_INFO *infoPtr, INT Id, BOOL fHide)
     TRACE("\n");
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    if (nIndex == -1)
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     oldState = btnPtr->fsState;
 
     if (fHide)
@@ -3761,10 +3760,9 @@ TOOLBAR_Indeterminate (const TOOLBAR_INFO *infoPtr, INT Id, BOOL fIndeterminate)
     DWORD oldState;
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    if (nIndex == -1)
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     oldState = btnPtr->fsState;
 
     if (fIndeterminate)
@@ -3951,10 +3949,9 @@ TOOLBAR_MarkButton (const TOOLBAR_INFO *infoPtr, INT Id, BOOL fMark)
     TRACE("hwnd = %p, Id = %d, fMark = 0%d\n", infoPtr->hwndSelf, Id, fMark);
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    if (nIndex == -1)
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
         return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     oldState = btnPtr->fsState;
 
     if (fMark)
@@ -4047,10 +4044,9 @@ TOOLBAR_PressButton (const TOOLBAR_INFO *infoPtr, INT Id, BOOL fPress)
     DWORD oldState;
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    if (nIndex == -1)
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     oldState = btnPtr->fsState;
 
     if (fPress)
@@ -4476,10 +4472,9 @@ TOOLBAR_SetButtonInfo (TOOLBAR_INFO *infoPtr, INT Id,
 	return FALSE;
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, lptbbi->dwMask & TBIF_BYINDEX);
-    if (nIndex == -1)
-	return FALSE;
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
-    btnPtr = &infoPtr->buttons[nIndex];
     if (lptbbi->dwMask & TBIF_COMMAND)
 	btnPtr->idCommand = lptbbi->idCommand;
     if (lptbbi->dwMask & TBIF_IMAGE)
@@ -5041,10 +5036,8 @@ TOOLBAR_SetState (TOOLBAR_INFO *infoPtr, INT Id, LPARAM lParam)
     INT nIndex;
 
     nIndex = TOOLBAR_GetButtonIndex (infoPtr, Id, FALSE);
-    if (nIndex == -1)
-	return FALSE;
-
-    btnPtr = &infoPtr->buttons[nIndex];
+    if (!TOOLBAR_CheckIndexButton(btnPtr, infoPtr, nIndex))
+	    return FALSE;
 
     /* if hidden state has changed the invalidate entire window and recalc */
     if ((btnPtr->fsState & TBSTATE_HIDDEN) != (LOWORD(lParam) & TBSTATE_HIDDEN)) {
