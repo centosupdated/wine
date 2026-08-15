@@ -349,7 +349,8 @@ static BOOL is_special_env_var( const char *var )
  */
 static BOOL is_ignored_env_var( const char *var )
 {
-    return (STARTS_WITH( var, "NIXPKGS_" ) ||
+    return (STARTS_WITH( var, "LS_COLORS" ) ||
+			STARTS_WITH( var, "NIXPKGS_" ) ||
             STARTS_WITH( var, "QT_" ) ||
             STARTS_WITH( var, "SDL_AUDIODRIVER=" ) ||
             STARTS_WITH( var, "SDL_AUDIO_DRIVER=" ) ||
