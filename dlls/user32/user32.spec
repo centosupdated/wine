@@ -795,7 +795,7 @@
 @ stdcall IsRectEmpty(ptr)
 # @ stub IsSETEnabled
 # @ stub IsServerSideWindow
-# @ stub IsThreadDesktopComposited
+@ stdcall IsThreadDesktopComposited()
 # @ stub IsThreadTSFEventAware
 # @ stub IsTopLevelWindow
 @ stdcall IsTouchWindow(long ptr)

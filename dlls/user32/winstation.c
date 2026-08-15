@@ -331,6 +331,15 @@ BOOL WINAPI EnumDesktopsW( HWINSTA winsta, DESKTOPENUMPROCW func, LPARAM lparam 
     return enum_names( winsta, func, lparam );
 }
 
+/******************************************************************************
+ *              IsThreadDesktopComposited   (USER32.@)
+ */
+BOOL WINAPI IsThreadDesktopComposited( void )
+{
+    FIXME("stub\n");
+
+    return TRUE;
+}
 
 /***********************************************************************
  *              GetUserObjectInformationA   (USER32.@)
