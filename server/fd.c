@@ -2752,6 +2752,7 @@ static void set_fd_name( struct fd *fd, struct fd *root, const char *nameptr, da
     struct stat st, st2;
     char *name;
     const unsigned int replace = flags & FILE_RENAME_REPLACE_IF_EXISTS;
+    struct fd *fd_ptr;
 
     if (!fd->inode || !fd->unix_name)
     {
@@ -2872,8 +2873,12 @@ static void set_fd_name( struct fd *fd, struct fd *root, const char *nameptr, da
         fchmod( fd->unix_fd, st.st_mode );
     }
 
-    free( fd->nt_name );
-    fd->nt_name = dup_nt_name( root, nt_name, &fd->nt_namelen );
+    LIST_FOR_EACH_ENTRY( fd_ptr, &fd->inode->open, struct fd, inode_entry )
+    {
+        free( fd_ptr->nt_name );
+        fd_ptr->nt_name = dup_nt_name( root, nt_name, &fd_ptr->nt_namelen );
+    }
+
     free( fd->unix_name );
     fd->closed->unix_name = fd->unix_name = realpath( name, NULL );
     free( name );
