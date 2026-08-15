@@ -24,9 +24,14 @@
 #include <winbase.h>
 #include <winnls.h>
 #include <winuser.h>
+#include <winreg.h>
+#include <wtypes.h>
+#include <propkey.h>
+#include <setupapi.h>
 
 #include <bthsdpdef.h>
 #include <bluetoothapis.h>
+#include <ddk/bthguid.h>
 
 #include <wine/debug.h>
 #include <wine/test.h>
@@ -58,6 +63,50 @@ static const char *debugstr_BLUETOOTH_DEVICE_INFO( const BLUETOOTH_DEVICE_INFO *
                              debugstr_bluetooth_address( info->Address.rgBytes ), info->ulClassofDevice,
                              info->fConnected, info->fRemembered, info->fAuthenticated, debugstr_w( last_seen ),
                              debugstr_w( last_used ), debugstr_w( info->szName ) );
+}
+
+const char *debugstr_BDIF_flags( UINT32 flags )
+{
+
+    static const struct {
+        UINT32 flag;
+        const char *str;
+    } flag_str[] = {
+#define XX(f) {(f), #f}
+        XX(BDIF_ADDRESS),
+        XX(BDIF_COD),
+        XX(BDIF_NAME),
+        XX(BDIF_PAIRED),
+        XX(BDIF_PERSONAL),
+        XX(BDIF_CONNECTED),
+        XX(BDIF_SSP_SUPPORTED),
+        XX(BDIF_SSP_PAIRED),
+        XX(BDIF_SSP_MITM_PROTECTED),
+        XX(BDIF_BR),
+        XX(BDIF_LE),
+        XX(BDIF_LE_PAIRED),
+        XX(BDIF_LE_PERSONAL),
+        XX(BDIF_LE_NAME),
+        XX(BDIF_LE_CONNECTED),
+#undef XX
+    };
+    char buf[350], *ptr = buf;
+    ULONG rem = sizeof( buf ), i;
+
+    if (!flags) return "0x0";
+
+    for (i = 0; i < ARRAY_SIZE( flag_str ); i++)
+    {
+        if (flags & flag_str[i].flag)
+        {
+            ULONG n = snprintf( ptr, rem, buf == ptr ? "%s" : "|%s", flag_str[i].str );
+            if (n >= rem) return wine_dbg_sprintf( "%#I32x\n", flags );
+            rem -= n;
+            ptr += n;
+        }
+    }
+
+    return wine_dbg_sprintf( "{%s}\n", buf );
 }
 
 void test_radio_BluetoothFindFirstDevice( HANDLE radio, void *data )
@@ -123,6 +172,63 @@ void test_BluetoothFindFirstDevice( void )
     test_for_all_radios( __FILE__, __LINE__, test_radio_BluetoothFindFirstDevice, NULL );
 }
 
+/* Tests whether the associated interface for the remote device exists. */
+void test_device_iface( const BLUETOOTH_DEVICE_INFO *info, UINT32 *device_flags, UINT32 *cod )
+{
+    char buffer[sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W) + MAX_PATH * sizeof( WCHAR )];
+    SP_DEVICE_INTERFACE_DETAIL_DATA_W *iface_detail = (SP_DEVICE_INTERFACE_DETAIL_DATA_W *)buffer;
+    const BYTE *addr = info->Address.rgBytes;
+    SP_DEVICE_INTERFACE_DATA iface_data;
+    BOOL found = FALSE;
+    WCHAR addr_str[13];
+    DWORD ret, idx = 0;
+    HDEVINFO devinfo;
+
+    swprintf( addr_str, ARRAY_SIZE( addr_str ), L"%02X%02X%02X%02X%02X%02X", addr[5], addr[4], addr[3], addr[2],
+              addr[1], addr[0] );
+
+    devinfo = SetupDiGetClassDevsW( &GUID_BTH_DEVICE_INTERFACE, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE );
+    ret = GetLastError();
+    ok( devinfo != INVALID_HANDLE_VALUE, "SetupDiGetClassDevsW failed %lu\n", ret );
+
+    iface_detail->cbSize = sizeof( *iface_detail );
+    iface_data.cbSize = sizeof( iface_data );
+    while (SetupDiEnumDeviceInterfaces( devinfo, NULL, &GUID_BTH_DEVICE_INTERFACE, idx++, &iface_data ))
+    {
+        DEVPROPTYPE type = DEVPROP_TYPE_NULL;
+        WCHAR cur_addr_str[13];
+        BOOL success;
+        DWORD size;
+
+        cur_addr_str[0] = L'\0';
+        success = SetupDiGetDeviceInterfacePropertyW( devinfo, &iface_data,
+                                                      (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_DeviceAddress,
+                                                      &type, (BYTE *)cur_addr_str, sizeof( cur_addr_str ), &size, 0 );
+        ok( success, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", GetLastError() );
+        ok( type == DEVPROP_TYPE_STRING, "Got type %#lx\n", type );
+        ok( size == sizeof( cur_addr_str ), "got size %lu\n", size );
+        if (!wcsicmp( addr_str, cur_addr_str ))
+        {
+            found = TRUE;
+            success = SetupDiGetDeviceInterfacePropertyW( devinfo, &iface_data,
+                                                          (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_Flags, &type,
+                                                          (BYTE *)device_flags, sizeof( *device_flags ), &size, 0 );
+            ok( success, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", GetLastError() );
+            ok( type == DEVPROP_TYPE_UINT32, "Got type %#lx\n", type );
+            ok( size == sizeof( *device_flags ), "got size %lu\n", size );
+            success = SetupDiGetDeviceInterfacePropertyW( devinfo, &iface_data, &DEVPKEY_Bluetooth_ClassOfDevice, &type,
+                                                          (BYTE *)cod, sizeof( *cod ), &size, 0 );
+            todo_wine ok( success, "SetupDiGetDeviceInterfacePropertyW failed: %lu\n", GetLastError() );
+            todo_wine ok( type == DEVPROP_TYPE_UINT32, "Got type %#lx\n", type );
+            todo_wine ok( size == sizeof( *cod ), "got size %lu\n", size );
+            break;
+        }
+    }
+
+    SetupDiDestroyDeviceInfoList( devinfo );
+    ok( found, "Could not find associated device object.\n" );
+}
+
 void test_radio_BluetoothFindNextDevice( HANDLE radio, void *data )
 {
     BLUETOOTH_DEVICE_SEARCH_PARAMS search_params = *(BLUETOOTH_DEVICE_SEARCH_PARAMS *)data;
@@ -149,12 +255,27 @@ void test_radio_BluetoothFindNextDevice( HANDLE radio, void *data )
         BLUETOOTH_DEVICE_INFO info2 = {0};
         BOOL matches;
 
+        winetest_push_context("device %lu", i++ );
         matches = (info.fConnected && search_params.fReturnConnected)
             || (info.fAuthenticated && search_params.fReturnAuthenticated)
             || (info.fRemembered && search_params.fReturnRemembered)
             || (!info.fRemembered && search_params.fReturnUnknown);
         ok( matches, "Device does not match filter constraints\n" );
-        trace( "device %lu: %s\n", i, debugstr_BLUETOOTH_DEVICE_INFO( &info ) );
+        trace( "%s\n", debugstr_BLUETOOTH_DEVICE_INFO( &info ) );
+
+        if (info.fConnected)
+        {
+            UINT32 flags = 0, cod = 0, mask = BDIF_BR | BDIF_CONNECTED | BDIF_ADDRESS;
+
+            if (info.szName[0])
+                mask |= BDIF_NAME;
+            if (info.fAuthenticated)
+                mask |= (BDIF_PAIRED | BDIF_PERSONAL);
+
+            test_device_iface( &info, &flags, &cod );
+            ok( flags & mask, "Got flags %s\n", debugstr_BDIF_flags( flags ) );
+            todo_wine ok( cod == info.ulClassofDevice, "Got cod %#I32x != %#lx\n", cod, info.ulClassofDevice );
+        }
 
         info2.dwSize = sizeof( info2 );
         info2.Address = info.Address;
@@ -173,6 +294,7 @@ void test_radio_BluetoothFindNextDevice( HANDLE radio, void *data )
         success = BluetoothFindNextDevice( hfind, &info );
         err = GetLastError();
         ok( success || err == ERROR_NO_MORE_ITEMS, "BluetoothFindNextDevice failed: %lu\n", err );
+        winetest_pop_context();
         if (!success)
             break;
     }

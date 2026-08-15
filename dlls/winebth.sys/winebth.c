@@ -46,6 +46,7 @@
 #include <wine/list.h>
 
 #include "winebth_priv.h"
+#include "winnt.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL( winebth );
 
@@ -102,8 +103,12 @@ struct bluetooth_remote_device
     BOOL started; /* Whether the device has been started. Guarded by props_cs */
     BOOL removed;
 
-    BOOL le; /* Guarded by props_cs */
+    /* Whether the device supports LE. Set when support is either indicated by unix
+     * (WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE) or manually detected when a GATT service for this device is found.
+     * Guarded by props_cs */
+    BOOL le;
     UNICODE_STRING bthle_symlink_name; /* Guarded by props_cs */
+    UNICODE_STRING bredr_symlink_name; /* Guarded by props_cs */
     struct list gatt_services; /* Guarded by props_cs */
 };
 
@@ -332,6 +337,18 @@ static NTSTATUS bluetooth_gatt_service_dispatch( DEVICE_OBJECT *device, struct b
         IoCompleteRequest( irp, IO_NO_INCREMENT );
     }
     return status;
+}
+
+/* Returns whether the remote device supports BR/EDR. Caller should hold device->props_cs. */
+static BOOL bluetooth_remote_device_has_bredr( const struct bluetooth_remote_device *device )
+{
+    return !!(device->props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR);
+}
+
+/* Returns whether the remote device supports LE. Caller should hold device->props_cs. */
+static BOOL bluetooth_remote_device_has_le( const struct bluetooth_remote_device *device )
+{
+    return device->le;
 }
 
 static NTSTATUS bluetooth_remote_device_dispatch( DEVICE_OBJECT *device, struct bluetooth_remote_device *ext, IRP *irp )
@@ -1044,7 +1061,7 @@ static void bluetooth_radio_add_remote_device( struct winebluetooth_watcher_even
             ext->remote_device.removed = FALSE;
             ext->remote_device.started = FALSE;
 
-            ext->remote_device.le = FALSE;
+            ext->remote_device.le = !!(event.known_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE);
             list_init( &ext->remote_device.gatt_services );
 
             if (!event.init_entry)
@@ -1132,6 +1149,8 @@ static void bluetooth_device_set_properties( struct bluetooth_remote_device *dev
                                              const struct winebluetooth_device_properties *props,
                                              winebluetooth_device_props_mask_t mask )
 {
+    BTH_DEVICE_INFO info = {0};
+
     if (mask & WINEBLUETOOTH_DEVICE_PROPERTY_ADDRESS)
     {
         WCHAR addr_str[18], aep_id[59];
@@ -1154,6 +1173,10 @@ static void bluetooth_device_set_properties( struct bluetooth_remote_device *dev
             IoSetDeviceInterfacePropertyData( &device->bthle_symlink_name,
                                               (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_DeviceAddress,
                                               LOCALE_NEUTRAL, 0, DEVPROP_TYPE_STRING, 26, addr_str );
+        if (device->bredr_symlink_name.Buffer)
+            IoSetDeviceInterfacePropertyData( &device->bredr_symlink_name,
+                                              (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_DeviceAddress,
+                                              LOCALE_NEUTRAL, 0, DEVPROP_TYPE_STRING, 26, addr_str );
 
         swprintf( addr_str, ARRAY_SIZE( addr_str ), L"%02x:%02x:%02x:%02x:%02x:%02x", device_addr[0], device_addr[1],
                   device_addr[2], device_addr[3], device_addr[4], device_addr[5] );
@@ -1174,7 +1197,21 @@ static void bluetooth_device_set_properties( struct bluetooth_remote_device *dev
             IoSetDeviceInterfacePropertyData( &device->bthle_symlink_name,
                                               (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_LastConnectedTime,
                                               LOCALE_NEUTRAL, 0, DEVPROP_TYPE_FILETIME, sizeof( time ), (void *)&time );
+        if (device->bredr_symlink_name.Buffer)
+            IoSetDeviceInterfacePropertyData( &device->bredr_symlink_name,
+                                              (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_LastConnectedTime,
+                                              LOCALE_NEUTRAL, 0, DEVPROP_TYPE_FILETIME, sizeof( time ), (void *)&time );
     }
+
+    winebluetooth_device_properties_to_info( mask, props, &info );
+    if (device->bthle_symlink_name.Buffer)
+        IoSetDeviceInterfacePropertyData( &device->bthle_symlink_name,
+                                          (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_Flags, LOCALE_NEUTRAL, 0,
+                                          DEVPROP_TYPE_UINT32, sizeof( info.flags ), &info.flags );
+    if (device->bredr_symlink_name.Buffer)
+        IoSetDeviceInterfacePropertyData( &device->bredr_symlink_name,
+                                          (DEVPROPKEY *)&PKEY_DeviceInterface_Bluetooth_Flags, LOCALE_NEUTRAL, 0,
+                                          DEVPROP_TYPE_UINT32, sizeof( info.flags ), &info.flags );
 }
 
 static void bluetooth_radio_update_device_props( struct winebluetooth_watcher_event_device_props_changed event )
@@ -1218,6 +1255,10 @@ static void bluetooth_radio_update_device_props( struct winebluetooth_watcher_ev
                     device->props.trusted = event.props.trusted;
                 if (event.changed_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_CLASS)
                     device->props.class = event.props.class;
+                if (event.changed_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR)
+                    winebluetooth_device_bearer_properties_update( &device->props.bredr, &event.props.bredr );
+                if (event.changed_props_mask & WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE)
+                    winebluetooth_device_bearer_properties_update( &device->props.le, &event.props.le );
                 winebluetooth_device_properties_to_info( device->props_mask, &device->props, &device_new_info );
                 bluetooth_device_set_properties( device, adapter_addr.rgBytes, &device->props, device->props_mask );
                 LeaveCriticalSection( &device->props_cs );
@@ -1299,17 +1340,15 @@ static void complete_irp( IRP *irp, NTSTATUS result )
 /* Enables the low energy interface for this device if it hasn't been already. Caller should hold device->props_cs. */
 static void bluetooth_device_enable_le_iface( struct bluetooth_remote_device *device )
 {
-    /* The device hasn't been started by the PnP manager yet. Set le, and let remote_device_pdo_pnp enable the
-     * interface. */
-    if (!device->started)
-        device->le = TRUE;
-    else if (!device->le)
-    {
-        device->le = TRUE;
-        if (!IoRegisterDeviceInterface( device->device_obj, &GUID_BLUETOOTHLE_DEVICE_INTERFACE, NULL,
-            &device->bthle_symlink_name ))
+    if (bluetooth_remote_device_has_le( device )) return;
+
+    device->le = TRUE;
+    /* If the device hasn't been started by the PnP manager, do nothing as remote_device_pdo_pnp enables the interface. */
+    if (!device->started) return;
+    /* Otherwise, do it manually. */
+    if (!IoRegisterDeviceInterface( device->device_obj, &GUID_BLUETOOTHLE_DEVICE_INTERFACE, NULL,
+                                    &device->bthle_symlink_name ))
         IoSetDeviceInterfaceState( &device->bthle_symlink_name, TRUE );
-    }
 }
 
 static void bluetooth_device_add_gatt_service( struct winebluetooth_watcher_event_gatt_service_added event )
@@ -1400,7 +1439,7 @@ static void bluetooth_gatt_service_remove( winebluetooth_gatt_service_t service 
             struct bluetooth_gatt_service *svc;
 
             EnterCriticalSection( &device->props_cs );
-            if (!device->le)
+            if (!bluetooth_remote_device_has_le( device ))
             {
                 LeaveCriticalSection( &device->props_cs );
                 continue;
@@ -1441,7 +1480,7 @@ bluetooth_gatt_service_add_characteristic( struct winebluetooth_watcher_event_ga
             struct bluetooth_gatt_service *svc;
 
             EnterCriticalSection( &device->props_cs );
-            if (!device->le)
+            if (!bluetooth_remote_device_has_le( device ))
             {
                 LeaveCriticalSection( &device->props_cs );
                 continue;
@@ -1518,7 +1557,7 @@ static void bluetooth_gatt_characteristic_remove( winebluetooth_gatt_characteris
             struct bluetooth_gatt_service *svc;
 
             EnterCriticalSection( &device->props_cs );
-            if (!device->le)
+            if (!bluetooth_remote_device_has_le( device ))
             {
                 LeaveCriticalSection( &device->props_cs );
                 continue;
@@ -1568,7 +1607,7 @@ static void bluetooth_gatt_characteristic_value_update( struct winebluetooth_wat
             struct bluetooth_gatt_service *svc;
 
             EnterCriticalSection( &device->props_cs );
-            if (!device->le)
+            if (!bluetooth_remote_device_has_le( device ))
             {
                 LeaveCriticalSection( &device->props_cs );
                 continue;
@@ -2065,6 +2104,11 @@ static void remote_device_destroy( struct bluetooth_remote_device *ext )
         IoSetDeviceInterfaceState( &ext->bthle_symlink_name, FALSE );
         RtlFreeUnicodeString( &ext->bthle_symlink_name );
     }
+    if (ext->bredr_symlink_name.Buffer)
+    {
+        IoSetDeviceInterfaceState( &ext->bredr_symlink_name, FALSE );
+        RtlFreeUnicodeString( &ext->bredr_symlink_name );
+    }
     ext->props_cs.DebugInfo->Spare[0] = 0;
     DeleteCriticalSection( &ext->props_cs );
     winebluetooth_device_free( ext->device );
@@ -2133,10 +2177,13 @@ static NTSTATUS WINAPI remote_device_pdo_pnp( DEVICE_OBJECT *device_obj, struct 
         LeaveCriticalSection( &device_list_cs );
 
         EnterCriticalSection( &ext->props_cs );
-        if (ext->le &&
+        if (bluetooth_remote_device_has_le( ext ) &&
             !IoRegisterDeviceInterface( device_obj, &GUID_BLUETOOTHLE_DEVICE_INTERFACE, NULL,
                                         &ext->bthle_symlink_name ))
             IoSetDeviceInterfaceState( &ext->bthle_symlink_name, TRUE );
+        if (bluetooth_remote_device_has_bredr( ext ) &&
+            !IoRegisterDeviceInterface( device_obj, &GUID_BTH_DEVICE_INTERFACE, NULL, &ext->bredr_symlink_name ))
+            IoSetDeviceInterfaceState( &ext->bredr_symlink_name, TRUE );
         ext->started = TRUE;
         bluetooth_device_set_properties( ext, adapter_addr.rgBytes, &ext->props, ext->props_mask );
         needs_invalidate = !list_empty( &ext->gatt_services );

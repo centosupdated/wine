@@ -169,6 +169,8 @@ typedef UINT16 winebluetooth_device_props_mask_t;
 #define WINEBLUETOOTH_DEVICE_PROPERTY_LEGACY_PAIRING (1 << 4)
 #define WINEBLUETOOTH_DEVICE_PROPERTY_TRUSTED        (1 << 5)
 #define WINEBLUETOOTH_DEVICE_PROPERTY_CLASS          (1 << 6)
+#define WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_BREDR   (1 << 7)
+#define WINEBLUETOOTH_DEVICE_PROPERTY_BEARER_LE      (1 << 8)
 
 #define WINEBLUETOOTH_DEVICE_ALL_PROPERTIES                                                 \
     (WINEBLUETOOTH_DEVICE_PROPERTY_NAME | WINEBLUETOOTH_DEVICE_PROPERTY_ADDRESS |           \
@@ -197,6 +199,19 @@ struct winebluetooth_radio_properties
     BYTE version;
 };
 
+#define WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_BONDED     (1)
+#define WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_CONNECTED  (1 << 1)
+#define WINEBLUETOOTH_DEVICE_BEARER_PROPERTY_PAIRED     (1 << 2)
+struct winebluetooth_device_bearer_properties
+{
+    UINT8 props_mask;
+    BOOL bonded;
+    BOOL connected;
+    BOOL paired;
+};
+
+void winebluetooth_device_bearer_properties_update( struct winebluetooth_device_bearer_properties *props,
+                                                    const struct winebluetooth_device_bearer_properties *new_props );
 struct winebluetooth_device_properties
 {
     BLUETOOTH_ADDRESS address;
@@ -206,6 +221,8 @@ struct winebluetooth_device_properties
     BOOL legacy_pairing;
     BOOL trusted;
     UINT32 class;
+    struct winebluetooth_device_bearer_properties bredr;
+    struct winebluetooth_device_bearer_properties le;
 };
 
 typedef struct
