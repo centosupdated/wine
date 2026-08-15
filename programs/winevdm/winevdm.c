@@ -289,7 +289,7 @@ static VOID pif_cmd( char *filename, char *cmdline)
         MessageBoxA( NULL, buf, "16 bit DOS subsystem", MB_OK|MB_ICONWARNING);
     }
     /* search for the program */
-    if( !SearchPathA( NULL, progname, NULL, MAX_PATH, progpath, NULL )) {
+    if( !SearchPathA( NULL, filename, NULL, MAX_PATH, progpath, NULL )) {
         sprintf( buf, "%s\nInvalid program file name. Check your pif file.", 
                 filename);
         MessageBoxA( NULL, buf, "16 bit DOS subsystem", MB_OK|MB_ICONERROR);
@@ -302,6 +302,13 @@ static VOID pif_cmd( char *filename, char *cmdline)
     /* if no arguments on the commandline, use them from the pif file */
     if( !cmdline[0] && optparams[0])
         cmdline = optparams;
+    if( (p = strrchr( progpath, '\\')))
+        *p = '\0';
+    if( !(p = strrchr( progname, '\\'))) {
+        memmove( progname + 1, progname, strlen(progname) + 1);
+        progname[0] = '\\';
+    }
+    strcat( progpath, p ? p : progname);
     /* FIXME: do something with:
      * - close on exit
      * - graphic modes
