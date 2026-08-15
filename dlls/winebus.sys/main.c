@@ -580,6 +580,9 @@ static BOOL is_hidraw_enabled(WORD vid, WORD pid, const USAGE_AND_PAGE *usages, 
         if (pid == 0x2007) prefer_hidraw = TRUE; /* Joy-Con R */
         if (pid == 0x2009) prefer_hidraw = TRUE; /* Pro Controller */
         break;
+    case 0x28DE:
+        /* Valve hardware device (like controllers) typically need steam to work*/
+        prefer_hidraw = TRUE;
     }
 
     RtlInitUnicodeString(&str, L"EnableHidraw");
