@@ -4785,7 +4785,7 @@ HRESULT device_init(struct d3d9_device *device, struct d3d9 *parent, struct wine
     wined3d_mutex_lock();
     wined3d_adapter = wined3d_output_get_adapter(parent->wined3d_outputs[output_idx]);
     if (FAILED(hr = wined3d_device_create(wined3d, wined3d_adapter, wined3d_device_type_from_d3d(device_type),
-            focus_window, flags, 4, feature_levels, ARRAY_SIZE(feature_levels),
+            focus_window, flags, flags, 4, feature_levels, ARRAY_SIZE(feature_levels),
             &device->device_parent, &device->wined3d_device)))
     {
         WARN("Failed to create wined3d device, hr %#lx.\n", hr);

@@ -473,6 +473,7 @@ struct wined3d_settings
 {
     unsigned int cs_multithreaded;
     unsigned int max_gl_version;
+    unsigned int no_create_flags;
     unsigned short pci_vendor_id;
     unsigned short pci_device_id;
     /* Memory tracking and object counting. */

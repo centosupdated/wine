@@ -65,7 +65,7 @@
 @ cdecl wined3d_device_apply_stateblock(ptr ptr)
 @ cdecl wined3d_device_begin_scene(ptr)
 @ cdecl wined3d_device_clear(ptr long ptr long ptr float long)
-@ cdecl wined3d_device_create(ptr ptr long ptr long long ptr long ptr ptr)
+@ cdecl wined3d_device_create(ptr ptr long ptr long long long ptr long ptr ptr)
 @ cdecl wined3d_device_decref(ptr)
 @ cdecl wined3d_device_end_scene(ptr)
 @ cdecl wined3d_device_evict_managed_resources(ptr)

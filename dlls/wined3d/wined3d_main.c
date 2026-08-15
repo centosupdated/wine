@@ -345,6 +345,8 @@ static BOOL wined3d_dll_init(HINSTANCE hInstDLL)
     {
         if (!get_config_key_dword(hkey, appkey, env, "csmt", &wined3d_settings.cs_multithreaded))
             ERR_(winediag)("Setting multithreaded command stream to %#x.\n", wined3d_settings.cs_multithreaded);
+        if (!get_config_key_dword(hkey, appkey, env, "no_create_flags", &wined3d_settings.no_create_flags))
+            ERR_(winediag)("Force D3D device creation without support for flags %#x.\n", wined3d_settings.no_create_flags);        
         if (!get_config_key_dword(hkey, appkey, env, "MaxVersionGL", &tmpvalue))
         {
             ERR_(winediag)("Setting maximum allowed wined3d GL version to %u.%u.\n",
