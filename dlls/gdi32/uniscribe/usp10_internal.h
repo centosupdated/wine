@@ -185,6 +185,8 @@ typedef struct {
     WORD *glyphs[GLYPH_MAX / GLYPH_BLOCK_SIZE];
 } CacheGlyphPage;
 
+typedef struct CMAP_Table CMAP_Table;
+
 typedef struct {
     struct list entry;
     DWORD refcount;
@@ -197,9 +199,8 @@ typedef struct {
     ABC *widths[GLYPH_MAX / GLYPH_BLOCK_SIZE];
     void *GSUB_Table;
     void *GDEF_Table;
-    void *CMAP_Table;
-    void *CMAP_format12_Table;
     void *GPOS_Table;
+    CMAP_Table *cmap;
     BOOL scripts_initialized;
     LoadedScript *scripts;
     SIZE_T scripts_size;
@@ -293,7 +294,9 @@ void Indic_ParseSyllables(HDC hdc, SCRIPT_ANALYSIS *psa, ScriptCache *psc, const
 
 void BREAK_line(const WCHAR *chars, int count, const SCRIPT_ANALYSIS *sa, SCRIPT_LOGATTR *la);
 
-DWORD OpenType_CMAP_GetGlyphIndex(HDC hdc, ScriptCache *psc, DWORD utf32c, LPWORD pgi, DWORD flags);
+WORD OpenType_CMAP_GetGlyphIndex(CMAP_Table *cmap, DWORD utf32c);
+CMAP_Table *OpenType_CMAP_Alloc(HDC hdc);
+void OpenType_CMAP_Free(CMAP_Table *cmap);
 void OpenType_GDEF_UpdateGlyphProps(ScriptCache *psc, const WORD *pwGlyphs, const WORD cGlyphs,
                                     WORD *pwLogClust, const WORD cChars, SCRIPT_GLYPHPROP *pGlyphProp);
 int OpenType_apply_GSUB_lookup(const void *table, unsigned int lookup_index, WORD *glyphs,
