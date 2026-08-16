@@ -2138,10 +2138,11 @@ static enum wined3d_display_driver guess_display_driver(enum wined3d_pci_vendor 
 {
     switch (vendor)
     {
-        case HW_VENDOR_AMD:    return DRIVER_AMD_RX;
-        case HW_VENDOR_INTEL:  return DRIVER_INTEL_HD4000;
-        case HW_VENDOR_NVIDIA: return DRIVER_NVIDIA_GEFORCE8;
-        default:               return DRIVER_WINE;
+        case HW_VENDOR_AMD:      return DRIVER_AMD_RX;
+        case HW_VENDOR_INTEL:    return DRIVER_INTEL_HD4000;
+        case HW_VENDOR_NVIDIA:   return DRIVER_NVIDIA_GEFORCE8;
+        case HW_VENDOR_QUALCOMM: return DRIVER_QUALCOMM_ADRENO;
+        default:                 return DRIVER_WINE;
     }
 }
 
