@@ -412,15 +412,19 @@ void mdmp_dump(void)
                     msi->CSDVersionRva >= dir->Location.Rva + 4)
                 {
                     const char*  code = PRD(dir->Location.Rva + sizeof(MINIDUMP_SYSTEM_INFO), 4);
-                    const DWORD* wes;
-                    if (code && code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E' &&
-                        *(wes = (const DWORD*)(code += 4)) >= 3)
+                    if (code && code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E')
                     {
                         /* assume we have wine extensions */
-                        printf("  Wine details:\n");
-                        printf("    build-id: %s\n", code + wes[1]);
-                        printf("    system: %s\n", code + wes[2]);
-                        printf("    release: %s\n", code + wes[3]);
+                        static const char* known_ext[] = {"build-id", "system", "release"};
+                        const DWORD* wes = (const DWORD*)(code += 4);
+                        unsigned i;
+
+                        printf("  Wine details (%u extensions):\n", wes[0]);
+                        for (i = 0; i < wes[0]; i++)
+                            if (i < ARRAY_SIZE(known_ext))
+                                printf("    %s: %s\n", known_ext[i], code + wes[1 + i]);
+                            else
+                                printf("    #%u: %s\n", i, code + wes[1 + i]);
                     }
                 }
             }
