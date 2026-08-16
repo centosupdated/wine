@@ -1221,6 +1221,11 @@ BOOL dbg_fetch_system_info(struct dbg_system_info *sysinfo)
     return TRUE;
 }
 
+static BOOL tgt_process_active_fetch_system_info(struct dbg_process *pcs, struct dbg_system_info *sysinfo)
+{
+    return dbg_fetch_system_info(sysinfo);
+}
+
 static struct be_process_io be_process_active_io =
 {
     tgt_process_active_close_process,
@@ -1228,4 +1233,6 @@ static struct be_process_io be_process_active_io =
     tgt_process_active_write,
     tgt_process_active_get_selector,
     tgt_process_active_fetch_thread_name,
+    NULL, /* fetch_thread_context */
+    tgt_process_active_fetch_system_info,
 };

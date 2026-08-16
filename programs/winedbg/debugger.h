@@ -314,6 +314,7 @@ struct be_process_io
     BOOL        (*get_selector)(HANDLE, DWORD, LDT_ENTRY*);
     BOOL        (*fetch_thread_name)(const struct dbg_thread*, WCHAR**);
     BOOL        (*fetch_thread_context)(const struct dbg_thread*, dbg_ctx_t *);
+    BOOL        (*fetch_system_info)(struct dbg_process *, struct dbg_system_info*);
 };
 
 extern	struct dbg_process*	dbg_curr_process;
@@ -407,7 +408,7 @@ extern void             info_win32_frame_exceptions(DWORD tid);
 extern void             info_win32_virtual(DWORD pid);
 extern void             info_win32_segments(DWORD start, int length);
 extern void             info_win32_exception(void);
-extern void             info_win32_system(void);
+extern void             info_win32_system(BOOL);
 extern void             info_wine_dbg_channel(BOOL add, const char* chnl, const char* name);
 
   /* memory.c */

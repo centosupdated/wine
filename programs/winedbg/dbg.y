@@ -294,7 +294,8 @@ info_command:
     | tINFO tMAPS               { info_win32_virtual(dbg_curr_pid); }
     | tINFO tMAPS expr_rvalue   { info_win32_virtual($3); }
     | tINFO tEXCEPTION          { info_win32_exception(); }
-    | tINFO tSYSTEM             { info_win32_system(); }
+    | tINFO tSYSTEM             { info_win32_system(TRUE); }
+    | tINFO tSYSTEM tPROCESS    { info_win32_system(FALSE); }
     ;
 
 maintenance_command:

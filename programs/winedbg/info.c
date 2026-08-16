@@ -107,6 +107,7 @@ void info_help(void)
             "  info share <addr>    Displays internal module state",
             "  info stack [<len>]   Dumps information about top of stack, up to len words",
             "  info symbol <sym>    Displays information about a given symbol",
+            "  info system [<process>] Displays information about system ('process' refers to the system of current process)",
             "  info thread          Shows all running threads",
             "  info wnd <handle>    Displays internal window state",
             "",
@@ -1163,20 +1164,24 @@ void info_win32_exception(void)
     dbg_printf(".\n");
 }
 
-void info_win32_system(void)
+void info_win32_system(BOOL debugger_system)
 {
     struct dbg_system_info sysinfo;
     int i;
     BOOL ret;
 
-    ret = dbg_fetch_system_info(&sysinfo);
+    if (!debugger_system && dbg_curr_process && dbg_curr_process->process_io->fetch_system_info)
+        ret = dbg_curr_process->process_io->fetch_system_info(dbg_curr_process, &sysinfo);
+    else
+        ret = dbg_fetch_system_info(&sysinfo);
+
     if (!ret)
     {
         dbg_printf("Couldn't retrieve system information\n");
         return;
     }
 
-    dbg_printf( "System information:\n" );
+    dbg_printf( "System information%s:\n", debugger_system ? "" : " (current process)" );
     if (sysinfo.wine_build_id) dbg_printf( "    Wine build: %s\n", sysinfo.wine_build_id );
     dbg_printf( "    Platform: %s", get_machine_str(sysinfo.native_machine));
     if (sysinfo.guest_machines[0] != IMAGE_FILE_MACHINE_UNKNOWN)
