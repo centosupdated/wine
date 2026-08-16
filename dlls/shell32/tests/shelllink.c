@@ -1460,6 +1460,480 @@ static void test_SHGetImageList(void)
     }
 }
 
+
+/* condensed version of the .ico format */
+#pragma pack(push,1)
+struct ICO
+{
+    WORD reserved1;
+    WORD kind;
+    WORD num_images;
+    BYTE width, height;
+    BYTE num_colors;
+    BYTE reserved2;
+    WORD planes;
+    WORD bpp;
+    DWORD image_data_size;
+    DWORD image_data_offset;
+    BITMAPINFOHEADER bitmap_header;
+};
+#pragma pack(pop)
+
+static void write_ico(const WCHAR *path, DWORD (*argb_bits)[16 * 16], DWORD (*mask_bits)[16])
+{
+    struct ICO ico;
+    FILE *fp;
+
+    memset(&ico, 0, sizeof(ico));
+    ico.reserved1 = ico.reserved2 = 0;
+    ico.kind = 1; /* ICO */
+    ico.num_images = 1;
+    ico.width = ico.height = 16;
+    ico.num_colors = 0;
+    ico.planes = 1;
+    ico.bpp = 32;
+    ico.image_data_size = sizeof(ico.bitmap_header) + sizeof(*argb_bits) + sizeof(*mask_bits);
+    ico.image_data_offset = FIELD_OFFSET(struct ICO, bitmap_header);
+    ico.bitmap_header.biSize = sizeof(ico.bitmap_header);
+    ico.bitmap_header.biWidth = 16;
+    ico.bitmap_header.biHeight = 32; /* 16 for color, 16 for mask */
+    ico.bitmap_header.biPlanes = 1;
+    ico.bitmap_header.biBitCount = 32;
+    ico.bitmap_header.biCompression = BI_RGB;
+    ico.bitmap_header.biSizeImage = ico.image_data_size - sizeof(ico.bitmap_header);
+    ico.bitmap_header.biXPelsPerMeter = ico.bitmap_header.biYPelsPerMeter = 0;
+    ico.bitmap_header.biClrUsed = ico.bitmap_header.biClrImportant = 0;
+
+    fp = _wfopen(path, L"wb");
+    fwrite(&ico, sizeof(ico), 1, fp);
+    fwrite(argb_bits, sizeof(*argb_bits), 1, fp);
+    fwrite(mask_bits, sizeof(*mask_bits), 1, fp);
+    fclose(fp);
+}
+
+static DWORD get_argb(DWORD (*argb_bits)[16 * 16], size_t x, size_t y)
+{
+    return (*argb_bits)[(y * 16) + x];
+}
+
+static void set_argb(DWORD (*argb_bits)[16 * 16], size_t x, size_t y, DWORD argb)
+{
+    (*argb_bits)[(y * 16) + x] = argb;
+}
+
+/* 1-bit bitmap rows are DWORD-aligned, with the bits in most-significant-bit
+ * order within each byte.
+ */
+
+static BOOL get_mask(DWORD (*mask_bits)[16], size_t x, size_t y)
+{
+    return (((BYTE*)*mask_bits)[y*4+x/8] >> (7-(x%8))) & 1;
+}
+
+static void set_mask(DWORD (*mask_bits)[16], size_t x, size_t y, BOOL mask)
+{
+    ((BYTE*)*mask_bits)[y*4+x/8] &= ~(1 << (7-(x%8)));
+    ((BYTE*)*mask_bits)[y*4+x/8] |= (mask << (7-(x%8)));
+}
+
+static void dump_bits(const char *prefix, DWORD (*argb_bits)[16 * 16], DWORD (*mask_bits)[16])
+{
+    size_t x, y;
+    winetest_printf("%s mask:\n", prefix);
+    for (y = 0; y < 16; y++)
+    {
+        winetest_printf("%08lx\n", (*mask_bits)[y]);
+    }
+    winetest_printf("%s argb:\n", prefix);
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            winetest_printf("%08lx ", get_argb(argb_bits, x, y));
+        }
+        winetest_printf("\n");
+    }
+}
+
+static BOOL has_alpha(DWORD (*argb_bits)[16 * 16])
+{
+    size_t x, y;
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            DWORD argb = ((DWORD*)argb_bits)[(y * 16) + x];
+            if ((argb & 0xFF000000) != 0)
+            {
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
+static BOOL is_fully_opaque(DWORD argb, BOOL mask, BOOL has_alpha)
+{
+    return
+        (has_alpha && (argb & 0xFF000000) == 0xFF000000)
+        || (!has_alpha && !mask);
+}
+
+static BOOL is_fully_transparent(DWORD argb, BOOL mask, BOOL has_alpha)
+{
+    return
+        (has_alpha && (argb & 0xFF000000) == 0)
+        || (!has_alpha && mask);
+}
+
+static BOOL color_match_ignoring_alpha(DWORD argb1, DWORD argb2)
+{
+    /* Windows XP apparently uses approximate alpha blending where
+     * e.g. rgba(255,0,0,255) becomes rgb(254,0,0), so the comparison needs some
+     * leeway.
+     */
+    int red_diff = (int)((argb1 >> 16) & 0xFF) - (int)((argb2 >> 16) & 0xFF);
+    int green_diff = (int)((argb1 >> 8) & 0xFF) - (int)((argb2 >> 8) & 0xFF);
+    int blue_diff = (int)((argb1 >> 0) & 0xFF) - (int)((argb2 >> 0) & 0xFF);
+    return abs(red_diff) <= 2 && abs(green_diff) <= 2 && abs(blue_diff) <= 2;
+}
+
+static BOOL matches_overlay_or_original(
+    DWORD orig_argb, BOOL orig_mask, BOOL orig_has_alpha,
+    DWORD new_argb, BOOL new_mask, BOOL new_has_alpha,
+    DWORD overlay_argb, BOOL overlay_mask, BOOL overlay_has_alpha
+)
+{
+    BOOL orig_fully_opaque = is_fully_opaque(orig_argb, orig_mask, orig_has_alpha);
+    BOOL new_fully_opaque = is_fully_opaque(new_argb, new_mask, new_has_alpha);
+    BOOL overlay_fully_opaque = is_fully_opaque(overlay_argb, overlay_mask, overlay_has_alpha);
+
+    BOOL orig_fully_transparent = is_fully_transparent(orig_argb, orig_mask, orig_has_alpha);
+    BOOL new_fully_transparent = is_fully_transparent(new_argb, new_mask, new_has_alpha);
+    BOOL overlay_fully_transparent = is_fully_transparent(overlay_argb, overlay_mask, overlay_has_alpha);
+
+    /* Check that, where the overlay is fully opaque, the color of the
+     * new icon matches the overlay and is also opaque.
+     */
+    if (overlay_fully_opaque)
+    {
+        if (!new_fully_opaque)
+            return FALSE;
+        if (!color_match_ignoring_alpha(new_argb, overlay_argb))
+            return FALSE;
+    }
+    /* Check that, where the overlay is fully transparent, the color and
+     * opacity of the new icon matches the original.
+     */
+    else if (overlay_fully_transparent)
+    {
+        if (new_fully_opaque != orig_fully_opaque)
+            return FALSE;
+        if (new_fully_transparent != orig_fully_transparent)
+            return FALSE;
+        if (orig_fully_opaque && !color_match_ignoring_alpha(new_argb, orig_argb))
+            return FALSE;
+    }
+    /* (Partial transparency not tested for simplicity.) */
+    return TRUE;
+}
+
+static void write_ico_and_read_back_with_overlay(
+    const WCHAR *filename, DWORD (*argb_bits)[16 * 16], DWORD (*mask_bits)[16]
+)
+{
+    WCHAR path[MAX_PATH];
+    IShellLinkW *sl;
+    IPersistFile *pf;
+    HRESULT hr;
+    BOOL success;
+    SHFILEINFOW sfi;
+    ICONINFO ii;
+    HDC dc;
+    struct {
+        BITMAPINFOHEADER bmiHeader;
+        /* Two colors for mask bitmap, three masks for color bitmap */
+        RGBQUAD bmiColors[3];
+    } bi;
+    int lines_read;
+
+    /* Create icon file */
+
+    GetTempPathW(ARRAY_SIZE(path), path);
+    wcscat(path, filename);
+    wcscat(path, L".ico");
+    write_ico(path, argb_bits, mask_bits);
+
+    /* Create shortcut file using the icon */
+
+    hr = CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_IShellLinkW, (void **)&sl);
+    ok(hr == S_OK, "CoCreateInstance failed (0x%08lx)\n", hr);
+
+    hr = IShellLinkW_QueryInterface(sl, &IID_IPersistFile, (void **)&pf);
+    ok(hr == S_OK, "QueryInterface failed (0x%08lx)\n", hr);
+
+    hr = IShellLinkW_SetIconLocation(sl, path, 0);
+    ok(hr == S_OK, "SetIconLocation failed (0x%08lx)\n", hr);
+
+    wcscat(path, L".lnk");
+    hr = IPersistFile_Save(pf, path, FALSE);
+    ok(hr == S_OK, "Save failed (0x%08lx\n", hr);
+
+    IPersistFile_Release(pf);
+    IShellLinkW_Release(sl);
+
+    /* Load the icon for the shortcut with overlay requested */
+
+    success = !!SHGetFileInfoW(path, 0, &sfi, sizeof(sfi), SHGFI_ICON | SHGFI_SMALLICON | SHGFI_ADDOVERLAYS);
+    ok(success, "SHGetFileInfoW failed\n");
+    success = GetIconInfo(sfi.hIcon, &ii);
+    ok(success, "GetIconInfo failed (0x%08lx)\n", GetLastError());
+    DestroyIcon(sfi.hIcon);
+
+    /* Retrieve the bits for the color and mask bitmaps (overwrite in-place) */
+
+    dc = GetDC(NULL);
+    ok(dc != NULL, "GetDC failed\n");
+
+    memset(&bi.bmiHeader, 0, sizeof(bi.bmiHeader));
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    bi.bmiHeader.biSizeImage = 0;
+    bi.bmiHeader.biWidth = 16;
+    bi.bmiHeader.biHeight = 16;
+
+    lines_read = GetDIBits(dc, ii.hbmColor, 0, bi.bmiHeader.biHeight, argb_bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    ok(lines_read == bi.bmiHeader.biHeight, "GetDIBits failed");
+
+    memset(&bi.bmiHeader, 0, sizeof(bi.bmiHeader));
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 1;
+    bi.bmiHeader.biCompression = BI_RGB;
+    bi.bmiHeader.biSizeImage = 0;
+    bi.bmiHeader.biWidth = 16;
+    bi.bmiHeader.biHeight = 16;
+
+    lines_read = GetDIBits(dc, ii.hbmMask, 0, bi.bmiHeader.biHeight, mask_bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    ok(lines_read == bi.bmiHeader.biHeight, "GetDIBits failed");
+
+    DeleteObject(ii.hbmColor);
+    DeleteObject(ii.hbmMask);
+
+    ReleaseDC(NULL, dc);
+
+    /* For debugging: dump the overlaid icons to disk */
+
+    if (FALSE)
+    {
+        WCHAR debug_ico_path[MAX_PATH];
+
+        GetTempPathW(ARRAY_SIZE(debug_ico_path), debug_ico_path);
+        wcscat(debug_ico_path, filename);
+        wcscat(debug_ico_path, L"_overlaid.ico");
+        write_ico(debug_ico_path, argb_bits, mask_bits);
+    }
+}
+
+static void test_shortcut_overlay(void)
+{
+    size_t x, y;
+    BOOL success;
+    DWORD alpha_ico_argb[16 * 16] = {0};
+    DWORD alpha_ico_mask[16] = {0};
+    DWORD mask_ico_argb[16 * 16] = {0};
+    DWORD mask_ico_mask[16] = {0};
+    DWORD blank_ico_argb[16 * 16] = {0};
+    DWORD blank_ico_mask[16] = {0};
+    BOOL overlay_has_alpha, alpha_has_alpha, mask_has_alpha;
+    BOOL dump_alpha, dump_mask, dump_blank;
+
+    /* Create an icon with varying alpha and all-zero (opaque) mask bits.
+     * It should appear as alternating red and transparency.
+     */
+
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            set_argb(&alpha_ico_argb, x, y, ((x ^ y) & 1) ? 0x00FFFFFF : 0xFFFF0000);
+            set_mask(&alpha_ico_mask, x, y, 0);
+        }
+    }
+
+    /* Create a test icon with all-zero (i.e. no) alpha and varying mask bits.
+     * It should appear as alternating green and transparency.
+     */
+
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            set_argb(&mask_ico_argb, x, y, ((x ^ y) & 1) ? 0x00FFFFFF : 0x0000FF00);
+            set_mask(&mask_ico_mask, x, y, ((x ^ y) & 1));
+        }
+    }
+
+    /* Create a test icon with all-zero alpha and an (almost) all-ones mask.
+     * It should appear (almost) completely transparent.
+     * A single pixel is made opaque, because otherwise Windows 10 (but not
+     * Windows XP) interprets the mask as all-opaque.
+     */
+
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            set_argb(&blank_ico_argb, x, y, 0x000000FF);
+            set_mask(&blank_ico_mask, x, y, (x == 15 && y == 15) ? 0 : 1);
+        }
+    }
+
+    /* Apply overlays to the icons (the argb/mask bits are modified in-place) */
+
+    write_ico_and_read_back_with_overlay(L"test_alpha", &alpha_ico_argb, &alpha_ico_mask);
+    write_ico_and_read_back_with_overlay(L"test_mask", &mask_ico_argb, &mask_ico_mask);
+    write_ico_and_read_back_with_overlay(L"test_blank", &blank_ico_argb, &blank_ico_mask);
+
+    /* Test that the blank icon's mask changed when the overlay was applied, or
+     * that it now has some non-zero alpha. If neither has happened, the overlay
+     * won't be visible.
+     */
+
+    success = FALSE;
+    for (y = 0; y < 16; y++)
+    {
+        if ((blank_ico_mask[y] & 0xFF) != 0xFF)
+        {
+            success = TRUE;
+            break;
+        }
+        for (x = 0; x < 16; x++)
+        {
+            DWORD argb = get_argb(&blank_ico_argb, x, y);
+            if ((argb & 0xFF000000) != 0)
+            {
+                success = TRUE;
+                break;
+            }
+        }
+    }
+    ok(success, "Shortcut overlay on blank icon didn't affect mask or alpha!");
+    dump_blank = !success;
+
+    /* From this point forward we are assuming that the blank icon is now a
+     * reference for what the overlay looks like.
+     */
+
+    /* The resulting icons might use alpha transparency, or it might use a
+     * mask (in the latter case, the alpha is all-zero). This is an image-wide
+     * property that must be computed for use in subsequent checks.
+     */
+
+    overlay_has_alpha = has_alpha(&blank_ico_argb);
+    alpha_has_alpha = has_alpha(&alpha_ico_argb);
+    mask_has_alpha = has_alpha(&mask_ico_argb);
+
+    /* Test that the overlay was correctly applied to the varying-alpha icon,
+     * assuming that the blank icon is now a reference for what the overlay
+     * looks like. We can assume that the new icon is also varying-alpha and
+     * ignore its mask.
+     */
+
+    success = TRUE;
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            DWORD orig_argb = (((x ^ y) & 1) ? 0x00FFFFFF : 0xFFFF0000);
+            BOOL orig_mask = FALSE;
+            DWORD new_argb = get_argb(&alpha_ico_argb, x, y);
+            BOOL new_mask = get_mask(&alpha_ico_mask, x, y);
+            DWORD overlay_argb = get_argb(&blank_ico_argb, x, y);
+            BOOL overlay_mask = get_mask(&blank_ico_mask, x, y);
+
+            /* Skip the opaque pixel from the blank icon */
+            if (x == 15 && y == 15)
+                continue;
+
+            if (!matches_overlay_or_original(
+                orig_argb, orig_mask, /* orig_has_alpha: */ TRUE,
+                new_argb, new_mask, alpha_has_alpha,
+                overlay_argb, overlay_mask, overlay_has_alpha))
+            {
+                winetest_printf(
+                    "mismatch at (%u, %u): orig (%08lx, %u, %u), new (%08lx, %u, %u), overlay (%08lx, %u, %u)\n",
+                    (unsigned)x, (unsigned)y,
+                    orig_argb, orig_mask, TRUE,
+                    new_argb, new_mask, alpha_has_alpha,
+                    overlay_argb, overlay_mask, overlay_has_alpha
+                );
+                success = FALSE;
+                goto done1;
+            }
+        }
+    }
+done1:
+    ok(success, "Varying-alpha icon with overlay applied doesn't match overlay in opaque regions and/or original icon in transparent regions!\n");
+    dump_blank = dump_blank || !success;
+    dump_alpha = !success;
+
+    /* Test that the overlay was correctly applied to the varying-mask icon,
+     * assuming that the blank icon is now a reference for what the overlay
+     * looks like.
+     */
+
+    success = TRUE;
+    for (y = 0; y < 16; y++)
+    {
+        for (x = 0; x < 16; x++)
+        {
+            DWORD orig_argb = (((x ^ y) & 1) ? 0x00FFFFFF : 0x0000FF00);
+            BOOL orig_mask = ((x ^ y) & 1);
+            DWORD new_argb = get_argb(&mask_ico_argb, x, y);
+            BOOL new_mask = get_mask(&mask_ico_mask, x, y);
+            DWORD overlay_argb = get_argb(&blank_ico_argb, x, y);
+            BOOL overlay_mask = get_mask(&blank_ico_mask, x, y);
+
+            /* Skip the opaque pixel from the blank icon */
+            if (x == 15 && y == 15)
+                continue;
+
+            if (!matches_overlay_or_original(
+                orig_argb, orig_mask, /* orig_has_alpha: */ FALSE,
+                new_argb, new_mask, mask_has_alpha,
+                overlay_argb, overlay_mask, overlay_has_alpha))
+            {
+                winetest_printf(
+                    "mismatch at (%u, %u): orig (%08lx, %u, %u), new (%08lx, %u, %u), overlay (%08lx, %u, %u)\n",
+                    (unsigned)x, (unsigned)y,
+                    orig_argb, orig_mask, FALSE,
+                    new_argb, new_mask, mask_has_alpha,
+                    overlay_argb, overlay_mask, overlay_has_alpha
+                );
+                success = FALSE;
+                goto done2;
+            }
+        }
+    }
+done2:
+    ok(success, "Varying-mask icon with overlay applied doesn't match overlay in opaque regions and/or original icon in transparent regions!\n");
+    dump_blank = dump_blank || !success;
+    dump_mask = !success;
+
+    /* Dump icons in text form where appropriate */
+
+    if (dump_blank)
+        dump_bits("overlaid blank icon", &blank_ico_argb, &blank_ico_mask);
+    if (dump_alpha)
+        dump_bits("overlaid alpha icon", &alpha_ico_argb, &alpha_ico_mask);
+    if (dump_mask)
+        dump_bits("overlaid mask icon", &mask_ico_argb, &mask_ico_mask);
+}
+
 START_TEST(shelllink)
 {
     HRESULT r;
@@ -1488,6 +1962,7 @@ START_TEST(shelllink)
     test_ExtractIcon();
     test_ExtractAssociatedIcon();
     test_SHGetImageList();
+    test_shortcut_overlay();
 
     CoUninitialize();
 }
