@@ -218,8 +218,10 @@ typedef struct _scriptData
 } scriptData;
 
 typedef struct {
+    INT valid:1;
     INT start;
     INT base;
+    INT input_base;
     INT ralf;
     INT blwf;
     INT pref;
@@ -251,6 +253,13 @@ typedef void (*reorder_function)(WCHAR *chars, IndicSyllable *syllable, lexical_
 #define BIDI_WEAK    2
 #define BIDI_NEUTRAL 0
 
+#define debug_print_syllables(s,i) \
+    if (TRACE_ON(uniscribe)) {\
+        TRACE("Syllables:\n");\
+        for (int j = 0; j < i; j++) \
+            TRACE("     %s%i - %i(%i) - %i\n", ((s)[j].valid)?"  ":"x:", (s)[j].start, (s)[j].base, (s)[j].input_base, (s)[j].end); \
+    }
+
 BOOL usp10_array_reserve(void **elements, SIZE_T *capacity, SIZE_T count, SIZE_T size);
 int USP10_FindGlyphInLogClust(const WORD* pwLogClust, int cChars, WORD target);
 
@@ -262,7 +271,7 @@ INT BIDI_ReorderV2lLevel(int level, int *pIndices, const BYTE* plevel, int cch, 
 INT BIDI_ReorderL2vLevel(int level, int *pIndices, const BYTE* plevel, int cch, BOOL fReverse);
 HRESULT SHAPE_ContextualShaping(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa, WCHAR* pwcChars,
                              INT cChars, WORD* pwOutGlyphs, INT* pcGlyphs, INT cMaxGlyphs,
-                             WORD *pwLogClust);
+                             WORD *pwLogClust, IndicSyllable **syllables, INT *syllableCount);
 void SHAPE_ApplyDefaultOpentypeFeatures(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa,
                                         WORD *pwOutGlyphs, INT* pcGlyphs, INT cMaxGlyphs,
                                         INT cChars, WORD *pwLogClust);
@@ -271,7 +280,8 @@ void SHAPE_ApplyOpenTypePositions(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *ps
 HRESULT SHAPE_CheckFontForRequiredFeatures(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa);
 void SHAPE_CharGlyphProp(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa, const WCHAR *pwcChars,
                          const INT cChars, const WORD* pwGlyphs, const INT cGlyphs, WORD *pwLogClust,
-                         SCRIPT_CHARPROP *pCharProp, SCRIPT_GLYPHPROP *pGlyphProp);
+                         SCRIPT_CHARPROP *pCharProp, SCRIPT_GLYPHPROP *pGlyphProp, IndicSyllable *syllables,
+                         INT syllableCount);
 INT SHAPE_does_GSUB_feature_apply_to_chars(HDC hdc, SCRIPT_ANALYSIS *psa, ScriptCache *psc,
                                            const WCHAR *chars, INT write_dir, INT count,
                                            const char* feature);
@@ -284,9 +294,8 @@ HRESULT SHAPE_GetFontFeatureTags(HDC hdc, ScriptCache *psc, SCRIPT_ANALYSIS *psa
                                  OPENTYPE_TAG tagScript, OPENTYPE_TAG tagLangSys,
                                  int cMaxTags, OPENTYPE_TAG *pFeatureTags, int *pcTags);
 
-void Indic_ReorderCharacters(HDC hdc, SCRIPT_ANALYSIS *psa, ScriptCache *psc, WCHAR *input,
-                             unsigned int cChars, IndicSyllable **syllables, int *syllable_count,
-                             lexical_function lexical_f, reorder_function reorder_f, BOOL modern);
+void Indic_ReorderCharacters(WCHAR *input, IndicSyllable *syllables, int syllable_count,
+                             lexical_function lexical_f, reorder_function reorder_f);
 void Indic_ParseSyllables(HDC hdc, SCRIPT_ANALYSIS *psa, ScriptCache *psc, const WCHAR *input,
                           unsigned int cChar, IndicSyllable **syllables, int *syllable_count,
                           lexical_function lex, BOOL modern);

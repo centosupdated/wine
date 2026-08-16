@@ -3082,6 +3082,8 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
     unsigned int g;
     BOOL rtl;
     int cluster;
+    IndicSyllable *syllables = NULL;
+    int syllableCount = 0;
     static int once = 0;
 
     TRACE("(%p, %p, %p, %s, %s, %p, %p, %d, %s, %d, %d, %p, %p, %p, %p, %p )\n",
@@ -3109,10 +3111,10 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
     ((ScriptCache *)*psc)->userLang = tagLangSys;
 
     /* Initialize a SCRIPT_VISATTR and LogClust for each char in this run */
-    for (i = 0; i < cChars; i++)
+    for (i = 0; i < cMaxGlyphs; i++)
     {
         int idx = i;
-        if (rtl) idx = cChars - 1 - i;
+        if (i < cChars && rtl) idx = cChars - 1 - i;
         /* FIXME: set to better values */
         pOutGlyphProps[i].sva.uJustification = (pwcChars[idx] == ' ') ? SCRIPT_JUSTIFY_BLANK : SCRIPT_JUSTIFY_CHARACTER;
         pOutGlyphProps[i].sva.fClusterStart  = 1;
@@ -3120,6 +3122,12 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
         pOutGlyphProps[i].sva.fZeroWidth     = 0;
         pOutGlyphProps[i].sva.fReserved      = 0;
         pOutGlyphProps[i].sva.fShapeReserved = 0;
+    }
+
+    for (i = 0; i < cChars; i++)
+    {
+        int idx = i;
+        if (i < cChars && rtl) idx = cChars - 1 - i;
 
         /* FIXME: have the shaping engine set this */
         pCharProps[i].fCanGlyphAlone = 0;
@@ -3186,14 +3194,14 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
         }
         *pcGlyphs = g;
 
-        hr = SHAPE_ContextualShaping(hdc, (ScriptCache *)*psc, psa, rChars, cChars, pwOutGlyphs, pcGlyphs, cMaxGlyphs, pwLogClust);
+        hr = SHAPE_ContextualShaping(hdc, (ScriptCache *)*psc, psa, rChars, cChars, pwOutGlyphs, pcGlyphs, cMaxGlyphs, pwLogClust, &syllables, &syllableCount);
         if (FAILED(hr))
         {
             free(rChars);
             return hr;
         }
         SHAPE_ApplyDefaultOpentypeFeatures(hdc, (ScriptCache *)*psc, psa, pwOutGlyphs, pcGlyphs, cMaxGlyphs, cChars, pwLogClust);
-        SHAPE_CharGlyphProp(hdc, (ScriptCache *)*psc, psa, pwcChars, cChars, pwOutGlyphs, *pcGlyphs, pwLogClust, pCharProps, pOutGlyphProps);
+        SHAPE_CharGlyphProp(hdc, (ScriptCache *)*psc, psa, pwcChars, cChars, pwOutGlyphs, *pcGlyphs, pwLogClust, pCharProps, pOutGlyphProps, syllables, syllableCount);
 
         for (i = 0; i < cChars; ++i)
         {
@@ -3244,6 +3252,7 @@ HRESULT WINAPI ScriptShapeOpenType( HDC hdc, SCRIPT_CACHE *psc,
             }
         }
     }
+    free(syllables);
 
     return S_OK;
 }
