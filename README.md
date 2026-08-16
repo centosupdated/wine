@@ -10,7 +10,6 @@ be used for porting Windows code into native Unix executables.
 Wine is free software, released under the GNU LGPL; see the file
 LICENSE for the details.
 
-
 ## QUICK START
 
 From the top-level directory of the Wine source (which contains this file),

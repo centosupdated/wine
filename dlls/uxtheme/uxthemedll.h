@@ -102,7 +102,7 @@ BOOL WINAPI ThemeHooksInstall(void);
 BOOL WINAPI ThemeHooksRemove(void);
 
 extern void UXTHEME_InitSystem(HINSTANCE hInst);
-extern HRESULT UXTHEME_SetActiveTheme(PTHEME_FILE tf);
+extern HRESULT UXTHEME_SetActiveTheme(PTHEME_FILE tf, BOOL prev_override, BOOL override_pending);
 extern void UXTHEME_UninitSystem(void);
 
 extern struct user_api_hook user_api;
