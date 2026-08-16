@@ -531,6 +531,19 @@ static  unsigned        dump_modules(struct dump_context* dc, BOOL dump_elf)
     return sz;
 }
 
+static BOOL get_windows_version(const WCHAR *from, char *buffer, DWORD buffer_size)
+{
+    HKEY key;
+    BOOL ret = FALSE;
+
+    if (!RegOpenKeyExW(HKEY_LOCAL_MACHINE, from, 0, KEY_READ, &key))
+    {
+        ret = RegQueryValueExA(key, "ProductName", NULL, NULL, (BYTE *)buffer, &buffer_size) == ERROR_SUCCESS;
+        RegCloseKey(key);
+    }
+    return ret;
+}
+
 
 /******************************************************************
  *		dump_system_info
@@ -551,27 +564,33 @@ static  unsigned        dump_system_info(struct dump_context* dc)
     const char* build_id = NULL;
     const char* sys_name = NULL;
     const char* release_name = NULL;
+    char        windows_version[64];
 
     GetSystemInfo(&sysInfo);
     osInfo.dwOSVersionInfoSize = sizeof(osInfo);
     RtlGetVersion(&osInfo);
+
+    if (!get_windows_version(L"Software\\Microsoft\\Windows NT\\CurrentVersion", windows_version, sizeof(windows_version)) &&
+        !get_windows_version(L"Software\\Microsoft\\Windows\\CurrentVersion", windows_version, sizeof(windows_version)))
+        snprintf(windows_version, ARRAY_SIZE(windows_version),
+                 "Windows Version %ld.%ld", osInfo.dwMajorVersion, osInfo.dwMinorVersion);
 
     wine_get_build_id = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_build_id");
     wine_get_host_version = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_host_version");
     if (wine_get_build_id && wine_get_host_version)
     {
         /* cheat minidump system information by adding specific wine information */
-        wine_extra = 4 + 4 * sizeof(slen);
+        wine_extra = 4 + 5 * sizeof(slen);
         build_id = wine_get_build_id();
         wine_get_host_version(&sys_name, &release_name);
-        wine_extra += strlen(build_id) + 1 + strlen(sys_name) + 1 + strlen(release_name) + 1;
+        wine_extra += strlen(build_id) + 1 + strlen(sys_name) + 1 + strlen(release_name) + 1 + strlen(windows_version) + 1;
     }
 
     mdSysInfo.ProcessorArchitecture = sysInfo.wProcessorArchitecture;
     mdSysInfo.ProcessorLevel = sysInfo.wProcessorLevel;
     mdSysInfo.ProcessorRevision = sysInfo.wProcessorRevision;
     mdSysInfo.NumberOfProcessors = sysInfo.dwNumberOfProcessors;
-    mdSysInfo.ProductType = VER_NT_WORKSTATION; /* FIXME */
+    mdSysInfo.ProductType = osInfo.wProductType;
     mdSysInfo.MajorVersion = osInfo.dwMajorVersion;
     mdSysInfo.MinorVersion = osInfo.dwMinorVersion;
     mdSysInfo.BuildNumber = osInfo.dwBuildNumber;
@@ -579,7 +598,7 @@ static  unsigned        dump_system_info(struct dump_context* dc)
 
     mdSysInfo.CSDVersionRva = dc->rva + sizeof(mdSysInfo) + wine_extra;
     mdSysInfo.Reserved1 = 0;
-    mdSysInfo.SuiteMask = VER_SUITE_TERMINAL;
+    mdSysInfo.SuiteMask = VER_SUITE_TERMINAL; /* FIXME until RtlGetSuiteMask() is implemented */
 
 #if defined(__i386__) || (defined(__x86_64__) && !defined(__arm64ec__))
     {
@@ -613,20 +632,23 @@ static  unsigned        dump_system_info(struct dump_context* dc)
     {
         static const char code[] = {'W','I','N','E'};
 
-        WriteFile(dc->hFile, code, 4, &written, NULL);
+        WriteFile(dc->hFile, code, sizeof(code), &written, NULL);
         /* number of sub-info, so that we can extend structure if needed */
-        slen = 3;
+        slen = 4;
         WriteFile(dc->hFile, &slen, sizeof(slen), &written, NULL);
         /* we store offsets from just after the WINE marker */
-        slen = 4 * sizeof(DWORD);
+        slen = (1 + slen) * sizeof(DWORD);
         WriteFile(dc->hFile, &slen, sizeof(slen), &written, NULL);
         slen += strlen(build_id) + 1;
         WriteFile(dc->hFile, &slen, sizeof(slen), &written, NULL);
         slen += strlen(sys_name) + 1;
         WriteFile(dc->hFile, &slen, sizeof(slen), &written, NULL);
+        slen += strlen(release_name) + 1;
+        WriteFile(dc->hFile, &slen, sizeof(slen), &written, NULL);
         WriteFile(dc->hFile, build_id, strlen(build_id) + 1, &written, NULL);
         WriteFile(dc->hFile, sys_name, strlen(sys_name) + 1, &written, NULL);
         WriteFile(dc->hFile, release_name, strlen(release_name) + 1, &written, NULL);
+        WriteFile(dc->hFile, windows_version, strlen(windows_version) + 1, &written, NULL);
         dc->rva += wine_extra;
     }
 

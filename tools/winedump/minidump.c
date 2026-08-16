@@ -415,7 +415,7 @@ void mdmp_dump(void)
                     if (code && code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E')
                     {
                         /* assume we have wine extensions */
-                        static const char* known_ext[] = {"build-id", "system", "release"};
+                        static const char* known_ext[] = {"build-id", "system", "release", "windows version"};
                         const DWORD* wes = (const DWORD*)(code += 4);
                         unsigned i;
 

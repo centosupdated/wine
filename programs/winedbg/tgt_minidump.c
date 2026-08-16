@@ -599,8 +599,10 @@ static BOOL tgt_process_minidump_fetch_system_info(struct dbg_process *pcs, stru
                 sysinfo->host_system = code + wes[2];
                 sysinfo->host_version = code + wes[3];
             }
+            if (wes[0] >= 4) sysinfo->windows_version = code + wes[4];
         }
     }
+    if (!sysinfo->windows_version)
     {
         static char windows_version[64];
         snprintf(windows_version, ARRAY_SIZE(windows_version),
