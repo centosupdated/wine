@@ -1192,7 +1192,7 @@ static BOOL service_accepts_control(const struct service_entry *service, DWORD d
 static BOOL process_send_command(struct process_entry *process, const void *data, DWORD size, DWORD *result)
 {
     OVERLAPPED overlapped;
-    DWORD count, ret;
+    DWORD count, ret = 0;
     BOOL r;
 
     overlapped.Offset = 0;
@@ -1205,17 +1205,22 @@ static BOOL process_send_command(struct process_entry *process, const void *data
         if (ret == WAIT_TIMEOUT)
         {
             WINE_ERR("sending command timed out\n");
+            if (!CancelIoEx(process->control_pipe, &overlapped))
+                WINE_ERR("Failed to cancel IO, %#lx\n", GetLastError());
             *result = ERROR_SERVICE_REQUEST_TIMEOUT;
-            return FALSE;
         }
-        r = GetOverlappedResult(process->control_pipe, &overlapped, &count, FALSE);
+        r = GetOverlappedResult(process->control_pipe, &overlapped, &count, TRUE);
     }
     if (!r || count != size)
     {
-        WINE_ERR("service protocol error - failed to write pipe!\n");
-        *result  = (!r ? GetLastError() : ERROR_WRITE_FAULT);
+        if (ret != WAIT_TIMEOUT)
+        {
+            WINE_ERR("service protocol error - failed to write pipe!\n");
+            *result  = (!r ? GetLastError() : ERROR_WRITE_FAULT);
+        }
         return FALSE;
     }
+    ret = 0;
     r = ReadFile(process->control_pipe, result, sizeof *result, &count, &overlapped);
     if (!r && GetLastError() == ERROR_IO_PENDING)
     {
@@ -1223,16 +1228,20 @@ static BOOL process_send_command(struct process_entry *process, const void *data
         if (ret == WAIT_TIMEOUT)
         {
             WINE_ERR("receiving command result timed out\n");
+            if (!CancelIoEx(process->control_pipe, &overlapped))
+                WINE_ERR("Failed to cancel IO, %#lx\n", GetLastError());
             *result = ERROR_SERVICE_REQUEST_TIMEOUT;
-            return FALSE;
         }
-        r = GetOverlappedResult(process->control_pipe, &overlapped, &count, FALSE);
+        r = GetOverlappedResult(process->control_pipe, &overlapped, &count, TRUE);
     }
     if (!r || count != sizeof *result)
     {
-        WINE_ERR("service protocol error - failed to read pipe "
-            "r = %d  count = %ld!\n", r, count);
-        *result = (!r ? GetLastError() : ERROR_READ_FAULT);
+        if (ret != WAIT_TIMEOUT)
+        {
+            WINE_ERR("service protocol error - failed to read pipe "
+                "r = %d  count = %ld!\n", r, count);
+            *result = (!r ? GetLastError() : ERROR_READ_FAULT);
+        }
         return FALSE;
     }
 
