@@ -20836,6 +20836,137 @@ static void test_DoubleSetCapture(void)
     DestroyWindow(hwnd);
 }
 
+static HWND topmost_track_hwnd;
+static int topmost_erase_count;
+
+static LRESULT CALLBACK topmost_sibling_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    if (hwnd == topmost_track_hwnd && msg == WM_ERASEBKGND) topmost_erase_count++;
+    return DefWindowProcA( hwnd, msg, wp, lp );
+}
+
+static void test_SetWindowPosTopmostChildSiblingErase(void)
+{
+    WNDCLASSA cls;
+    HWND parent, child1, child2;
+    RECT rc;
+
+    memset( &cls, 0, sizeof(cls) );
+    cls.hInstance = GetModuleHandleA( 0 );
+    cls.lpfnWndProc = topmost_sibling_wnd_proc;
+    cls.lpszClassName = "TopmostSiblingClass";
+    ok( RegisterClassA( &cls ) != 0, "RegisterClassA failed, error %ld\n", GetLastError() );
+
+    /* parent draws its own content (like PropertyManager's section header text);
+     * two overlapping child controls sit on top of it, as in the real panel.
+     * WS_CLIPCHILDREN matches a real docking panel container (avoids the parent
+     * painting over its children) and is what makes the parent's own cache DCE
+     * subject to invalidate_dce()'s intersection check below. */
+    parent = CreateWindowExA( 0, "TopmostSiblingClass", "parent", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN | WS_VISIBLE,
+                              100, 100, 400, 400, 0, 0, 0, NULL );
+    ok( parent != 0, "Failed to create parent\n" );
+
+    child1 = CreateWindowExA( 0, "TopmostSiblingClass", "child1", WS_CHILD | WS_VISIBLE,
+                              10, 10, 150, 150, parent, 0, 0, NULL );
+    child2 = CreateWindowExA( 0, "TopmostSiblingClass", "child2", WS_CHILD | WS_VISIBLE,
+                              80, 80, 150, 150, parent, 0, 0, NULL );
+    ok( child1 != 0, "Failed to create child1\n" );
+    ok( child2 != 0, "Failed to create child2\n" );
+
+    UpdateWindow( parent );
+    flush_events();
+
+    topmost_track_hwnd = parent;
+    topmost_erase_count = 0;
+
+    /* SolidWorks brings a PropertyManager control to the front with
+     * SetWindowPos(child, HWND_TOPMOST, x, y, cx, cy, 0), flags == 0, as part
+     * of a layout pass that also nudges the control's rect slightly (a pure
+     * no-op rect, with no actual move/resize, doesn't exercise invalidate_dce
+     * at all — SWP_AGG_NOPOSCHANGE stays fully set and it's skipped
+     * regardless of z-order). This must not force the parent to erase/repaint
+     * its own content underneath (that's what progressively erased the
+     * section header text in the real bug). */
+    GetWindowRect( child1, &rc );
+    MapWindowPoints( 0, parent, (POINT *)&rc, 2 );
+    OffsetRect( &rc, 5, 5 );
+    SetWindowPos( child1, HWND_TOPMOST, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, 0 );
+    flush_events();
+
+    ok( topmost_erase_count == 0,
+        "expected parent not to be erased by child topmost restack, got %d WM_ERASEBKGND\n", topmost_erase_count );
+
+    DestroyWindow( child1 );
+    DestroyWindow( child2 );
+    DestroyWindow( parent );
+    UnregisterClassA( "TopmostSiblingClass", GetModuleHandleA( 0 ) );
+}
+
+static HWND rapid_active_track_hwnd;
+static int rapid_active_cancelmode_count;
+static int rapid_active_deactivate_count;
+
+static LRESULT CALLBACK rapid_active_wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+    if (hwnd == rapid_active_track_hwnd)
+    {
+        if (msg == WM_CANCELMODE) rapid_active_cancelmode_count++;
+        if (msg == WM_ACTIVATE && LOWORD(wp) == WA_INACTIVE) rapid_active_deactivate_count++;
+    }
+    return DefWindowProcA( hwnd, msg, wp, lp );
+}
+
+static void test_RapidSetActiveWindow(void)
+{
+    WNDCLASSA cls;
+    HWND hwnd, popup;
+
+    memset( &cls, 0, sizeof(cls) );
+    cls.hInstance = GetModuleHandleA( 0 );
+    cls.lpfnWndProc = rapid_active_wnd_proc;
+    cls.lpszClassName = "RapidActiveClass";
+    ok( RegisterClassA( &cls ) != 0, "RegisterClassA failed, error %ld\n", GetLastError() );
+
+    hwnd = CreateWindowExA( 0, "RapidActiveClass", "main", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                            100, 100, 200, 200, 0, 0, 0, NULL );
+    ok( hwnd != 0, "Failed to create main window\n" );
+    /* Same shape as SolidWorks's transient suggestion popup: owned, distinct
+     * top-level window, briefly made active while the user interacts with it. */
+    popup = CreateWindowExA( 0, "RapidActiveClass", "popup", WS_POPUP | WS_VISIBLE,
+                             120, 120, 100, 100, hwnd, 0, 0, NULL );
+    ok( popup != 0, "Failed to create popup window\n" );
+
+    SetForegroundWindow( hwnd );
+    flush_events();
+
+    rapid_active_track_hwnd = hwnd;
+    rapid_active_cancelmode_count = 0;
+    rapid_active_deactivate_count = 0;
+
+    /* SolidWorks does SetActiveWindow(popup) then SetActiveWindow(hwnd) back
+     * to back, with no message pump in between — the X server confirms the
+     * first request only after the second one has already been sent.
+     * hwnd legitimately gets deactivated once (by the first call, delivered
+     * synchronously) and reactivated once — exactly 1 WM_ACTIVATE(deactivate)
+     * is correct. What must NOT happen: an intermediate WM_CANCELMODE from
+     * the stale focus-out, or a SECOND, spurious WM_ACTIVATE(deactivate)
+     * once hwnd is already active again (from the delayed X11 confirmation
+     * of the now-superseded popup activation request). */
+    SetActiveWindow( popup );
+    SetActiveWindow( hwnd );
+    flush_events();
+
+    ok( GetActiveWindow() == hwnd, "expected hwnd to be active again, got %p\n", GetActiveWindow() );
+    ok( rapid_active_cancelmode_count == 0,
+        "expected no WM_CANCELMODE from the intermediate focus-out, got %d\n", rapid_active_cancelmode_count );
+    ok( rapid_active_deactivate_count == 1,
+        "expected exactly 1 WM_ACTIVATE(deactivate), got %d\n", rapid_active_deactivate_count );
+
+    DestroyWindow( popup );
+    DestroyWindow( hwnd );
+    UnregisterClassA( "RapidActiveClass", GetModuleHandleA( 0 ) );
+}
+
 static const struct message WmRestoreMinimizedSeq[] =
 {
     { HCBT_ACTIVATE, hook },
@@ -21551,6 +21682,8 @@ START_TEST(msg)
     test_TrackPopupMenu();
     test_TrackPopupMenuEmpty();
     test_DoubleSetCapture();
+    test_SetWindowPosTopmostChildSiblingErase();
+    test_RapidSetActiveWindow();
     test_create_name();
     test_hook_changing_window_proc();
     test_hook_cleanup();

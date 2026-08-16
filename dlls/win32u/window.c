@@ -4198,6 +4198,21 @@ done:
 BOOL WINAPI NtUserSetWindowPos( HWND hwnd, HWND after, INT x, INT y, INT cx, INT cy, UINT flags )
 {
     WINDOWPOS winpos;
+    HWND parent;
+
+    /* SolidWorks calls SetWindowPos(child, HWND_TOPMOST, x, y, cx, cy, 0) to bring
+     * PropertyManager controls to the front.  In Wine's shared-surface model any
+     * repaint chain triggered by SetWindowPos causes parent WM_ERASEBKGND to overwrite
+     * section header text.  On real Windows the compositor handles z-ordering
+     * transparently without triggering parent repaints.  Skip the call entirely to
+     * prevent the repaint cascade, but invalidate the control so it paints on the
+     * next message pump without going through the parent erase path. */
+    parent = NtUserGetAncestor( hwnd, GA_PARENT );
+    if (flags == 0 && after == HWND_TOPMOST && parent && parent != get_desktop_window())
+    {
+        NtUserRedrawWindow( hwnd, NULL, NULL, RDW_INVALIDATE | RDW_FRAME );
+        return TRUE;
+    }
 
     TRACE( "hwnd %p, after %p, %d,%d (%dx%d), flags %08x\n", hwnd, after, x, y, cx, cy, flags );
     if(TRACE_ON(win)) dump_winpos_flags(flags);

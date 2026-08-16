@@ -746,7 +746,9 @@ static void focus_out( Display *display , HWND hwnd )
 
     if (is_virtual_desktop()) return;
     if (hwnd != NtUserGetForegroundWindow()) return;
-    if (!(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE))
+    /* Don't send WM_CANCELMODE for intra-process focus changes; only when focus
+     * leaves the Wine process entirely, matching Windows behavior. */
+    if (!is_current_process_focused() && !(NtUserGetWindowLongW( hwnd, GWL_STYLE ) & WS_MINIMIZE))
         send_message( hwnd, WM_CANCELMODE, 0, 0 );
 
     /* don't reset the foreground window, if the window which is
