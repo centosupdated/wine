@@ -5240,13 +5240,38 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
 
 
 /***********************************************************************
+ *           check_large_page_type
+ *
+ * Validate MEM_LARGE_PAGES and MEM_PHYSICAL and remove them from the type.
+ * Neither large pages nor AWE are implemented, but an AWE reservation is
+ * ordinary address space, and MEM_LARGE_PAGES is only a page size request.
+ */
+static NTSTATUS check_large_page_type( ULONG *type, ULONG protect )
+{
+    if (*type & MEM_PHYSICAL)
+    {
+        /* the physical pages themselves are not implemented, see AllocateUserPhysicalPages() */
+        if (!(*type & MEM_LARGE_PAGES) && (*type & MEM_COMMIT)) return STATUS_INVALID_PARAMETER;
+        if (protect != PAGE_READWRITE) return STATUS_INVALID_PAGE_PROTECTION;
+    }
+    /* large pages require SeLockMemoryPrivilege, which we never grant */
+    else if (*type & MEM_LARGE_PAGES) return STATUS_PRIVILEGE_NOT_HELD;
+
+    *type &= ~(MEM_PHYSICAL | MEM_LARGE_PAGES);
+    return STATUS_SUCCESS;
+}
+
+
+/***********************************************************************
  *             NtAllocateVirtualMemory   (NTDLL.@)
  *             ZwAllocateVirtualMemory   (NTDLL.@)
  */
 NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR zero_bits,
                                          SIZE_T *size_ptr, ULONG type, ULONG protect )
 {
-    static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESET;
+    static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN | MEM_WRITE_WATCH
+                                   | MEM_RESET | MEM_PHYSICAL | MEM_LARGE_PAGES;
+    unsigned int status;
     ULONG_PTR limit;
 
     TRACE("%p %p %08lx %x %08x\n", process, *ret, *size_ptr, type, protect );
@@ -5258,12 +5283,12 @@ NTSTATUS WINAPI NtAllocateVirtualMemory( HANDLE process, PVOID *ret, ULONG_PTR z
     if (!is_old_wow64() && zero_bits >= 32) return STATUS_INVALID_PARAMETER_3;
 #endif
     if (type & ~type_mask) return STATUS_INVALID_PARAMETER;
+    if ((status = check_large_page_type( &type, protect ))) return status;
 
     if (process != NtCurrentProcess())
     {
         union apc_call call;
         union apc_result result;
-        unsigned int status;
 
         memset( &call, 0, sizeof(call) );
 
@@ -5386,7 +5411,8 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
                                            ULONG count )
 {
     static const ULONG type_mask = MEM_COMMIT | MEM_RESERVE | MEM_TOP_DOWN | MEM_WRITE_WATCH
-                                   | MEM_RESET | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER;
+                                   | MEM_RESET | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER
+                                   | MEM_PHYSICAL | MEM_LARGE_PAGES;
     ULONG_PTR limit_low = 0;
     ULONG_PTR limit_high = 0;
     ULONG_PTR align = 0;
@@ -5402,6 +5428,7 @@ NTSTATUS WINAPI NtAllocateVirtualMemoryEx( HANDLE process, PVOID *ret, SIZE_T *s
     if (status) return status;
 
     if (type & ~type_mask) return STATUS_INVALID_PARAMETER;
+    if ((status = check_large_page_type( &type, protect ))) return status;
     if (*ret && (align || limit_low || limit_high)) return STATUS_INVALID_PARAMETER;
     if (!*size_ptr) return STATUS_INVALID_PARAMETER;
 
