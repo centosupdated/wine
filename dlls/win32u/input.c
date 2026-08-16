@@ -2172,7 +2172,8 @@ BOOL set_active_window( HWND hwnd, HWND *prev, BOOL mouse, BOOL focus, DWORD new
 
     if (is_window(hwnd))
     {
-        send_message( hwnd, WM_NCACTIVATE, hwnd == NtUserGetForegroundWindow(), (LPARAM)previous );
+        HWND foreground = NtUserGetForegroundWindow();
+        send_message( hwnd, WM_NCACTIVATE, !foreground || hwnd == foreground, (LPARAM)previous );
         send_message( hwnd, WM_ACTIVATE,
                       MAKEWPARAM( mouse ? WA_CLICKACTIVE : WA_ACTIVE, is_iconic(hwnd) ? 0x20 : 0 ),
                       (LPARAM)previous );
