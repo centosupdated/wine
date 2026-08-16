@@ -120,6 +120,8 @@ struct wayland_pointer
     struct wayland_cursor cursor;
     double accum_x;
     double accum_y;
+    double accum_raw_x;
+    double accum_raw_y;
     pthread_mutex_t mutex;
 };
 

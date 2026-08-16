@@ -197,6 +197,8 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
     pthread_mutex_lock(&pointer->mutex);
     pointer->focused_hwnd = hwnd;
     pointer->enter_serial = serial;
+    pointer->accum_x = pointer->accum_y = 0;
+    pointer->accum_raw_x = pointer->accum_raw_y = 0;
     pthread_mutex_unlock(&pointer->mutex);
 
     /* The cursor is undefined at every enter, so we set it again with
@@ -360,9 +362,8 @@ static void relative_pointer_v1_relative_motion(void *private,
                                                 wl_fixed_t dx, wl_fixed_t dy,
                                                 wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel)
 {
-    const POINT raw_pos = { .x = wl_fixed_to_double(dx_unaccel), .y = wl_fixed_to_double(dy_unaccel) };
-    struct raw_mouse raw = { .count = 1, .data = { raw_pos } };
-    INPUT input = { .type = INPUT_MOUSE };
+    struct raw_mouse raw = { .count = 1 };
+    INPUT input = { .type = INPUT_MOUSE, .mi.dwFlags = MOUSEEVENTF_MOVE };
     HWND hwnd;
     struct wayland_win_data *data;
     double screen_x = 0.0, screen_y = 0.0;
@@ -379,6 +380,15 @@ static void relative_pointer_v1_relative_motion(void *private,
 
     pthread_mutex_lock(&pointer->mutex);
 
+    pointer->accum_raw_x += wl_fixed_to_double(dx_unaccel);
+    pointer->accum_raw_y += wl_fixed_to_double(dy_unaccel);
+
+    raw.data[0].x = round(pointer->accum_raw_x);
+    raw.data[0].y = round(pointer->accum_raw_y);
+
+    pointer->accum_raw_x -= raw.data[0].x;
+    pointer->accum_raw_y -= raw.data[0].y;
+
     if (pointer->relative_mode)
     {
         pointer->accum_x += screen_x;
@@ -386,7 +396,6 @@ static void relative_pointer_v1_relative_motion(void *private,
 
         input.mi.dx = round(pointer->accum_x);
         input.mi.dy = round(pointer->accum_y);
-        input.mi.dwFlags = MOUSEEVENTF_MOVE;
 
         pointer->accum_x -= input.mi.dx;
         pointer->accum_y -= input.mi.dy;
@@ -396,7 +405,7 @@ static void relative_pointer_v1_relative_motion(void *private,
 
     TRACE("hwnd=%p wayland_dxdy=%.2f,%.2f accum_dxdy=%d,%d wayland_raw=%.2f,%.2f raw_dxdy=%d,%d\n",
           hwnd, wl_fixed_to_double(dx), wl_fixed_to_double(dy), input.mi.dx, input.mi.dy,
-          wl_fixed_to_double(dx_unaccel), wl_fixed_to_double(dy_unaccel), raw_pos.x, raw_pos.y);
+          wl_fixed_to_double(dx_unaccel), wl_fixed_to_double(dy_unaccel), raw.data[0].x, raw.data[0].y);
 
     NtUserSendHardwareInput(hwnd, SEND_HWMSG_RAWINPUT, &input, (LPARAM)&raw);
 }
