@@ -1125,7 +1125,11 @@ DATETIME_Notify (DATETIME_INFO *infoPtr, const NMHDR *lpnmh)
     TRACE ("Got notification %x from %p\n", lpnmh->code, lpnmh->hwndFrom);
     TRACE ("info: %p %p %p\n", infoPtr->hwndSelf, infoPtr->hMonthCal, infoPtr->hUpdown);
 
-    if (lpnmh->code == MCN_SELECT) {
+    if (lpnmh->code == MCN_SELCHANGE) {
+        SendMessageW (infoPtr->hMonthCal, MCM_GETCURSEL, 0, (LPARAM)&infoPtr->date);
+        DATETIME_SendDateTimeChangeNotify (infoPtr);
+    }
+    else if (lpnmh->code == MCN_SELECT) {
         ShowWindow(infoPtr->hMonthCal, SW_HIDE);
         infoPtr->dateValid = TRUE;
         SendMessageW (infoPtr->hMonthCal, MCM_GETCURSEL, 0, (LPARAM)&infoPtr->date);
