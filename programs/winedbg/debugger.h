@@ -265,6 +265,17 @@ struct dbg_delayed_bp
     } u;
 };
 
+struct dbg_system_info
+{
+    const char*                 wine_build_id;
+    const char*                 host_system;
+    const char*                 host_version;
+    const char*                 windows_version;
+    USHORT                      current_machine;
+    USHORT                      native_machine;
+    USHORT                      guest_machines[4];
+};
+
 #define MAX_BREAKPOINTS 100
 struct dbg_process
 {
@@ -303,6 +314,7 @@ struct be_process_io
     BOOL        (*get_selector)(HANDLE, DWORD, LDT_ENTRY*);
     BOOL        (*fetch_thread_name)(const struct dbg_thread*, WCHAR**);
     BOOL        (*fetch_thread_context)(const struct dbg_thread*, dbg_ctx_t *);
+    BOOL        (*fetch_system_info)(struct dbg_process *, struct dbg_system_info*);
 };
 
 extern	struct dbg_process*	dbg_curr_process;
@@ -396,7 +408,7 @@ extern void             info_win32_frame_exceptions(DWORD tid);
 extern void             info_win32_virtual(DWORD pid);
 extern void             info_win32_segments(DWORD start, int length);
 extern void             info_win32_exception(void);
-extern void             info_win32_system(void);
+extern void             info_win32_system(BOOL);
 extern void             info_wine_dbg_channel(BOOL add, const char* chnl, const char* name);
 
   /* memory.c */
@@ -488,6 +500,7 @@ extern void             dbg_active_wait_for_first_exception(void);
 extern BOOL             dbg_attach_debuggee(DWORD pid, BOOL verbose);
 extern void             fetch_module_name(void* name_addr, void* mod_addr, WCHAR* buffer, size_t bufsz);
 extern BOOL             dbg_fetch_active_thread_name(DWORD tid, WCHAR **description);
+extern BOOL             dbg_fetch_system_info(struct dbg_system_info *);
 
   /* tgt_minidump.c */
 extern void             minidump_write(const char*, const EXCEPTION_RECORD*);

@@ -322,174 +322,19 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
     if (MiniDumpReadDumpStream(data->mapping, SystemInfoStream, &dir, &stream, NULL))
     {
         MINIDUMP_SYSTEM_INFO *msi = stream;
-        USHORT                machine = IMAGE_FILE_MACHINE_UNKNOWN;
-        const char           *str;
-        char                  tmp[128];
 
         dbg_printf("WineDbg starting minidump on pid %04lx\n", pid);
-        switch (msi->ProcessorArchitecture)
-        {
-        case PROCESSOR_ARCHITECTURE_UNKNOWN:
-            str = "Unknown";
-            break;
-        case PROCESSOR_ARCHITECTURE_INTEL:
-            machine = IMAGE_FILE_MACHINE_I386;
-            strcpy(tmp, "x86 [");
-            switch (msi->ProcessorLevel)
-            {
-            case  3: str = "80386"; break;
-            case  4: str = "80486"; break;
-            case  5: str = "Pentium"; break;
-            case  6: str = "Pentium Pro/II, III, Core, Atom or AMD Athlon"; break;
-            case 15: str = "Pentium 4 or AMD Athlon64"; break;
-            case 23: str = "AMD Zen 1 or 2"; break;
-            case 25: str = "AMD Zen 3 or 4"; break;
-            case 26: str = "AMD Zen 5"; break;
-            default: sprintf(tmp + strlen(tmp), "Proc-level #%x", msi->ProcessorLevel); str = NULL; break;
-            }
-            if (str) strcat(tmp, str);
-            if (msi->ProcessorLevel == 3 || msi->ProcessorLevel == 4)
-            {
-                if (HIBYTE(msi->ProcessorRevision) == 0xFF)
-                    sprintf(tmp + strlen(tmp), " (%c%d)",
-                            'A' + ((msi->ProcessorRevision>>4)&0xf)-0x0a,
-                            ((msi->ProcessorRevision&0xf)));
-                else
-                    sprintf(tmp + strlen(tmp), " (%c%d)",
-                            'A' + HIBYTE(msi->ProcessorRevision),
-                            LOBYTE(msi->ProcessorRevision));
-            }
-            else sprintf(tmp + strlen(tmp), " (%d.%d)",
-                         HIBYTE(msi->ProcessorRevision),
-                         LOBYTE(msi->ProcessorRevision));
-            strcat(tmp, "]");
-            str = tmp;
-            break;
-        case PROCESSOR_ARCHITECTURE_MIPS:
-            str = "Mips";
-            break;
-        case PROCESSOR_ARCHITECTURE_ALPHA:
-            str = "Alpha";
-            break;
-        case PROCESSOR_ARCHITECTURE_PPC:
-            str = "PowerPC";
-            break;
-        case PROCESSOR_ARCHITECTURE_AMD64:
-            machine = IMAGE_FILE_MACHINE_AMD64;
-            str = "X86_64";
-            break;
-        case PROCESSOR_ARCHITECTURE_ARM:
-            str = "ARM";
-            break;
-        case PROCESSOR_ARCHITECTURE_ARM64:
-            str = "ARM64";
-            break;
-        case PROCESSOR_ARCHITECTURE_MSIL:
-            str = "MSIL";
-            break;
-        case PROCESSOR_ARCHITECTURE_NEUTRAL:
-            str = "Neutral";
-            break;
-        default:
-            str = "???";
-            break;
-        }
-        dbg_printf("  %ls was running on #%d %s CPU%s",
-                   exec_name, msi->NumberOfProcessors, str,
+        dbg_printf("  %ls was running on #%d CPU%s\n",
+                   exec_name, msi->NumberOfProcessors,
                    msi->NumberOfProcessors < 2 ? "" : "s");
-        switch (msi->MajorVersion)
-        {
-        case 3:
-            switch (msi->MinorVersion)
-            {
-            case 51: str = "NT 3.51"; break;
-            default: str = "3-????"; break;
-            }
-            break;
-        case 4:
-            switch (msi->MinorVersion)
-            {
-            case 0: str = (msi->PlatformId == VER_PLATFORM_WIN32_NT) ? "NT 4.0" : "95"; break;
-            case 10: str = "98"; break;
-            case 90: str = "ME"; break;
-            default: str = "4-????"; break;
-            }
-            break;
-        case 5:
-            switch (msi->MinorVersion)
-            {
-            case 0: str = "2000"; break;
-            case 1: str = "XP"; break;
-            case 2:
-                if (msi->ProductType == 1) str = "XP";
-                else if (msi->ProductType == 3) str = "Server 2003";
-                else str = "5-????";
-                break;
-            default: str = "5-????"; break;
-            }
-            break;
-        case 6:
-            switch (msi->MinorVersion)
-            {
-            case 0:
-                if (msi->ProductType == 1) str = "Vista";
-                else if (msi->ProductType == 3) str = "Server 2008";
-                else str = "6-????";
-                break;
-            case 1:
-                if (msi->ProductType == 1) str = "Win7";
-                else if (msi->ProductType == 3) str = "Server 2008";
-                else str = "6-????";
-                break;
-            case 2:
-                if (msi->ProductType == 1) str = "Win8";
-                else if (msi->ProductType == 3) str = "Server 2012";
-                else str = "6-????";
-                break;
-            case 3:
-                if (msi->ProductType == 1) str = "Win8.1";
-                else if (msi->ProductType == 3) str = "Server 2012 R2";
-                else str = "6-????";
-                break;
-            default: str = "6-????"; break;
-            }
-            break;
-        case 10:
-            switch (msi->MinorVersion)
-            {
-            case 0:
-                if (msi->ProductType == 1) str = "Win10";
-                else str = "10-????";
-                break;
-            default: str = "10-????"; break;
-            }
-            break;
-        default: str = "???"; break;
-        }
-        dbg_printf(" on Windows %s (%u)\n", str, msi->BuildNumber);
-        /* FIXME CSD: msi->CSDVersionRva */
 
-        if (sizeof(MINIDUMP_SYSTEM_INFO) + 4 > dir->Location.DataSize &&
-            msi->CSDVersionRva >= dir->Location.Rva + sizeof(MINIDUMP_SYSTEM_INFO) + 4)
-        {
-            const char*     code = (const char*)stream + sizeof(MINIDUMP_SYSTEM_INFO);
-            const DWORD*    wes;
-
-            if (code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E' &&
-                *(wes = (const DWORD*)(code += 4)) >= 3)
-            {
-                /* assume we have wine extensions */
-                dbg_printf("    [on %s, on top of %s (%s)]\n",
-                           code + wes[1], code + wes[2], code + wes[3]);
-            }
-        }
-        if (machine == IMAGE_FILE_MACHINE_UNKNOWN
+        if (msi->ProcessorArchitecture == IMAGE_FILE_MACHINE_UNKNOWN
 #ifdef __x86_64__
-                                                  || machine == IMAGE_FILE_MACHINE_I386
+            || msi->ProcessorArchitecture == IMAGE_FILE_MACHINE_I386
 #endif
             )
         {
-            dbg_printf("Cannot reload this minidump because of incompatible/unsupported machine %x\n", machine);
+            dbg_printf("Cannot reload this minidump because of incompatible/unsupported machine %x\n",msi->ProcessorArchitecture);
             return FALSE;
         }
     }
@@ -498,6 +343,7 @@ static enum dbg_start minidump_do_reload(struct tgt_process_minidump_data* data)
     dbg_curr_pid = pid;
     dbg_curr_process->pio_data = data;
     dbg_set_process_name(dbg_curr_process, exec_name);
+    info_win32_system(FALSE);
 
     dbg_init(hProc, NULL, FALSE);
 
@@ -715,6 +561,59 @@ static BOOL tgt_process_minidump_fetch_thread_context(const struct dbg_thread* t
     return FALSE;
 }
 
+static BOOL tgt_process_minidump_fetch_system_info(struct dbg_process *pcs, struct dbg_system_info *sysinfo)
+{
+    struct tgt_process_minidump_data *data = private_data(pcs);
+    MINIDUMP_DIRECTORY *dir;
+    MINIDUMP_SYSTEM_INFO *msi;
+
+    if (!MiniDumpReadDumpStream(data->mapping, SystemInfoStream, &dir, (void**)&msi, NULL))
+        return FALSE;
+
+    memset(sysinfo, 0, sizeof(*sysinfo));
+
+    switch (msi->ProcessorArchitecture)
+    {
+    default:
+    case PROCESSOR_ARCHITECTURE_UNKNOWN: sysinfo->current_machine = IMAGE_FILE_MACHINE_UNKNOWN; break;
+    case PROCESSOR_ARCHITECTURE_INTEL:   sysinfo->current_machine = IMAGE_FILE_MACHINE_I386; break;
+    case PROCESSOR_ARCHITECTURE_AMD64:   sysinfo->current_machine = IMAGE_FILE_MACHINE_AMD64; break;
+    case PROCESSOR_ARCHITECTURE_ARM:     sysinfo->current_machine = IMAGE_FILE_MACHINE_ARM; break;
+    case PROCESSOR_ARCHITECTURE_ARM64:   sysinfo->current_machine = IMAGE_FILE_MACHINE_ARM64; break;
+    }
+    /* until Wow64 is supported */
+    sysinfo->native_machine = sysinfo->current_machine;
+
+
+    if (sizeof(MINIDUMP_SYSTEM_INFO) + 4 > dir->Location.DataSize &&
+        msi->CSDVersionRva >= dir->Location.Rva + sizeof(MINIDUMP_SYSTEM_INFO) + 4)
+    {
+        const char* code = (const char*)msi + sizeof(MINIDUMP_SYSTEM_INFO);
+
+        if (code[0] == 'W' && code[1] == 'I' && code[2] == 'N' && code[3] == 'E')
+        {
+            const DWORD* wes = (const DWORD*)(code += 4);
+            if (wes[0] >= 3)
+            {
+                sysinfo->wine_build_id = code + wes[1];
+                sysinfo->host_system = code + wes[2];
+                sysinfo->host_version = code + wes[3];
+            }
+            if (wes[0] >= 4) sysinfo->windows_version = code + wes[4];
+        }
+    }
+    if (!sysinfo->windows_version)
+    {
+        static char windows_version[64];
+        snprintf(windows_version, ARRAY_SIZE(windows_version),
+                 "Windows Version %d.%d", msi->MajorVersion, msi->MinorVersion);
+        sysinfo->windows_version = windows_version;
+    }
+    sysinfo->guest_machines[0] = IMAGE_FILE_MACHINE_UNKNOWN;
+
+    return TRUE;
+}
+
 static struct be_process_io be_process_minidump_io =
 {
     tgt_process_minidump_close_process,
@@ -723,4 +622,5 @@ static struct be_process_io be_process_minidump_io =
     tgt_process_minidump_get_selector,
     tgt_process_minidump_fetch_thread_name,
     tgt_process_minidump_fetch_thread_context,
+    tgt_process_minidump_fetch_system_info,
 };

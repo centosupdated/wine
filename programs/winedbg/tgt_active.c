@@ -1148,6 +1148,84 @@ static BOOL tgt_process_active_fetch_thread_name(const struct dbg_thread *thread
     return dbg_fetch_active_thread_name(thread->tid, description);
 }
 
+static BOOL is_guest(USHORT native, USHORT guest)
+{
+    BOOLEAN supported;
+
+    return native != guest && !RtlWow64IsWowGuestMachineSupported(guest, &supported) && supported;
+}
+
+static BOOL get_reg_machine_string(char *buffer, size_t buffer_size, const WCHAR *from)
+{
+    HKEY key;
+    BOOL ret = FALSE;
+
+    if (!RegOpenKeyExW(HKEY_LOCAL_MACHINE, from, 0, KEY_READ, &key))
+    {
+        DWORD cb = buffer_size;
+        ret = RegQueryValueExA(key, "ProductName", NULL, NULL, (BYTE *)buffer, &cb) == ERROR_SUCCESS;
+        RegCloseKey(key);
+    }
+    return ret;
+}
+
+static const char *get_windows_version(void)
+{
+    static char windows_version[64];
+
+    if (!*windows_version)
+    {
+        if (!get_reg_machine_string(windows_version, sizeof(windows_version), L"Software\\Microsoft\\Windows NT\\CurrentVersion") &&
+            !get_reg_machine_string(windows_version, sizeof(windows_version), L"Software\\Microsoft\\Windows\\CurrentVersion"))
+        {
+            RTL_OSVERSIONINFOEXW os_info = { sizeof(RTL_OSVERSIONINFOEXW) };
+            os_info.dwOSVersionInfoSize = sizeof(RTL_OSVERSIONINFOEXW);
+            RtlGetVersion(&os_info);
+            snprintf(windows_version, ARRAY_SIZE(windows_version),
+                     "Windows Version %ld.%ld", os_info.dwMajorVersion, os_info.dwMinorVersion);
+        }
+    }
+    return windows_version;
+}
+
+BOOL dbg_fetch_system_info(struct dbg_system_info *sysinfo)
+{
+    const char *(CDECL *wine_get_build_id)(void);
+    void (CDECL *wine_get_host_version)( const char **sysname, const char **release );
+    int i, j;
+
+    static USHORT guest_machines[] =
+    {
+        IMAGE_FILE_MACHINE_I386, IMAGE_FILE_MACHINE_ARM, IMAGE_FILE_MACHINE_ARMNT,
+    };
+
+    memset(sysinfo, 0, sizeof(*sysinfo));
+
+    wine_get_build_id = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_build_id");
+    wine_get_host_version = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_host_version");
+
+    if (wine_get_build_id) sysinfo->wine_build_id = (*wine_get_build_id)();
+    if (wine_get_host_version) wine_get_host_version(&sysinfo->host_system, &sysinfo->host_version);
+    sysinfo->windows_version = get_windows_version();
+
+    RtlWow64GetProcessMachines(GetCurrentProcess(), &sysinfo->current_machine, &sysinfo->native_machine);
+
+    for (i = j = 0; i < ARRAY_SIZE(guest_machines); i++)
+    {
+        if (is_guest(sysinfo->native_machine, guest_machines[i]))
+        {
+            if (j >= ARRAY_SIZE(sysinfo->guest_machines)) return FALSE;
+            sysinfo->guest_machines[j++] = guest_machines[i];
+        }
+    }
+    return TRUE;
+}
+
+static BOOL tgt_process_active_fetch_system_info(struct dbg_process *pcs, struct dbg_system_info *sysinfo)
+{
+    return dbg_fetch_system_info(sysinfo);
+}
+
 static struct be_process_io be_process_active_io =
 {
     tgt_process_active_close_process,
@@ -1155,4 +1233,6 @@ static struct be_process_io be_process_active_io =
     tgt_process_active_write,
     tgt_process_active_get_selector,
     tgt_process_active_fetch_thread_name,
+    NULL, /* fetch_thread_context */
+    tgt_process_active_fetch_system_info,
 };

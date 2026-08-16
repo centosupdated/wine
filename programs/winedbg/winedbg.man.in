@@ -398,6 +398,10 @@ Lists all w-threads in Wine session
 Lists the exception frames (starting from current stack frame). You
 can also pass, as optional argument, a thread id (instead of current
 thread) to examine its exception frames.
+.IP \fBinfo\ system\ \fI[process]\fR
+Displays information about the system: without arguments, refers to
+the system WineDbg is running on; with argument refers to the system
+the current process runs on (could be different eg. for a minidump).
 .PP
 Debug messages can be turned on and off as you are debugging using
 the \fBset\fR command, but only for channels initialized with the
