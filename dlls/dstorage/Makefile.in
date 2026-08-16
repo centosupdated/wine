@@ -1,0 +1,6 @@
+MODULE    = dstorage.dll
+IMPORTS   = kernel32
+
+SOURCES = \
+	dstorage_main.c
+
