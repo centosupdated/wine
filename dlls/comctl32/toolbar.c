@@ -1730,7 +1730,11 @@ TOOLBAR_CalcToolbar (TOOLBAR_INFO *infoPtr)
         validImageList = TRUE;
     sizeButton = TOOLBAR_MeasureButton(infoPtr, sizeString, TRUE, validImageList);
     infoPtr->nButtonWidth = sizeButton.cx;
-    infoPtr->nButtonHeight = sizeButton.cy;
+    if (validImageList ||
+        !(infoPtr->dwStyle & TBSTYLE_LIST) ||
+        infoPtr->nBitmapWidth > 1 ||
+        infoPtr->nBitmapHeight > 1)
+        infoPtr->nButtonHeight = sizeButton.cy;
     infoPtr->iTopMargin = default_top_margin(infoPtr);
 
     if ( infoPtr->cxMin >= 0 && infoPtr->nButtonWidth < infoPtr->cxMin )
