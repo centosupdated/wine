@@ -7151,6 +7151,272 @@ static void test_write_events(struct event_test_ctx *ctx)
     free(buffer);
 }
 
+static int socket_select_writable(SOCKET socket)
+{
+    struct timeval timeout = {0};
+    fd_set writefds;
+    int ret;
+
+    FD_ZERO(&writefds);
+    FD_SET(socket, &writefds);
+    ret = select(0, NULL, &writefds, NULL, &timeout);
+    if (ret == SOCKET_ERROR)
+        return SOCKET_ERROR;
+    return ret && FD_ISSET(socket, &writefds);
+}
+
+static void test_send_writability(void)
+{
+    static const int max_sends = 65536;
+    unsigned int select_error = 0, send_error = 0, recv_error = 0;
+    unsigned int writable_wouldblock = 0;
+    unsigned int total_sent = 0, total_received = 0;
+    SOCKET client, server;
+    char buffer[4096];
+    int zero_rounds;
+    int recv_size;
+    int writable;
+    int value;
+    int ret;
+    int i;
+
+    memset(buffer, 'a', sizeof(buffer));
+
+    tcp_socketpair(&client, &server);
+    set_blocking(server, FALSE);
+
+    value = 65536;
+    ret = setsockopt(server, SOL_SOCKET, SO_SNDBUF, (char *)&value, sizeof(value));
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+    ret = setsockopt(client, SOL_SOCKET, SO_RCVBUF, (char *)&value, sizeof(value));
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+
+    for (i = 0; i < max_sends; ++i)
+    {
+        writable = socket_select_writable(server);
+        if (writable == SOCKET_ERROR)
+        {
+            select_error = WSAGetLastError();
+            break;
+        }
+
+        ret = send(server, buffer, sizeof(buffer), 0);
+        if (writable && ret == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK)
+            ++writable_wouldblock;
+
+        if (ret == SOCKET_ERROR)
+        {
+            send_error = WSAGetLastError();
+            break;
+        }
+        total_sent += ret;
+    }
+
+    ok(!select_error, "got select error %u\n", select_error);
+    ok(send_error == WSAEWOULDBLOCK, "got send error %u after %d sends\n", send_error, i);
+    ok(!writable_wouldblock, "got %u would-block errors while writable\n",
+       writable_wouldblock);
+
+    /* The socket is hard-full and cannot accept a send. */
+    /* The first WSAEWOULDBLOCK can be transient: the peer's kernel keeps
+     * absorbing in-flight data without the application reading. The state is
+     * only static once a settle-and-refill round accepts nothing. */
+    zero_rounds = 0;
+    for (i = 0; i < 64 && zero_rounds < 2; ++i)
+    {
+        int added = 0;
+
+        Sleep(50);
+        while ((ret = send(server, buffer, sizeof(buffer), 0)) > 0)
+        {
+            added += ret;
+            total_sent += ret;
+        }
+        zero_rounds = added ? 0 : zero_rounds + 1;
+    }
+    ok(zero_rounds == 2, "connection did not become quiescent after %d rounds\n", i);
+    writable = socket_select_writable(server);
+    ok(!writable, "got writable %d\n", writable);
+    ret = send(server, buffer, sizeof(buffer), 0);
+    send_error = ret == SOCKET_ERROR ? WSAGetLastError() : 0;
+    ok(ret == SOCKET_ERROR && send_error == WSAEWOULDBLOCK,
+       "got %d, error %u\n", ret, send_error);
+    if (ret > 0)
+        total_sent += ret;
+
+    /* The queued amount at the wedge depends on kernel timing, so no fixed
+     * buffer size reliably lands between it and the poll low-water mark.
+     * Find the boundary behaviourally instead: grow the send buffer until the
+     * kernel accepts a byte, then step a little further in. The socket is then
+     * writable by Windows rules, while the headroom stays far below the
+     * low-water mark (half the queued amount), so Linux withholds POLLOUT. */
+    for (value = 65536 + 8192; value <= 1048576; value += 8192)
+    {
+        int actual = 0;
+        socklen_t len = sizeof(actual);
+
+        ret = setsockopt(server, SOL_SOCKET, SO_SNDBUF, (char *)&value, sizeof(value));
+        ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+        ret = send(server, buffer, 1, 0);
+        if (ret == 1)
+        {
+            ++total_sent;
+            break;
+        }
+        /* The host may cap SO_SNDBUF (net.core.wmem_max on Linux). Once the
+         * buffer stops growing there is no headroom to find. */
+        if (!getsockopt(server, SOL_SOCKET, SO_SNDBUF, (char *)&actual, &len) && actual < value)
+            break;
+    }
+    if (ret != 1)
+    {
+        skip("send buffer cannot grow past the queued data on this host\n");
+        goto done;
+    }
+    value += 32768;
+    ret = setsockopt(server, SOL_SOCKET, SO_SNDBUF, (char *)&value, sizeof(value));
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+    writable = socket_select_writable(server);
+    ok(writable == 1, "got writable %d\n", writable);
+    ret = send(server, buffer, sizeof(buffer), 0);
+    send_error = ret == SOCKET_ERROR ? WSAGetLastError() : 0;
+    ok(ret == sizeof(buffer), "got %d, error %u\n", ret, send_error);
+    if (ret > 0)
+        total_sent += ret;
+
+    /* Drain every accepted byte and verify the empty socket is writable. */
+    recv_error = 0;
+    while (total_received < total_sent)
+    {
+        recv_size = total_sent - total_received;
+        if (recv_size > sizeof(buffer)) recv_size = sizeof(buffer);
+        ret = recv(client, buffer, recv_size, 0);
+        if (ret <= 0)
+        {
+            recv_error = ret == SOCKET_ERROR ? WSAGetLastError() : 0;
+            break;
+        }
+        total_received += ret;
+    }
+    ok(total_received == total_sent, "received %u of %u bytes, error %u\n",
+       total_received, total_sent, recv_error);
+
+    Sleep(100);
+    writable = socket_select_writable(server);
+    ok(writable == 1, "got writable %d\n", writable);
+    ret = send(server, buffer, sizeof(buffer), 0);
+    send_error = ret == SOCKET_ERROR ? WSAGetLastError() : 0;
+    ok(ret == sizeof(buffer), "got %d, error %u\n", ret, send_error);
+
+done:
+    closesocket(server);
+    closesocket(client);
+}
+
+static void test_write_event_no_rearm_after_select(void)
+{
+    static const int buffer_size = 1024;
+    static const int max_sends = 65536;
+    WSANETWORKEVENTS events;
+    SOCKET client, server;
+    unsigned int error = 0;
+    int send_blocked = 0;
+    int select_blocked = 0;
+    int short_send = 0;
+    char *buffer;
+    HANDLE event;
+    DWORD wait;
+    int value;
+    int ret;
+    int i;
+
+    buffer = malloc(buffer_size);
+    memset(buffer, 'a', buffer_size);
+
+    tcp_socketpair(&client, &server);
+    set_blocking(client, FALSE);
+
+    value = 4096;
+    ret = setsockopt(server, SOL_SOCKET, SO_SNDBUF, (char *)&value, sizeof(value));
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+    ret = setsockopt(client, SOL_SOCKET, SO_RCVBUF, (char *)&value, sizeof(value));
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+
+    event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    ok(!!event, "got error %lu\n", GetLastError());
+
+    /* WSAEventSelect() makes the server socket non-blocking. */
+    ret = WSAEventSelect(server, event, FD_WRITE);
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+
+    wait = WSAWaitForMultipleEvents(1, &event, FALSE, 1000, FALSE);
+    ok(wait == WSA_WAIT_EVENT_0, "got wait %#lx\n", wait);
+
+    memset(&events, 0xcc, sizeof(events));
+    ret = WSAEnumNetworkEvents(server, event, &events);
+    ok(!ret, "got %d, error %u\n", ret, WSAGetLastError());
+    ok(events.lNetworkEvents == FD_WRITE, "got events %#lx\n", events.lNetworkEvents);
+    ok(!events.iErrorCode[FD_WRITE_BIT], "got error %d\n", events.iErrorCode[FD_WRITE_BIT]);
+
+    for (i = 0; i < max_sends; ++i)
+    {
+        ret = socket_select_writable(server);
+        if (ret == SOCKET_ERROR)
+        {
+            error = WSAGetLastError();
+            break;
+        }
+        if (!ret)
+        {
+            select_blocked = 1;
+            break;
+        }
+
+        ret = send(server, buffer, buffer_size, 0);
+        if (ret == SOCKET_ERROR)
+        {
+            error = WSAGetLastError();
+            if (error == WSAEWOULDBLOCK)
+                send_blocked = 1;
+            break;
+        }
+        if (ret != buffer_size)
+        {
+            short_send = ret;
+            break;
+        }
+    }
+
+    ok(!error || send_blocked, "got error %u\n", error);
+    ok(!short_send, "got short send %d\n", short_send);
+
+    if (send_blocked)
+        skip("send returned WSAEWOULDBLOCK before select observed not-writable\n");
+    else if (!select_blocked)
+        skip("select remained writable after %d sends\n", max_sends);
+    else
+    {
+        ret = socket_select_writable(server);
+        ok(!ret, "got %d\n", ret);
+
+        while ((ret = recv(client, buffer, buffer_size, 0)) > 0)
+            ;
+        ok(ret == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK,
+           "got %d, error %u\n", ret, WSAGetLastError());
+
+        /* FD_WRITE re-arms only after send() fails with WSAEWOULDBLOCK; observing
+         * not-writable through poll does not re-arm it, as verified on Windows Server 2022. */
+        wait = WSAWaitForMultipleEvents(1, &event, FALSE, 1000, FALSE);
+        ok(wait == WSA_WAIT_TIMEOUT, "got wait %#lx\n", wait);
+    }
+
+    WSAEventSelect(server, NULL, 0);
+    CloseHandle(event);
+    closesocket(server);
+    closesocket(client);
+    free(buffer);
+}
+
 static void test_read_events(struct event_test_ctx *ctx)
 {
     OVERLAPPED overlapped = {0};
@@ -15102,6 +15368,8 @@ START_TEST( sock )
     test_write_watch();
 
     test_events();
+    test_send_writability();
+    test_write_event_no_rearm_after_select();
     test_select_after_WSAEventSelect();
 
     test_ipv6only();

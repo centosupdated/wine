@@ -62,6 +62,9 @@
 #ifdef HAVE_LINUX_RTNETLINK_H
 # include <linux/rtnetlink.h>
 #endif
+#ifdef SO_MEMINFO
+# include <linux/sock_diag.h>
+#endif
 
 #ifdef HAVE_NETIPX_IPX_H
 # include <netipx/ipx.h>
@@ -3577,6 +3580,29 @@ static void handle_exclusive_poll(struct poll_req *req)
     }
 }
 
+static int sock_stream_send_ready( struct sock *sock )
+{
+#ifdef SO_MEMINFO
+    unsigned int meminfo[SK_MEMINFO_VARS];
+    socklen_t len = sizeof(meminfo);
+    int unix_fd;
+
+    if (sock->type != WS_SOCK_STREAM || sock->state != SOCK_CONNECTED || sock->wr_shutdown)
+        return 0;
+
+    if ((unix_fd = get_unix_fd( sock->fd )) < 0)
+        return 0;
+
+    if (getsockopt( unix_fd, SOL_SOCKET, SO_MEMINFO, meminfo, &len )) return 0;
+
+    return len >= (SK_MEMINFO_WMEM_QUEUED + 1) * sizeof(*meminfo) &&
+           meminfo[SK_MEMINFO_WMEM_QUEUED] < meminfo[SK_MEMINFO_SNDBUF];
+#else
+    (void)sock;
+    return 0;
+#endif
+}
+
 static void poll_socket( struct sock *poll_sock, struct async *async, int exclusive, timeout_t timeout,
                          unsigned int count, const struct afd_poll_socket_64 *sockets )
 {
@@ -3638,7 +3664,17 @@ static void poll_socket( struct sock *poll_sock, struct async *async, int exclus
         pollfd.fd = get_unix_fd( sock->fd );
         pollfd.events = poll_flags_from_afd( sock, mask );
         if (pollfd.events >= 0 && poll( &pollfd, 1, 0 ) >= 0)
+        {
+            if ((mask & AFD_POLL_WRITE) &&
+                !(pollfd.revents & (POLLOUT | POLLERR | POLLHUP)) &&
+                sock->type == WS_SOCK_STREAM && sock->state == SOCK_CONNECTED &&
+                !sock->wr_shutdown)
+            {
+                if (sock_stream_send_ready( sock ))
+                    pollfd.revents |= POLLOUT;
+            }
             sock_poll_event( sock->fd, pollfd.revents );
+        }
 
         /* FIXME: do other error conditions deserve a similar treatment? */
         if (sock->state != SOCK_CONNECTING && sock->errors[AFD_POLL_BIT_CONNECT_ERR] && (mask & AFD_POLL_CONNECT_ERR))
@@ -4052,7 +4088,8 @@ DECL_HANDLER(send_socket)
          * asyncs will not consume all available space; if there's no space
          * available, the current request won't be immediately satiable.
          */
-        if ((!force_async && sock->nonblocking) || check_fd_events( sock->fd, POLLOUT ))
+        if ((!force_async && sock->nonblocking) || check_fd_events( sock->fd, POLLOUT ) ||
+            sock_stream_send_ready( sock ))
         {
             /* Give the client opportunity to complete synchronously.
              * If it turns out that the I/O request is not actually immediately satiable,
