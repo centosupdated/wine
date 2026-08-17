@@ -333,6 +333,25 @@ static void test_LM_GETIDEALSIZE(void)
         ok(sz.cx > sz.cy, "Expected sz.cx > sz.cy (%ld > %ld).\n", sz.cx, sz.cy);
     }
 
+    ret = SendMessageA(hwnd, WM_SETTEXT, 0, (LPARAM)" ");
+    ok(ret, "Unexpected return value, %ld.\n", ret);
+    sz.cx = sz.cy = -1;
+    ret = SendMessageA(hwnd, LM_GETIDEALSIZE, 0, (LPARAM)&sz);
+    if (sz.cy == -1)
+        win_skip("LM_GETIDEALSIZE is not supported.\n");
+    else
+    {
+        todo_wine_if(sz.cx < 1)
+        ok(sz.cx >= 1, "Unexpected ideal width, %ld >= 1.\n", sz.cx);
+        todo_wine_if(sz.cx >= 100)
+        ok(sz.cx < 100, "Unexpected ideal width, %ld < 100.\n", sz.cx);
+        todo_wine_if(sz.cy < 1)
+        ok(sz.cy >= 1, "Unexpected ideal height, %ld < 100.\n", sz.cy);
+        todo_wine_if(sz.cy >= 100)
+        ok(sz.cy < 100, "Unexpected ideal height, %ld < 100.\n", sz.cy);
+        ok(sz.cy == ret, "Unexpected ideal height, %ld.\n", sz.cy);
+    }
+
     DestroyWindow(hwnd);
 }
 
