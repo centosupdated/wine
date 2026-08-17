@@ -341,10 +341,8 @@ static void test_LM_GETIDEALSIZE(void)
         win_skip("LM_GETIDEALSIZE is not supported.\n");
     else
     {
-        todo_wine
         ok(sz.cx >= 1, "Unexpected ideal width, %ld >= 1.\n", sz.cx);
         ok(sz.cx < 100, "Unexpected ideal width, %ld < 100.\n", sz.cx);
-        todo_wine
         ok(sz.cy >= 1, "Unexpected ideal height, %ld < 100.\n", sz.cy);
         ok(sz.cy < 100, "Unexpected ideal height, %ld < 100.\n", sz.cy);
         ok(sz.cy == ret, "Unexpected ideal height, %ld.\n", sz.cy);
