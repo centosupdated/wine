@@ -1,0 +1,7 @@
+MODULE    = dstoragecore.dll
+IMPORTS   = kernel32
+
+SOURCES = \
+	dstoragecore_main.c \
+	libds_uring.c
+
