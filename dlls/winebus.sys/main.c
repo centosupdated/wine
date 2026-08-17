@@ -259,16 +259,45 @@ static WCHAR *get_compatible_ids(DEVICE_OBJECT *device)
     static const WCHAR xinput_compat[] = L"WINEBUS\\WINE_COMP_XINPUT";
     static const WCHAR hid_compat[] = L"WINEBUS\\WINE_COMP_HID";
     struct device_extension *ext = (struct device_extension *)device->DeviceExtension;
-    DWORD size = sizeof(hid_compat);
-    WCHAR *dst;
+    WCHAR usb_compat[3][40];
+    DWORD usb_count = 0, size, len, i;
+    WCHAR *dst, *pos;
 
+    /* A real Windows USB-HID device exposes the USB class compatible IDs on its USB
+       interface parent. winebus has no separate interface device, so report them on
+       the HID device, where an application reaches them from the HID node through
+       CM_Get_Parent. desc.class stays zero for backends that read no USB interface,
+       which leaves them unchanged. */
+    if (ext->desc.bus_type == BUS_TYPE_USB && ext->desc.class)
+    {
+        swprintf(usb_compat[usb_count++], ARRAY_SIZE(usb_compat[0]),
+                 L"USB\\Class_%02x&SubClass_%02x&Prot_%02x", ext->desc.class, ext->desc.subclass, ext->desc.protocol);
+        swprintf(usb_compat[usb_count++], ARRAY_SIZE(usb_compat[0]),
+                 L"USB\\Class_%02x&SubClass_%02x", ext->desc.class, ext->desc.subclass);
+        swprintf(usb_compat[usb_count++], ARRAY_SIZE(usb_compat[0]), L"USB\\Class_%02x", ext->desc.class);
+    }
+
+    size = sizeof(hid_compat);
     if (ext->desc.is_gamepad) size += sizeof(xinput_compat);
+    for (i = 0; i < usb_count; i++) size += (wcslen(usb_compat[i]) + 1) * sizeof(WCHAR);
 
     if ((dst = ExAllocatePool(PagedPool, size + sizeof(WCHAR))))
     {
-        if (ext->desc.is_gamepad) memcpy(dst, xinput_compat, sizeof(xinput_compat));
-        memcpy((char *)dst + size - sizeof(hid_compat), hid_compat, sizeof(hid_compat));
-        dst[size / sizeof(WCHAR)] = 0;
+        pos = dst;
+        if (ext->desc.is_gamepad)
+        {
+            memcpy(pos, xinput_compat, sizeof(xinput_compat));
+            pos += sizeof(xinput_compat) / sizeof(WCHAR);
+        }
+        memcpy(pos, hid_compat, sizeof(hid_compat));
+        pos += sizeof(hid_compat) / sizeof(WCHAR);
+        for (i = 0; i < usb_count; i++)
+        {
+            len = wcslen(usb_compat[i]) + 1;
+            memcpy(pos, usb_compat[i], len * sizeof(WCHAR));
+            pos += len;
+        }
+        *pos = 0;
     }
 
     return dst;
