@@ -25,6 +25,7 @@
 #include "wined3d_gl.h"
 #include "winternl.h"
 #include "wine/list.h"
+#include "d3d11.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
@@ -2788,12 +2789,24 @@ HRESULT CDECL wined3d_device_create(struct wined3d *wined3d, struct wined3d_adap
         struct wined3d_device_parent *device_parent, struct wined3d_device **device)
 {
     struct wined3d_device *object;
+    uint32_t wined3d_flags = 0;
     HRESULT hr;
 
     TRACE("wined3d %p, adapter %p, device_type %#x, focus_window %p, flags %#x, "
             "surface_alignment %u, feature_levels %p, feature_level_count %u, device_parent %p, device %p.\n",
             wined3d, adapter, device_type, focus_window, flags, surface_alignment,
             feature_levels, feature_level_count, device_parent, device);
+
+    /* Unity uses shared resources if D3D11_CREATE_DEVICE_VIDEO_SUPPORT succeeds,
+     * so allow failing for now */
+    if (wined3d_settings.no_create_flags & D3D11_CREATE_DEVICE_VIDEO_SUPPORT)
+        wined3d_flags |= WINED3DCREATE_VIDEO_SUPPORT;
+
+    if (flags != (flags & ~wined3d_flags))
+    {
+        FIXME("Failing for device create flags 0x%x forced unsupported by WINE_D3D_CONFIG override.\n", wined3d_settings.no_create_flags);
+        return E_FAIL;
+    }
 
     if (FAILED(hr = adapter->adapter_ops->adapter_create_device(wined3d, adapter,
             device_type, focus_window, flags, surface_alignment,

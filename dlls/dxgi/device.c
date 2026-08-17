@@ -485,7 +485,7 @@ static const struct IWineDXGISwapChainFactoryVtbl dxgi_swapchain_factory_vtbl =
 };
 
 HRESULT dxgi_device_init(struct dxgi_device *device, struct dxgi_device_layer *layer,
-        IDXGIFactory *factory, IDXGIAdapter *adapter,
+        IDXGIFactory *factory, IDXGIAdapter *adapter, unsigned int flags,
         const D3D_FEATURE_LEVEL *feature_levels, unsigned int level_count)
 {
     struct wined3d_device_parent *wined3d_device_parent;
@@ -494,6 +494,7 @@ HRESULT dxgi_device_init(struct dxgi_device *device, struct dxgi_device_layer *l
     struct dxgi_adapter *dxgi_adapter;
     struct dxgi_factory *dxgi_factory;
     struct dxgi_output *dxgi_output;
+    unsigned int wined3d_flags = 0;
     struct IDXGIOutput *output;
     void *layer_base;
     HWND window;
@@ -540,8 +541,11 @@ HRESULT dxgi_device_init(struct dxgi_device *device, struct dxgi_device_layer *l
     wined3d_device_parent = IWineDXGIDeviceParent_get_wined3d_device_parent(dxgi_device_parent);
     IWineDXGIDeviceParent_Release(dxgi_device_parent);
 
+    if (flags & D3D11_CREATE_DEVICE_VIDEO_SUPPORT)
+        wined3d_flags |= WINED3DCREATE_VIDEO_SUPPORT;
+
     if (FAILED(hr = wined3d_device_create(dxgi_factory->wined3d,
-            dxgi_adapter->wined3d_adapter, WINED3D_DEVICE_TYPE_HAL, NULL, 0, 4,
+            dxgi_adapter->wined3d_adapter, WINED3D_DEVICE_TYPE_HAL, NULL, wined3d_flags, 4,
             (const enum wined3d_feature_level *)feature_levels, level_count,
             wined3d_device_parent, &device->wined3d_device)))
     {
