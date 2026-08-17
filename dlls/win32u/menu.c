@@ -4425,6 +4425,22 @@ static BOOL exit_tracking( HWND hwnd, BOOL is_popup )
     return TRUE;
 }
 
+static void update_menu_item_layout( HWND hwnd, HMENU handle )
+{
+    struct menu *menu;
+    BOOL update_layout;
+
+    if (!(menu = grab_menu_ptr( handle )))
+        return;
+
+    update_layout = menu->Height == 0;
+    release_menu_ptr( menu );
+
+    if (update_layout)
+        NtUserSetWindowPos( hwnd, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE |
+                            SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+}
+
 void track_mouse_menu_bar( HWND hwnd, INT ht, int x, int y )
 {
     HMENU handle = ht == HTSYSMENU ? get_win_sys_menu( hwnd ) : get_menu( hwnd );
@@ -4439,6 +4455,9 @@ void track_mouse_menu_bar( HWND hwnd, INT ht, int x, int y )
 
         /* fetch the window menu again, it may have changed */
         handle = ht == HTSYSMENU ? get_win_sys_menu( hwnd ) : get_menu( hwnd );
+        if (ht != HTSYSMENU)
+            update_menu_item_layout( hwnd, handle );
+
         track_menu( handle, flags, x, y, hwnd, NULL );
         exit_tracking( hwnd, FALSE );
     }
@@ -4473,6 +4492,8 @@ void track_keyboard_menu_bar( HWND hwnd, UINT wparam, WCHAR ch )
 
     /* fetch the window menu again, it may have changed */
     menu = (wparam & HTSYSMENU) ? get_win_sys_menu( hwnd ) : get_menu( hwnd );
+    if (!(wparam & HTSYSMENU))
+        update_menu_item_layout( hwnd, menu );
 
     if (ch && ch != ' ')
     {
