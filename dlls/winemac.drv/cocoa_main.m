@@ -100,6 +100,14 @@ static void run_cocoa_app(void* info)
     }
 }
 
+void macdrv_init_cocoa_threads(void)
+{
+    /* Make sure Cocoa is in multi-threading mode by detaching a
+       do-nothing thread. */
+    [NSThread detachNewThreadSelector:@selector(self)
+                             toTarget:[NSThread class]
+                           withObject:nil];
+}
 
 /***********************************************************************
  *              macdrv_start_cocoa_app
@@ -114,36 +122,26 @@ int macdrv_start_cocoa_app(unsigned long long tickcount)
 {
     int ret = -1;
     CFRunLoopSourceRef source;
-    struct cocoa_app_startup_info startup_info;
+    struct cocoa_app_startup_info startup_info = { .tickcount = tickcount };
     uint64_t uptime_mach = mach_absolute_time();
     mach_timebase_info_data_t mach_timebase;
     NSDate* timeLimit;
     CFRunLoopSourceContext source_context = { 0 };
 
-    /* Make sure Cocoa is in multi-threading mode by detaching a
-       do-nothing thread. */
-    [NSThread detachNewThreadSelector:@selector(self)
-                             toTarget:[NSThread class]
-                           withObject:nil];
-
-    startup_info.lock = [[NSConditionLock alloc] initWithCondition:COCOA_APP_NOT_RUNNING];
-    startup_info.tickcount = tickcount;
-    startup_info.success = FALSE;
+    if (!(timeLimit = [NSDate dateWithTimeIntervalSinceNow:5])) return -1;
+    if (!(startup_info.lock = [[NSConditionLock alloc] initWithCondition:COCOA_APP_NOT_RUNNING])) return -1;
 
     mach_timebase_info(&mach_timebase);
     startup_info.uptime_ns = uptime_mach * mach_timebase.numer / mach_timebase.denom;
 
-    timeLimit = [NSDate dateWithTimeIntervalSinceNow:5];
-
     source_context.info = &startup_info;
     source_context.perform = run_cocoa_app;
-    source = CFRunLoopSourceCreate(NULL, 0, &source_context);
-
-    if (source && startup_info.lock && timeLimit)
+    if ((source = CFRunLoopSourceCreate(NULL, 0, &source_context)))
     {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
         CFRunLoopSourceSignal(source);
         CFRunLoopWakeUp(CFRunLoopGetMain());
+        CFRelease(source);
 
         if ([startup_info.lock lockWhenCondition:COCOA_APP_RUNNING beforeDate:timeLimit])
         {
@@ -152,8 +150,6 @@ int macdrv_start_cocoa_app(unsigned long long tickcount)
         }
     }
 
-    if (source)
-        CFRelease(source);
     [startup_info.lock release];
     return ret;
 }

@@ -200,6 +200,7 @@ static inline CGPoint cgpoint_win_from_mac(CGPoint point)
     return point;
 }
 
+extern void macdrv_init_cocoa_threads(void);
 extern int macdrv_start_cocoa_app(unsigned long long tickcount);
 extern void macdrv_window_rejected_focus(const struct macdrv_event *event);
 extern void macdrv_beep(void);
