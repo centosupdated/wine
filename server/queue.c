@@ -87,6 +87,7 @@ struct message
     int                    x;         /* message position */
     int                    y;
     unsigned int           time;      /* message time */
+    unsigned int           mi_flags;  /* mouse input flags */
     void                  *data;      /* message data for sent messages */
     unsigned int           data_size; /* size of message data */
     unsigned int           unique_id; /* unique id for nested hw message waits */
@@ -822,12 +823,14 @@ static int merge_mousemove( struct thread_input *input, const struct message *ms
     struct message *prev;
 
     if (!(prev = find_mouse_message( input, msg ))) return 0;
+    if (prev->mi_flags & MOUSEEVENTF_MOVE_NOCOALESCE) return 0;
 
     prev->wparam  = msg->wparam;
     prev->lparam  = msg->lparam;
     prev->x       = msg->x;
     prev->y       = msg->y;
     prev->time    = msg->time;
+    prev->mi_flags = msg->mi_flags;
     if (msg->type == MSG_HARDWARE && prev->data && msg->data)
     {
         struct hardware_msg_data *prev_data = prev->data;
@@ -2151,6 +2154,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
     lparam_t wparam = input->mouse.data << 16;
     const POINT *raw = &empty_raw;
     int wait = 0, x, y;
+    unsigned int mi_flags;
 
     static const unsigned int messages[] =
     {
@@ -2216,6 +2220,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         x = desktop_shm->cursor.x;
         y = desktop_shm->cursor.y;
     }
+    mi_flags = flags;
 
     if ((foreground = get_foreground_thread( desktop, win )))
     {
@@ -2256,6 +2261,7 @@ static int queue_mouse_message( struct desktop *desktop, user_handle_t win, cons
         msg->lparam    = 0;
         msg->x         = x;
         msg->y         = y;
+        msg->mi_flags  = mi_flags;
         if (origin == IMO_INJECTED) msg_data->flags = LLMHF_INJECTED;
 
         /* specify a sender only when sending the last message */
