@@ -220,6 +220,11 @@ static NSString* WineLocalizedString(unsigned int stringID)
         CGDisplayRemoveReconfigurationCallback(DisplayReconfigCallback, NULL);
         [super dealloc];
     }
+    
+    - (void)applicationDidFinishLaunching:(NSNotification *)notification
+    {
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    }
 
     - (void) transformProcessToForeground:(BOOL)activateIfTransformed
     {
