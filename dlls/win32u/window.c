@@ -2279,6 +2279,7 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
     struct window_surface *old_surface;
     HICON icon, icon_small;
     ICONINFO ii, ii_small;
+    DWORD style, ex_style;
 
     toplevel = NtUserGetAncestor( hwnd, GA_ROOT );
     is_layered = new_surface && new_surface->alpha_mask;
@@ -2380,6 +2381,8 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
         }
     }
 
+    style = win->dwStyle;
+    ex_style = win->dwExStyle;
     release_win_ptr( win );
 
     if (ret)
@@ -2442,7 +2445,8 @@ static BOOL apply_window_pos( HWND hwnd, HWND insert_after, UINT swp_flags, stru
 
         owner_hint = NtUserGetWindowRelative(hwnd, GW_OWNER);
         /* fallback to any window that is right below our top left corner */
-        if (!owner_hint) owner_hint = NtUserWindowFromPoint(new_rects->window.left - 1, new_rects->window.top - 1);
+        if (!owner_hint && !((style & WS_POPUP) && (ex_style & WS_EX_TOPMOST) && (ex_style & WS_EX_TOOLWINDOW)))
+            owner_hint = NtUserWindowFromPoint(new_rects->window.left - 1, new_rects->window.top - 1);
         if (owner_hint) owner_hint = NtUserGetAncestor(owner_hint, GA_ROOT);
 
         user_driver->pWindowPosChanged( hwnd, insert_after, owner_hint, swp_flags, &monitor_rects,
