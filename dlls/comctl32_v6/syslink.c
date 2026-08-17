@@ -1227,7 +1227,7 @@ static VOID SYSLINK_Render (const SYSLINK_INFO *infoPtr, HDC hdc, PRECT pRect)
                     SkipChars++;
                     n--;
                 }
-                while(n > 0 && (*tx) == infoPtr->BreakChar)
+                while(n > 1 && (*tx) == infoPtr->BreakChar)
                 {
                     tx++;
                     SkipChars++;
@@ -1235,6 +1235,7 @@ static VOID SYSLINK_Render (const SYSLINK_INFO *infoPtr, HDC hdc, PRECT pRect)
                 }
             }
 
+            szDim.cx = szDim.cy = 0;
             if((n == 0 && SkipChars != 0) ||
                GetTextExtentExPointW(hdc, tx, n, rc.right - x, &nFit, NULL, &szDim))
             {
