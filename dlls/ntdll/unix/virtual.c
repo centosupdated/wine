@@ -3349,7 +3349,11 @@ static NTSTATUS map_image_view( struct file_view **view_ret, struct pe_image_inf
                     (image_info->image_flags & IMAGE_FLAGS_ImageDynamicallyRelocated);
 
     limit_low = max( limit_low, (ULONG_PTR)address_space_start );  /* make sure the DOS area remains free */
-    if (!limit_high) limit_high = (ULONG_PTR)user_space_limit;
+    if (!limit_high)
+    {
+        if (is_wow64()) limit_high = get_wow_user_space_limit();
+        else limit_high = (ULONG_PTR)user_space_limit;
+    }
 
     /* first try the specified base */
 
