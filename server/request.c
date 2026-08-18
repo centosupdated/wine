@@ -589,8 +589,8 @@ static void create_dir( const char *name, struct stat *st )
             fatal_error( "lstat %s: %s\n", name, strerror( errno ));
     }
     if (!S_ISDIR(st->st_mode)) fatal_error( "%s is not a directory\n", name );
-    if (st->st_uid != getuid()) fatal_error( "%s is not owned by you\n", name );
-    if (st->st_mode & 077) fatal_error( "%s must not be accessible by other users\n", name );
+    if (st->st_uid != getuid()) printf( "%s is not owned by you\n", name );
+    if (st->st_mode & 077) printf( "%s must not be accessible by other users\n", name );
 }
 
 /* create the server directory and chdir to it */
@@ -636,7 +636,7 @@ static char *create_server_dir( int force )
     if (fstat( config_dir_fd, &st ) == -1)
         fatal_error( "stat %s: %s\n", config_dir, strerror( errno ));
     if (st.st_uid != getuid())
-        fatal_error( "%s is not owned by you\n", config_dir );
+        printf( "%s is not owned by you\n", config_dir );
 
     /* create the base directory if needed */
 
