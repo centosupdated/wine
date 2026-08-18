@@ -956,12 +956,17 @@ static void set_size_hints( struct x11drv_win_data *data, DWORD style )
 static const UINT config_notify_mask = (1 << NET_WM_STATE_MAXIMIZED) | (1 << NET_WM_STATE_FULLSCREEN) |
                                        (1 << NET_WM_STATE_ABOVE);
 
+static BOOL window_has_pending_config_net_wm_state( struct x11drv_win_data *data )
+{
+    return ((data->pending_state.net_wm_state ^ data->current_state.net_wm_state) & config_notify_mask);
+}
+
 static BOOL window_needs_mwm_hints_change_delay( struct x11drv_win_data *data )
 {
     if (data->pending_state.wm_state == WithdrawnState) return FALSE; /* window is unmapped, should be safe to make any change */
     if (!data->configure_serial && !data->net_wm_state_serial) return FALSE; /* no other requests are pending, should be safe */
     /* check whether we have a pending configure, either directly or because of a _NET_WM_STATE change which might trigger one  */
-    if (!data->configure_serial && !((data->pending_state.net_wm_state ^ data->current_state.net_wm_state) & config_notify_mask)) return FALSE;
+    if (!data->configure_serial && !window_has_pending_config_net_wm_state( data )) return FALSE;
     /* delay any new _MOTIF_WM_HINTS change which might trigger a ConfigureNotify when a config/_NET_WM_STATE change is pending */
     return (!data->desired_state.mwm_hints.decorations != !data->pending_state.mwm_hints.decorations);
 }
@@ -1682,7 +1687,7 @@ static UINT window_update_client_state( struct x11drv_win_data *data )
     if (data->desired_state.wm_state == WithdrawnState) return 0; /* ignore state changes on invisible windows */
 
     if (data->wm_state_serial) return 0; /* another WM_STATE update is pending, wait for it to complete */
-    if (data->net_wm_state_serial) return 0; /* another _NET_WM_STATE update is pending, wait for it to complete */
+    if (data->net_wm_state_serial && window_has_pending_config_net_wm_state( data )) return 0; /* another _NET_WM_STATE, which might trigger configure, update is pending, wait for it to complete */
     if (data->mwm_hints_serial) return 0; /* another MWM_HINT update is pending, wait for it to complete */
     if (data->configure_serial) return 0; /* another config update is pending, wait for it to complete */
 
@@ -1743,13 +1748,14 @@ static UINT window_update_client_config( struct x11drv_win_data *data )
     unsigned long old_generation, generation;
     long old_monitors[4], monitors[4];
     UINT flags;
+    HMONITOR monitor;
 
     if (!data->managed) return 0; /* unmanaged windows are managed by the Win32 side */
     if (is_virtual_desktop()) return 0; /* ignore window manager config changes in virtual desktop mode */
     if (data->desired_state.wm_state != NormalState) return 0; /* ignore config changes on invisible/minimized windows */
 
     if (data->wm_state_serial) return 0; /* another WM_STATE update is pending, wait for it to complete */
-    if (data->net_wm_state_serial) return 0; /* another _NET_WM_STATE update is pending, wait for it to complete */
+    if (data->net_wm_state_serial && window_has_pending_config_net_wm_state( data )) return 0; /* another _NET_WM_STATE, which might trigger configure, update is pending, wait for it to complete */
     if (data->mwm_hints_serial) return 0; /* another MWM_HINT update is pending, wait for it to complete */
     if (data->configure_serial) return 0; /* another config update is pending, wait for it to complete */
 
@@ -1768,6 +1774,22 @@ static UINT window_update_client_config( struct x11drv_win_data *data )
 
     flags = SWP_NOACTIVATE | SWP_NOZORDER;
     rect = new_rect = window_rect_from_visible( &data->rects, data->current_state.rect );
+
+    if (!(data->current_state.net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)) &&
+        ((monitor = NtUserMonitorFromRect( &new_rect, MONITOR_DEFAULTTONEAREST ))) &&
+        !(NtUserGetWindowLongW( data->hwnd, GWL_STYLE ) & WS_MAXIMIZE))
+    {
+        MONITORINFO monitor_info = {.cbSize = sizeof(monitor_info)};
+        if (NtUserGetMonitorInfo( monitor, &monitor_info ))
+        {
+            if (monitor_info.rcWork.bottom == data->current_state.rect.bottom &&
+                monitor_info.rcWork.top <= data->current_state.rect.top &&
+                (monitor_info.rcWork.right - monitor_info.rcWork.left) == (data->current_state.rect.right - data->current_state.rect.left) &&
+                (monitor_info.rcWork.bottom - monitor_info.rcWork.top) >= (data->current_state.rect.bottom - data->current_state.rect.top))
+                return 0;
+        }
+    }
+
     if (new_rect.left == old_rect.left && new_rect.top == old_rect.top) flags |= SWP_NOMOVE;
     else OffsetRect( &rect, old_rect.left - new_rect.left, old_rect.top - new_rect.top );
     if (rect.right == old_rect.right && rect.bottom == old_rect.bottom) flags |= SWP_NOSIZE;
