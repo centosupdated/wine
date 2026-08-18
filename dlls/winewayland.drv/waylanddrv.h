@@ -413,6 +413,8 @@ void activate_keyboard_hkl(HWND hwnd, BOOL ime);
 
 void wayland_pointer_init(struct wl_pointer *wl_pointer);
 void wayland_pointer_deinit(void);
+int wayland_pointer_get_kinetic_scroll_timeout(void);
+void wayland_pointer_dispatch_kinetic_scroll(void);
 void wayland_pointer_clear_constraint(void);
 
 /**********************************************************************

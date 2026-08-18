@@ -24,6 +24,8 @@
 
 #include "config.h"
 
+#include <errno.h>
+#include <poll.h>
 #include <stdlib.h>
 
 #include "ntstatus.h"
@@ -104,11 +106,58 @@ err:
     return STATUS_UNSUCCESSFUL;
 }
 
+static int dispatch_wayland_events(int timeout)
+{
+    struct pollfd pollfd = { .fd = wl_display_get_fd(process_wayland.wl_display),
+                             .events = POLLIN };
+    int ret;
+
+    /* prepare_read_queue() coordinates reads with the other Wayland queues
+     * used by the window surface threads. */
+    if (wl_display_prepare_read_queue(process_wayland.wl_display,
+                                      process_wayland.wl_event_queue) == -1)
+        return wl_display_dispatch_queue_pending(process_wayland.wl_display,
+                                                  process_wayland.wl_event_queue);
+
+    if (wl_display_flush(process_wayland.wl_display) == -1)
+    {
+        if (errno != EAGAIN && errno != EPIPE)
+        {
+            wl_display_cancel_read(process_wayland.wl_display);
+            return -1;
+        }
+        if (errno == EAGAIN) pollfd.events |= POLLOUT;
+    }
+
+    ret = poll(&pollfd, 1, timeout);
+    if (ret <= 0)
+    {
+        wl_display_cancel_read(process_wayland.wl_display);
+        return ret == -1 && errno != EINTR ? -1 : 0;
+    }
+
+    if (pollfd.revents & POLLIN)
+    {
+        if (wl_display_read_events(process_wayland.wl_display) == -1) return -1;
+    }
+    else
+    {
+        wl_display_cancel_read(process_wayland.wl_display);
+    }
+
+    if (pollfd.revents & (POLLERR | POLLHUP | POLLNVAL)) return -1;
+    if ((pollfd.revents & POLLOUT) && wl_display_flush(process_wayland.wl_display) == -1 &&
+        errno != EAGAIN && errno != EPIPE)
+        return -1;
+
+    return wl_display_dispatch_queue_pending(process_wayland.wl_display,
+                                              process_wayland.wl_event_queue);
+}
+
 static NTSTATUS waylanddrv_unix_read_events(void *arg)
 {
-    while (wl_display_dispatch_queue(process_wayland.wl_display,
-                                     process_wayland.wl_event_queue) != -1)
-        continue;
+    while (dispatch_wayland_events(wayland_pointer_get_kinetic_scroll_timeout()) != -1)
+        wayland_pointer_dispatch_kinetic_scroll();
     /* This function only returns on a fatal error, e.g., if our connection
      * to the Wayland server is lost. */
     return STATUS_UNSUCCESSFUL;

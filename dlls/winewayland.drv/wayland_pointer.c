@@ -26,8 +26,10 @@
 
 #include <linux/input.h>
 #undef SW_MAX /* Also defined in winuser.rh */
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 
 #define OEMRESOURCE
 
@@ -36,6 +38,308 @@
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(cursor);
+
+#define SCROLL_AXIS_COUNT 2
+#define SCROLL_SAMPLE_COUNT 8
+#define SCROLL_SAMPLE_WINDOW_MS 100
+/* Wayland has no protocol mechanism to map surface-local axis units to a
+ * Windows wheel detent, so use the mapping found to work well in practice. */
+#define SCROLL_UNITS_PER_WHEEL_DELTA 18.0
+#define SCROLL_FRICTION 0.015 /* surface-local units / ms^2 */
+#define SCROLL_MIN_MOMENTUM 0.1 /* surface-local units / ms, with unit mass */
+#define SCROLL_MAX_MOMENTUM 3.0 /* surface-local units / ms, with unit mass */
+#define KINETIC_SCROLL_INTERVAL_MS 16
+
+struct scroll_sample
+{
+    double distance;
+    uint32_t duration;
+};
+
+struct scroll_axis_state
+{
+    double frame_distance;
+    int32_t frame_value120;
+    uint32_t frame_time;
+    uint32_t frame_stop_time;
+    BOOL frame_has_axis;
+    BOOL frame_has_value120;
+    BOOL frame_stopped;
+
+    struct scroll_sample samples[SCROLL_SAMPLE_COUNT];
+    unsigned int sample_count;
+    uint32_t last_event_time;
+    int last_direction;
+    BOOL gesture_active;
+    uint32_t source;
+    BOOL source_valid;
+
+    double wheel_remainder;
+    double momentum;
+    BOOL kinetic;
+};
+
+struct scroll_state
+{
+    struct scroll_axis_state axes[SCROLL_AXIS_COUNT];
+    uint32_t frame_source;
+    BOOL frame_source_valid;
+    uint64_t previous_kinetic_time;
+    uint64_t next_kinetic_time;
+};
+
+/* Scroll state is only accessed from the Wayland event thread. */
+static struct scroll_state scroll;
+
+static HWND wayland_pointer_get_focused_hwnd(void);
+
+static uint64_t get_monotonic_time_ms(void)
+{
+    struct timespec time;
+
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return (uint64_t)time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
+static BOOL kinetic_scroll_active(void)
+{
+    unsigned int axis;
+
+    for (axis = 0; axis < SCROLL_AXIS_COUNT; axis++)
+        if (scroll.axes[axis].kinetic) return TRUE;
+
+    return FALSE;
+}
+
+static void clear_scroll_samples(struct scroll_axis_state *axis_state)
+{
+    axis_state->sample_count = 0;
+    axis_state->last_direction = 0;
+}
+
+static void cancel_kinetic_scroll(void)
+{
+    unsigned int axis;
+
+    for (axis = 0; axis < SCROLL_AXIS_COUNT; axis++)
+    {
+        scroll.axes[axis].kinetic = FALSE;
+        scroll.axes[axis].momentum = 0.0;
+    }
+    scroll.previous_kinetic_time = 0;
+    scroll.next_kinetic_time = 0;
+}
+
+static void cancel_scroll_gesture(void)
+{
+    unsigned int axis;
+
+    cancel_kinetic_scroll();
+    for (axis = 0; axis < SCROLL_AXIS_COUNT; axis++)
+    {
+        scroll.axes[axis].gesture_active = FALSE;
+        scroll.axes[axis].source_valid = FALSE;
+        clear_scroll_samples(&scroll.axes[axis]);
+    }
+}
+
+static void reset_scroll_state(void)
+{
+    memset(&scroll, 0, sizeof(scroll));
+}
+
+static void add_scroll_sample(struct scroll_axis_state *axis_state, double distance,
+                              uint32_t time)
+{
+    uint32_t duration;
+    int direction = (distance > 0.0) - (distance < 0.0);
+
+    if (!axis_state->gesture_active)
+    {
+        clear_scroll_samples(axis_state);
+        axis_state->gesture_active = TRUE;
+        axis_state->last_event_time = time;
+        axis_state->last_direction = direction;
+        return;
+    }
+
+    duration = time - axis_state->last_event_time;
+    axis_state->last_event_time = time;
+
+    if (duration > SCROLL_SAMPLE_WINDOW_MS)
+        clear_scroll_samples(axis_state);
+    else if (direction && axis_state->last_direction && direction != axis_state->last_direction)
+        clear_scroll_samples(axis_state);
+    if (direction) axis_state->last_direction = direction;
+
+    if (!duration || duration > SCROLL_SAMPLE_WINDOW_MS) return;
+
+    if (axis_state->sample_count == SCROLL_SAMPLE_COUNT)
+    {
+        memmove(&axis_state->samples[0], &axis_state->samples[1],
+                (SCROLL_SAMPLE_COUNT - 1) * sizeof(axis_state->samples[0]));
+        axis_state->sample_count--;
+    }
+
+    axis_state->samples[axis_state->sample_count].distance = distance;
+    axis_state->samples[axis_state->sample_count].duration = duration;
+    axis_state->sample_count++;
+}
+
+static double estimate_scroll_momentum(const struct scroll_axis_state *axis_state,
+                                       uint32_t stop_time)
+{
+    double distance = 0.0;
+    uint32_t duration = stop_time - axis_state->last_event_time;
+    unsigned int i;
+
+    /* Treat time between the last motion event and finger lift as
+     * zero-distance input within the sample window. */
+    if (!axis_state->sample_count || duration >= SCROLL_SAMPLE_WINDOW_MS)
+        return 0.0;
+
+    for (i = axis_state->sample_count; i > 0 && duration < SCROLL_SAMPLE_WINDOW_MS; i--)
+    {
+        const struct scroll_sample *sample = &axis_state->samples[i - 1];
+        uint32_t remaining = SCROLL_SAMPLE_WINDOW_MS - duration;
+
+        if (sample->duration > remaining)
+        {
+            distance += sample->distance * remaining / sample->duration;
+            duration += remaining;
+        }
+        else
+        {
+            distance += sample->distance;
+            duration += sample->duration;
+        }
+    }
+
+    if (!duration) return 0.0;
+
+    distance /= duration; /* Unit mass makes velocity and momentum equivalent. */
+    if (distance > SCROLL_MAX_MOMENTUM) return SCROLL_MAX_MOMENTUM;
+    if (distance < -SCROLL_MAX_MOMENTUM) return -SCROLL_MAX_MOMENTUM;
+    return distance;
+}
+
+static int32_t scroll_distance_to_wheel_delta(struct scroll_axis_state *axis_state,
+                                              double distance)
+{
+    double value = axis_state->wheel_remainder +
+                   distance * WHEEL_DELTA / SCROLL_UNITS_PER_WHEEL_DELTA;
+    int32_t delta;
+
+    if (value >= INT_MAX)
+        delta = INT_MAX;
+    else if (value <= INT_MIN)
+        delta = INT_MIN;
+    else
+        delta = trunc(value);
+
+    axis_state->wheel_remainder = value - delta;
+    return delta;
+}
+
+static void dispatch_scroll_value(HWND hwnd, uint32_t axis, int32_t value120)
+{
+    INPUT input = { .type = INPUT_MOUSE };
+
+    if (!hwnd || !value120) return;
+
+    switch (axis)
+    {
+    case WL_POINTER_AXIS_VERTICAL_SCROLL:
+        input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+        input.mi.mouseData = 0u - (uint32_t)value120;
+        break;
+    case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
+        input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
+        input.mi.mouseData = value120;
+        break;
+    default:
+        return;
+    }
+
+    TRACE("hwnd=%p axis=%u value120=%d\n", hwnd, axis, value120);
+    NtUserSendHardwareInput(hwnd, SEND_HWMSG_RAWINPUT, &input, 0);
+}
+
+static void dispatch_smooth_scroll(HWND hwnd, uint32_t axis, double distance)
+{
+    struct scroll_axis_state *axis_state = &scroll.axes[axis];
+    int32_t value120 = scroll_distance_to_wheel_delta(axis_state, distance);
+
+    dispatch_scroll_value(hwnd, axis, value120);
+}
+
+static double advance_scroll_momentum(struct scroll_axis_state *axis_state,
+                                      double elapsed)
+{
+    double direction = axis_state->momentum < 0.0 ? -1.0 : 1.0;
+    double stopping_time = fabs(axis_state->momentum) / SCROLL_FRICTION;
+    double duration = fmin(elapsed, stopping_time);
+    double distance;
+
+    /* Apply constant kinetic friction to a unit mass:
+     * x = v*t + 1/2*a*t^2, where acceleration opposes momentum. */
+    distance = axis_state->momentum * duration -
+               direction * 0.5 * SCROLL_FRICTION * duration * duration;
+    axis_state->momentum -= direction * SCROLL_FRICTION * duration;
+
+    if (duration == stopping_time)
+    {
+        axis_state->momentum = 0.0;
+        axis_state->kinetic = FALSE;
+    }
+
+    return distance;
+}
+
+int wayland_pointer_get_kinetic_scroll_timeout(void)
+{
+    uint64_t now;
+
+    if (!kinetic_scroll_active()) return -1;
+
+    now = get_monotonic_time_ms();
+    if (now >= scroll.next_kinetic_time) return 0;
+    return scroll.next_kinetic_time - now;
+}
+
+void wayland_pointer_dispatch_kinetic_scroll(void)
+{
+    uint64_t now = get_monotonic_time_ms();
+    double elapsed;
+    unsigned int axis;
+    HWND hwnd;
+
+    if (!kinetic_scroll_active() || now < scroll.next_kinetic_time) return;
+    if (!(hwnd = wayland_pointer_get_focused_hwnd()))
+    {
+        cancel_kinetic_scroll();
+        return;
+    }
+
+    elapsed = now - scroll.previous_kinetic_time;
+    scroll.previous_kinetic_time = now;
+    scroll.next_kinetic_time = now + KINETIC_SCROLL_INTERVAL_MS;
+
+    for (axis = 0; axis < SCROLL_AXIS_COUNT; axis++)
+    {
+        struct scroll_axis_state *axis_state = &scroll.axes[axis];
+        double distance;
+
+        if (!axis_state->kinetic) continue;
+        distance = advance_scroll_momentum(axis_state, elapsed);
+        dispatch_smooth_scroll(hwnd, axis, distance);
+    }
+
+    if (!kinetic_scroll_active()) cancel_kinetic_scroll();
+    else TRACE("hwnd=%p kinetic_momentum=%.3f,%.3f\n", hwnd,
+               scroll.axes[WL_POINTER_AXIS_VERTICAL_SCROLL].momentum,
+               scroll.axes[WL_POINTER_AXIS_HORIZONTAL_SCROLL].momentum);
+}
 
 /* The cursor-shape-v1 protocol file references the zwp_tablet_tool_v2
  * interface object. Since we don't currently use the tablet protocol,
@@ -170,6 +474,8 @@ static void pointer_handle_motion(void *data, struct wl_pointer *wl_pointer,
 {
     struct wayland_pointer *pointer = &process_wayland.pointer;
 
+    cancel_scroll_gesture();
+
     /* Ignore absolute motion events if in relative mode. */
     if (pointer->relative_mode) return;
 
@@ -193,6 +499,8 @@ static void pointer_handle_enter(void *data, struct wl_pointer *wl_pointer,
     hwnd = wl_surface_get_user_data(wl_surface);
 
     TRACE("hwnd=%p\n", hwnd);
+
+    reset_scroll_state();
 
     pthread_mutex_lock(&pointer->mutex);
     pointer->focused_hwnd = hwnd;
@@ -220,6 +528,8 @@ static void pointer_handle_leave(void *data, struct wl_pointer *wl_pointer,
 
     TRACE("hwnd=%p\n", wl_surface_get_user_data(wl_surface));
 
+    reset_scroll_state();
+
     pthread_mutex_lock(&pointer->mutex);
     pointer->focused_hwnd = NULL;
     pointer->enter_serial = 0;
@@ -235,6 +545,8 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
     HWND hwnd;
 
     InterlockedExchange(&process_wayland.input_serial, serial);
+
+    cancel_scroll_gesture();
 
     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
 
@@ -273,56 +585,140 @@ static void pointer_handle_button(void *data, struct wl_pointer *wl_pointer,
 static void pointer_handle_axis(void *data, struct wl_pointer *wl_pointer,
                                 uint32_t time, uint32_t axis, wl_fixed_t value)
 {
+    struct scroll_axis_state *axis_state;
+
+    if (axis >= SCROLL_AXIS_COUNT) return;
+
+    cancel_kinetic_scroll();
+    axis_state = &scroll.axes[axis];
+
+    /* wl_pointer versions before 5 don't provide frame or source events. */
+    if (wl_pointer_get_version(wl_pointer) < WL_POINTER_FRAME_SINCE_VERSION)
+    {
+        HWND hwnd = wayland_pointer_get_focused_hwnd();
+        dispatch_smooth_scroll(hwnd, axis, wl_fixed_to_double(value));
+        return;
+    }
+
+    if (!axis_state->gesture_active && !axis_state->frame_has_axis)
+        axis_state->source_valid = FALSE;
+    axis_state->frame_distance += wl_fixed_to_double(value);
+    axis_state->frame_time = time;
+    axis_state->frame_has_axis = TRUE;
 }
 
 static void pointer_handle_frame(void *data, struct wl_pointer *wl_pointer)
 {
     static const INPUT input = { .type = INPUT_MOUSE, .mi.dwFlags = MOUSEEVENTF_MOVE_NOCOALESCE };
+    uint64_t now;
+    unsigned int axis;
+    HWND hwnd = wayland_pointer_get_focused_hwnd();
+
+    for (axis = 0; axis < SCROLL_AXIS_COUNT; axis++)
+    {
+        struct scroll_axis_state *axis_state = &scroll.axes[axis];
+
+        if (scroll.frame_source_valid && axis_state->frame_has_axis)
+        {
+            if (axis_state->source_valid && axis_state->source != scroll.frame_source)
+            {
+                axis_state->gesture_active = FALSE;
+                clear_scroll_samples(axis_state);
+            }
+            axis_state->source = scroll.frame_source;
+            axis_state->source_valid = TRUE;
+        }
+
+        /* Discrete and value120 events are paired with an axis event. Prefer
+         * their exact wheel distance and don't dispatch the axis twice. */
+        if (axis_state->frame_has_value120)
+        {
+            dispatch_scroll_value(hwnd, axis, axis_state->frame_value120);
+            axis_state->gesture_active = FALSE;
+            axis_state->source_valid = FALSE;
+            clear_scroll_samples(axis_state);
+        }
+        else if (axis_state->frame_has_axis)
+        {
+            dispatch_smooth_scroll(hwnd, axis, axis_state->frame_distance);
+            add_scroll_sample(axis_state, axis_state->frame_distance,
+                              axis_state->frame_time);
+        }
+
+        if (axis_state->frame_stopped)
+        {
+            axis_state->momentum = 0.0;
+            if (axis_state->source_valid &&
+                axis_state->source == WL_POINTER_AXIS_SOURCE_FINGER)
+                axis_state->momentum = estimate_scroll_momentum(axis_state,
+                                                                 axis_state->frame_stop_time);
+
+            axis_state->kinetic = fabs(axis_state->momentum) >= SCROLL_MIN_MOMENTUM;
+            axis_state->gesture_active = FALSE;
+            axis_state->source_valid = FALSE;
+            clear_scroll_samples(axis_state);
+        }
+
+        axis_state->frame_distance = 0.0;
+        axis_state->frame_value120 = 0;
+        axis_state->frame_has_axis = FALSE;
+        axis_state->frame_has_value120 = FALSE;
+        axis_state->frame_stopped = FALSE;
+    }
+
+    scroll.frame_source_valid = FALSE;
+    if (kinetic_scroll_active())
+    {
+        now = get_monotonic_time_ms();
+        scroll.previous_kinetic_time = now;
+        scroll.next_kinetic_time = now + KINETIC_SCROLL_INTERVAL_MS;
+        TRACE("hwnd=%p starting kinetic scroll momentum=%.3f,%.3f\n", hwnd,
+              scroll.axes[WL_POINTER_AXIS_VERTICAL_SCROLL].momentum,
+              scroll.axes[WL_POINTER_AXIS_HORIZONTAL_SCROLL].momentum);
+    }
+
     NtUserSendHardwareInput(NULL, SEND_HWMSG_RAWINPUT, &input, 0); /* flush win32u accumulated motion */
 }
 
 static void pointer_handle_axis_source(void *data, struct wl_pointer *wl_pointer,
                                        uint32_t axis_source)
 {
+    scroll.frame_source = axis_source;
+    scroll.frame_source_valid = TRUE;
 }
 
 static void pointer_handle_axis_stop(void *data, struct wl_pointer *wl_pointer,
                                      uint32_t time, uint32_t axis)
 {
+    if (axis >= SCROLL_AXIS_COUNT) return;
+
+    scroll.axes[axis].frame_stop_time = time;
+    scroll.axes[axis].frame_stopped = TRUE;
 }
 
 static void pointer_handle_axis_value120(void *data, struct wl_pointer *wl_pointer,
                                          uint32_t axis, int32_t value120)
 {
-    INPUT input = {0};
-    HWND hwnd;
+    int64_t frame_value120;
 
-    if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
+    if (axis >= SCROLL_AXIS_COUNT) return;
 
-    input.type = INPUT_MOUSE;
-
-    switch (axis)
-    {
-    case WL_POINTER_AXIS_VERTICAL_SCROLL:
-        input.mi.dwFlags = MOUSEEVENTF_WHEEL;
-        input.mi.mouseData = -value120;
-        break;
-    case WL_POINTER_AXIS_HORIZONTAL_SCROLL:
-        input.mi.dwFlags = MOUSEEVENTF_HWHEEL;
-        input.mi.mouseData = value120;
-        break;
-    default: break;
-    }
-
-    TRACE("hwnd=%p axis=%u value120=%d\n", hwnd, axis, value120);
-
-    NtUserSendHardwareInput(hwnd, SEND_HWMSG_RAWINPUT, &input, 0);
+    cancel_scroll_gesture();
+    frame_value120 = (int64_t)scroll.axes[axis].frame_value120 + value120;
+    if (frame_value120 > INT_MAX) frame_value120 = INT_MAX;
+    if (frame_value120 < INT_MIN) frame_value120 = INT_MIN;
+    scroll.axes[axis].frame_value120 = (int32_t)frame_value120;
+    scroll.axes[axis].frame_has_value120 = TRUE;
 }
 
 static void pointer_handle_axis_discrete(void *data, struct wl_pointer *wl_pointer,
                                          uint32_t axis, int32_t discrete)
 {
-    pointer_handle_axis_value120(data, wl_pointer, axis, WHEEL_DELTA * discrete);
+    int64_t value120 = (int64_t)WHEEL_DELTA * discrete;
+
+    if (value120 > INT_MAX) value120 = INT_MAX;
+    if (value120 < INT_MIN) value120 = INT_MIN;
+    pointer_handle_axis_value120(data, wl_pointer, axis, (int32_t)value120);
 }
 
 static const struct wl_pointer_listener pointer_listener =
@@ -368,6 +764,8 @@ static void relative_pointer_v1_relative_motion(void *private,
     double screen_x = 0.0, screen_y = 0.0;
     struct wayland_pointer *pointer = &process_wayland.pointer;
 
+    cancel_scroll_gesture();
+
     if (!(hwnd = wayland_pointer_get_focused_hwnd())) return;
     if (!(data = wayland_win_data_get(hwnd))) return;
 
@@ -410,6 +808,8 @@ void wayland_pointer_init(struct wl_pointer *wl_pointer)
 {
     struct wayland_pointer *pointer = &process_wayland.pointer;
 
+    reset_scroll_state();
+
     pthread_mutex_lock(&pointer->mutex);
     pointer->wl_pointer = wl_pointer;
     pointer->focused_hwnd = NULL;
@@ -433,6 +833,8 @@ void wayland_pointer_init(struct wl_pointer *wl_pointer)
 void wayland_pointer_deinit(void)
 {
     struct wayland_pointer *pointer = &process_wayland.pointer;
+
+    reset_scroll_state();
 
     pthread_mutex_lock(&pointer->mutex);
     if (pointer->zwp_confined_pointer_v1)
