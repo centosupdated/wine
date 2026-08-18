@@ -1663,6 +1663,7 @@ FARPROC16 WINAPI GetProcAddress16( HMODULE16 hModule, LPCSTR name )
 
     if (HIWORD(name) != 0)
     {
+        if (strlen(name) > 255) return NULL;
         ordinal = NE_GetOrdinal( hModule, name );
         TRACE("%04x '%s'\n", hModule, name );
     }
