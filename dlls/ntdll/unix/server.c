@@ -1333,7 +1333,7 @@ static int setup_config_dir(void)
             while (p > config_dir + 1 && p[-1] == '/') p--;
             *p = 0;
             if (!stat( config_dir, &st ) && st.st_uid != getuid())
-                fatal_error( "'%s' is not owned by you, refusing to create a configuration directory there\n",
+                printf( "'%s' is not owned by you, refusing to create a configuration directory there\n",
                              config_dir );
             *p = '/';
         }
@@ -1343,7 +1343,7 @@ static int setup_config_dir(void)
     }
 
     if (stat( ".", &st ) == -1) fatal_perror( "stat %s", config_dir );
-    if (st.st_uid != getuid()) fatal_error( "'%s' is not owned by you\n", config_dir );
+    if (st.st_uid != getuid()) printf( "'%s' is not owned by you\n", config_dir );
 
     server_dir = init_server_dir( st.st_dev, st.st_ino );
 
@@ -1417,8 +1417,8 @@ static int server_connect(void)
 
     /* make sure we are at the right place */
     if (stat( ".", &st ) == -1) fatal_perror( "stat %s", server_dir );
-    if (st.st_uid != getuid()) fatal_error( "'%s' is not owned by you\n", server_dir );
-    if (st.st_mode & 077) fatal_error( "'%s' must not be accessible by other users\n", server_dir );
+    if (st.st_uid != getuid()) printf( "'%s' is not owned by you\n", server_dir );
+    if (st.st_mode & 077) printf( "'%s' must not be accessible by other users\n", server_dir );
 
     for (retry = 0; retry < 6; retry++)
     {
@@ -1440,7 +1440,7 @@ static int server_connect(void)
         if (!S_ISSOCK(st.st_mode) && !S_ISFIFO(st.st_mode))
             fatal_error( "'%s/%s' is not a socket\n", server_dir, SOCKETNAME );
         if (st.st_uid != getuid())
-            fatal_error( "'%s/%s' is not owned by you\n", server_dir, SOCKETNAME );
+            printf( "'%s/%s' is not owned by you\n", server_dir, SOCKETNAME );
 
         /* try to connect to it */
         addr.sun_family = AF_UNIX;
